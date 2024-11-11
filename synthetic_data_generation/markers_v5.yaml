@@ -1,0 +1,89 @@
+omni.replicator.object:
+  occlusion_threshold: 0.01
+
+  basic_shape:
+    tracked: true
+    count: 1 
+    subtype: plane
+    transform_operators:
+    - scale:
+      - 1.0
+      - 1.0
+      - 1.0
+      # - $[/scale_factor] 
+      # - $[/scale_factor] 
+      # - $[/scale_factor] 
+    - translate:
+      # - 0 
+      # - 0 
+      # - -150
+        # distribution_type: range
+        # end:
+        # - -800
+        # - -500
+        # - -50
+        # start:
+        # - 800
+        # - 500
+        # - -1000 
+        distribution_type: camera_frustum
+        camera_parameters: $[/camera_parameters]
+        distance_min: 50
+        distance_max: 1000
+        screen_space_range: 1.5
+    - rotateX:  
+        distribution_type: range
+        start: 0
+        end: 180
+    - rotateY: 
+        distribution_type: range
+        start: -180 
+        end: 180
+    - rotateZ: 
+        distribution_type: range 
+        start: -90
+        end: 90  
+    # scale_factor: 10.0
+      # distribution_type: range 
+      # start: 0.1 
+      # end: 1.0 
+    type: geometry
+    # material_path: marker_ws/marker_pngs/OmniEmissive.mdl
+    # color: 
+    #   - 0.0
+    #   - 0.0
+    #   - 0.0 
+    # texture_path: marker_ws/marker_pngs/tag36h11-0.png
+    material_path: marker_ws/OmniEmissive.mdl
+    # texture_path: 
+    #   # marker_ws/marker_pngs/curiosity_square.png
+    #   distribution_type: folder
+    #   suffix: png
+    #   value: marker_ws/marker_pngs
+
+  default_camera:
+    camera_parameters: $[/camera_parameters]
+    transform_operators:
+    - rotateY: 0 #90
+    - rotateX: 0 #-10
+    - translate:
+      - 0
+      - 0
+      - 0 #600
+    type: camera
+  gravity: 10000
+  num_frames: 10000
+  parent_config: standard 
+  # torus_size: 0.5 #.15 DBG
+  # writer:
+  #  writers.get:
+  #     name: "BasicWriter"
+  #     init_params:
+  #       output_dir: "marker_ws/output/replicator_markers_2 "
+  #       rgb: true 
+  #       semantic_segmentation: true 
+  #       instance_id_segmentation: true 
+  #       distance_to_camera: false 
+  #       normals: false 
+  version: 0.3.8
+  output_path: marker_ws/output/replicator_markers_2 

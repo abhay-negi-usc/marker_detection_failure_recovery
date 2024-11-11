@@ -1,0 +1,17 @@
+// exported by: omni.mdl.usd_converter [1.0.21]
+// --/exts/omni.mdl.usd_converter/enableNewDemangling=True
+// --/exts/omni.mdl.usd_converter/allowRelativeExports=True
+// --/exts/omni.mdl.usd_converter/allowRelativeExportUpwardLevels=-1
+
+mdl 1.8;
+
+import ::state::normal;
+import ::OmniEmissive::OmniEmissive;
+import ::tex::gamma_mode;
+
+export material OmniEmissive(*)
+ = OmniEmissive::OmniEmissive(
+    emissive_color: color(1.f, 0.1000000015f, 0.1000000015f),
+    emissive_color_texture: texture_2d("./OmniEmissive_tag36h11-0.png", ::tex::gamma_default, ""),
+    emission_intensity: 1.f,
+    backface_emission: true);
