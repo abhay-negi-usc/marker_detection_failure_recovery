@@ -1,6 +1,7 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
+# apply different marker patterns 
 # apply more random backgrounds 
 # get tag pose  
 # output segmentation along with rgb image 
@@ -12,6 +13,7 @@ import os
 import yaml
 from isaacsim import SimulationApp
 import time 
+# import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
 os.makedirs(OUT_DIR, exist_ok=True) 
@@ -25,7 +27,7 @@ config = {
     "env_url": "",
     "working_area_size": (4, 4, 3),
     "rt_subframes": 4,
-    "num_frames": 10,
+    "num_frames": 1000,
     "num_cameras": 3,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
@@ -63,7 +65,10 @@ config = {
         #     "scale_min_max": (0.85, 1.25),
         # },
         {
-            "url": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/usd/tag0_v2.usd", 
+            # "url": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/usd/tag0_v2.usd", 
+            "url": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Props/Shapes/plane.usd", 
+            "material": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Materials/AprilTag/AprilTag.mdl", 
+            # "material": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/materials/Gold_Foil_Shiny_Wrinkled.usd", 
             "label": "tag0", 
             "count": 1, 
             "floating": True, 
@@ -127,6 +132,7 @@ from omni.isaac.core.utils.semantics import add_update_semantics, remove_all_sem
 from omni.isaac.nucleus import get_assets_root_path
 from omni.physx import get_physx_interface, get_physx_scene_query_interface
 from pxr import PhysxSchema, Sdf, UsdGeom, UsdPhysics
+from pxr import Usd, UsdShade, Gf
 
 # Isaac nucleus assets root path
 assets_root_path = get_assets_root_path()
@@ -198,13 +204,20 @@ for obj in labeled_assets_and_properties:
         object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
         object_based_sdg_utils.add_colliders(prim)
         object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=floating)
+        # material = obj.get("material", "")
+        material = assets_root_path + "/NVIDIA/Materials/vMaterials_2/Glass/Glass_Clear.mdl"
+        if material is not "": 
+            success, result = omni.kit.commands.execute('CreateMdlMaterialPrimCommand',
+                                                        mtl_url=material,
+                                                        mtl_name='AprilTag',
+                                                        mtl_path="/World/Looks/AprilTag") 
+            mat = UsdShade.Material(stage.GetPrimAtPath("/World/Looks/AprilTag"))   
         # Label the asset (any previous 'class' label will be overwritten)
         add_update_semantics(prim, label)
         if floating:
             floating_labeled_prims.append(prim)
         else:
             falling_labeled_prims.append(prim)
-    import pdb; pdb.set_trace() 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
 
@@ -515,7 +528,7 @@ def run_simulation_loop(duration):
 
 # SDG
 # Number of frames to capture
-num_frames = config.get("num_frames", 10)
+num_frames = config.get("num_frames", 1000)
 
 # Increase subframes if materials are not loaded on time, or ghosting artifacts appear on moving objects,
 # see: https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/subframes_examples.html
