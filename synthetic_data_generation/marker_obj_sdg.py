@@ -1,7 +1,6 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# figure out why tag is not showing 
 # apply more random backgrounds 
 # get tag pose  
 # output segmentation along with rgb image 
@@ -66,9 +65,9 @@ config = {
         {
             "url": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/usd/tag0_v2.usd", 
             "label": "tag0", 
-            "count": 10, 
+            "count": 1, 
             "floating": True, 
-            "scale_min_max": (1000.0, 10000.0),  
+            "scale_min_max": (1.0, 1.0),  
         }
     ],
     "shape_distractors_types": ["capsule", "cone", "cylinder", "sphere", "cube"],
@@ -193,7 +192,8 @@ for obj in labeled_assets_and_properties:
         )
         prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Labeled/{label}", False)
         prim = stage.DefinePrim(prim_path, "Xform")
-        asset_path = obj_url if obj_url.startswith("omniverse://") else assets_root_path + obj_url
+        # asset_path = obj_url if obj_url.startswith("omniverse://") else assets_root_path + obj_url
+        asset_path = obj_url if obj_url.startswith("omniverse://") else obj_url
         prim.GetReferences().AddReference(asset_path)
         object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
         object_based_sdg_utils.add_colliders(prim)
@@ -204,6 +204,7 @@ for obj in labeled_assets_and_properties:
             floating_labeled_prims.append(prim)
         else:
             falling_labeled_prims.append(prim)
+    import pdb; pdb.set_trace() 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
 
