@@ -159,31 +159,9 @@ else:
         UsdGeom.Xformable(distant_light).AddRotateXYZOp()
     distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
 
-# MATERIAL_PATHS = ["/Looks/OmniEmissiveRed", "/Looks/OmniEmissiveBlue", "/Looks/OmniEmissiveGreen"]
-# MATERIAL_PATH_WHITE = "/Looks/OmniEmissiveWhite"
-# context = omni.usd.get_context()
-# stage_id = context.get_stage_id()
-# fabric_stage = usdrt.Usd.Stage.Attach(stage_id)
-# material_white = UsdShade.Material(stage.GetPrimAtPath(MATERIAL_PATH_WHITE))
-# usdrt_material_white = usdrt.UsdShade.Material(fabric_stage.GetPrimAtPath(usdrt.Sdf.Path(MATERIAL_PATH_WHITE)))
-
-# solution from: https://docs.omniverse.nvidia.com/isaacsim/latest/how_to_guides/environment_setup.html 
-# mtl_created_list = []
-# # Create a new material using OmniGlass.mdl
-# omni.kit.commands.execute(
-#     "CreateAndBindMdlMaterialFromLibrary",
-#     mdl_name="OmniGlass.mdl",
-#     mtl_name="OmniGlass",
-#     mtl_created_list=mtl_created_list,
-# )
-# mtl_prim = stage.GetPrimAtPath(mtl_created_list[0])
-# omni.usd.create_material_input(mtl_prim, "glass_color", Gf.Vec3f(0, 1, 0), Sdf.ValueTypeNames.Color3f)
-# omni.usd.create_material_input(mtl_prim, "glass_ior", 1.0, Sdf.ValueTypeNames.Float)
-
 mtl_created_list = []
 omni.kit.commands.execute(
     "CreateAndBindMdlMaterialFromLibrary",
-    # mdl_name="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/materials/OmniPBR.mdl",
     mdl_name="OmniPBR.mdl",
     mtl_name="OmniPBR",
     mtl_created_list=mtl_created_list,
@@ -505,18 +483,34 @@ with rep.trigger.on_custom_event(event_name="randomize_lights"):
 
 
 # Create a randomizer for the dome background, manually triggered at custom events
+dir_backgrounds = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/backgrounds/" 
 with rep.trigger.on_custom_event(event_name="randomize_dome_background"):
-    dome_textures = [
-        assets_root_path + "/NVIDIA/Assets/Skies/Indoor/autoshop_01_4k.hdr",
-        assets_root_path + "/NVIDIA/Assets/Skies/Indoor/carpentry_shop_01_4k.hdr",
-        assets_root_path + "/NVIDIA/Assets/Skies/Indoor/hotel_room_4k.hdr",
-        assets_root_path + "/NVIDIA/Assets/Skies/Indoor/wooden_lounge_4k.hdr",
-    ]
+    # dome_textures = [
+    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/autoshop_01_4k.hdr",
+    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/carpentry_shop_01_4k.hdr",
+    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/hotel_room_4k.hdr",
+    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/wooden_lounge_4k.hdr",
+    # ]
+    dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
     dome_light = rep.create.light(light_type="Dome")
     with dome_light:
         rep.modify.attribute("inputs:texture:file", rep.distribution.choice(dome_textures))
         rep.randomizer.rotation()
 
+# with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
+#     tag_textures = [
+#         "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png", 
+#         "/home/rp/Downloads/r2d2.jpeg", 
+#     ]
+#     import pdb; pdb.set_trace()
+#     plane = rep.create.plane(
+#         position=rep.distribution.uniform((0,0,0), (100, 100, 100)),
+#         scale=2,
+#         rotation=(45, 45, 0),
+#         semantics=[("class", "plane")],
+#     )
+#     with plane: 
+#         rep.modify.attribute("diffuse_texture", rep.distribution.choice(tag_textures)) 
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -594,6 +588,7 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 # Initial trigger for randomizers before the SDG loop with several app updates (ensures materials/textures are loaded)
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 rep.utils.send_og_event(event_name="randomize_dome_background")
+# rep.utils.send_og_event(event_name="randomize_tag_texture") 
 for _ in range(5):
     simulation_app.update()
 
@@ -612,6 +607,8 @@ wall_time_start = time.perf_counter()
 
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 for i in range(num_frames):
+
+
     # Cameras will be moved to a random position and look at a randomly selected labeled asset
     if i % 3 == 0:
         print(f"\t Randomizing camera poses")
@@ -644,6 +641,11 @@ for i in range(num_frames):
     if i % 17 == 0:
         print(f"\t Randomizing shape distractors velocities")
         rep.utils.send_og_event(event_name="randomize_floating_distractor_velocities")
+
+    # Randomize the tag texture 
+    # if i % 3 == 0:
+    #     print(f"\t Randomizing tag texture")
+    #     rep.utils.send_og_event(event_name="randomize_tag_texture")
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
