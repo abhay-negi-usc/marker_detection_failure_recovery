@@ -1,10 +1,10 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# apply different marker patterns 
 # apply more random backgrounds 
 # get tag pose  
 # output segmentation along with rgb image 
+# apply different marker patterns 
 
 import argparse
 import json
@@ -13,6 +13,7 @@ import os
 import yaml
 from isaacsim import SimulationApp
 import time 
+import asyncio
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
@@ -27,7 +28,7 @@ config = {
     "env_url": "",
     "working_area_size": (4, 4, 3),
     "rt_subframes": 4,
-    "num_frames": 1000,
+    "num_frames": 100,
     "num_cameras": 3,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
@@ -158,6 +159,38 @@ else:
         UsdGeom.Xformable(distant_light).AddRotateXYZOp()
     distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
 
+# MATERIAL_PATHS = ["/Looks/OmniEmissiveRed", "/Looks/OmniEmissiveBlue", "/Looks/OmniEmissiveGreen"]
+# MATERIAL_PATH_WHITE = "/Looks/OmniEmissiveWhite"
+# context = omni.usd.get_context()
+# stage_id = context.get_stage_id()
+# fabric_stage = usdrt.Usd.Stage.Attach(stage_id)
+# material_white = UsdShade.Material(stage.GetPrimAtPath(MATERIAL_PATH_WHITE))
+# usdrt_material_white = usdrt.UsdShade.Material(fabric_stage.GetPrimAtPath(usdrt.Sdf.Path(MATERIAL_PATH_WHITE)))
+
+# solution from: https://docs.omniverse.nvidia.com/isaacsim/latest/how_to_guides/environment_setup.html 
+# mtl_created_list = []
+# # Create a new material using OmniGlass.mdl
+# omni.kit.commands.execute(
+#     "CreateAndBindMdlMaterialFromLibrary",
+#     mdl_name="OmniGlass.mdl",
+#     mtl_name="OmniGlass",
+#     mtl_created_list=mtl_created_list,
+# )
+# mtl_prim = stage.GetPrimAtPath(mtl_created_list[0])
+# omni.usd.create_material_input(mtl_prim, "glass_color", Gf.Vec3f(0, 1, 0), Sdf.ValueTypeNames.Color3f)
+# omni.usd.create_material_input(mtl_prim, "glass_ior", 1.0, Sdf.ValueTypeNames.Float)
+
+mtl_created_list = []
+omni.kit.commands.execute(
+    "CreateAndBindMdlMaterialFromLibrary",
+    # mdl_name="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/materials/OmniPBR.mdl",
+    mdl_name="OmniPBR.mdl",
+    mtl_name="OmniPBR",
+    mtl_created_list=mtl_created_list,
+), 
+mtl_prim = stage.GetPrimAtPath(mtl_created_list[0]) 
+omni.usd.create_material_input(mtl_prim, "diffuse_texture", "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png", Sdf.ValueTypeNames.Asset)
+
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (3, 3, 3))
 working_area_min = (working_area_size[0] / -2, working_area_size[1] / -2, working_area_size[2] / -2)
@@ -204,14 +237,19 @@ for obj in labeled_assets_and_properties:
         object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
         object_based_sdg_utils.add_colliders(prim)
         object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=floating)
-        # material = obj.get("material", "")
-        material = assets_root_path + "/NVIDIA/Materials/vMaterials_2/Glass/Glass_Clear.mdl"
-        if material is not "": 
-            success, result = omni.kit.commands.execute('CreateMdlMaterialPrimCommand',
-                                                        mtl_url=material,
-                                                        mtl_name='AprilTag',
-                                                        mtl_path="/World/Looks/AprilTag") 
-            mat = UsdShade.Material(stage.GetPrimAtPath("/World/Looks/AprilTag"))   
+        prim_mat_shade = UsdShade.Material(mtl_prim)  
+        UsdShade.MaterialBindingAPI(prim).Bind(prim_mat_shade, UsdShade.Tokens.strongerThanDescendants) 
+        # material_path = obj.get("material", "")
+        # # material = assets_root_path + "/NVIDIA/Materials/vMaterials_2/Glass/Glass_Clear.mdl"
+        # if material is not "": 
+        #     # success, result = omni.kit.commands.execute('CreateMdlMaterialPrimCommand',
+        #     #                                             mtl_url=material,
+        #     #                                             mtl_name='AprilTag',
+        #     #                                             mtl_path="/World/Looks/AprilTag")
+        #     # mat = UsdShade.Material(stage.GetPrimAtPath("/World/Looks/AprilTag"))   
+        #     success, result = omni.kit.commands.execute('BindMaterial',
+        #                                                 prim_path=asset_path,
+        #                                                 material_path=material)
         # Label the asset (any previous 'class' label will be overwritten)
         add_update_semantics(prim, label)
         if floating:
@@ -220,6 +258,22 @@ for obj in labeled_assets_and_properties:
             falling_labeled_prims.append(prim)
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
+# trying: https://forums.developer.nvidia.com/t/seeking-a-faster-method-to-apply-materials-to-specific-prims-in-a-large-scene-as-current-approaches-are-too-slow/301080 
+# paths = []
+# for prim in stage.Traverse():
+#     if prim.GetTypeName() == "Xform":
+#         paths.append(prim.GetPath().pathString)
+
+# Set using individual USD material binding API calls
+# for path in paths:
+#    prim = stage.GetPrimAtPath(path)
+#    prim.ApplyAPI(UsdShade.MaterialBindingAPI)
+#    UsdShade.MaterialBindingAPI(prim).Bind(material_white, UsdShade.Tokens.weakerThanDescendants, UsdShade.Tokens.allPurpose)
+
+# for path in paths:
+#     fabric_prim = fabric_stage.GetPrimAtPath(usdrt.Sdf.Path(path))
+#     bindingAPI = usdrt.UsdShade.MaterialBindingAPI(fabric_prim)
+#     bindingAPI.Bind(usdrt_material_white)
 
 # DISTRACTORS
 # Add shape distractors to the environment as floating or falling objects
