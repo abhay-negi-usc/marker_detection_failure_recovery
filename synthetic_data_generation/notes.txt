@@ -1,11 +1,8 @@
 Replicator: https://docs.omniverse.nvidia.com/py/replicator/1.11.16/source/extensions/omni.replicator.core/docs/API.html#module-omni.replicator.core 
 
-BackgroundRand 
-https://docs.omniverse.nvidia.com/py/replicator/1.11.16/source/extensions/omni.replicator.core/docs/API.html#backgroundrand
-
-
 Commands: https://docs.omniverse.nvidia.com/kit/docs/omni.kit.commands/latest/omni.kit.commands.html 
 see materials commands available here: https://docs.omniverse.nvidia.com/kit/docs/omni.kit.usd_docs/latest/index.html 
 
 Examples: 
 https://github.com/DarioRepoRuler/synthetic_data/blob/main/synthetic_generator.py
+https://github.com/NVIDIA-Omniverse/synthetic-data-examples 

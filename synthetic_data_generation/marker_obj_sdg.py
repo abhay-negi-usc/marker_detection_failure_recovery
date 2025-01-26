@@ -1,10 +1,10 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# apply more random backgrounds 
-# get tag pose  
+# add semantic labels back in and re-activate randomizations  
+# randomize pose of marker  
+# get tag pose 
 # output segmentation along with rgb image 
-# apply different marker patterns 
 
 import argparse
 import json
@@ -68,7 +68,7 @@ config = {
         {
             # "url": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/usd/tag0_v2.usd", 
             "url": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Props/Shapes/plane.usd", 
-            "material": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Materials/AprilTag/AprilTag.mdl", 
+            # "material": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Materials/AprilTag/AprilTag.mdl", 
             # "material": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/materials/Gold_Foil_Shiny_Wrinkled.usd", 
             "label": "tag0", 
             "count": 1, 
@@ -207,16 +207,36 @@ for obj in labeled_assets_and_properties:
         rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
             loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
         )
-        prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Labeled/{label}", False)
-        prim = stage.DefinePrim(prim_path, "Xform")
-        # asset_path = obj_url if obj_url.startswith("omniverse://") else assets_root_path + obj_url
-        asset_path = obj_url if obj_url.startswith("omniverse://") else obj_url
-        prim.GetReferences().AddReference(asset_path)
-        object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
-        object_based_sdg_utils.add_colliders(prim)
-        object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=floating)
-        prim_mat_shade = UsdShade.Material(mtl_prim)  
-        UsdShade.MaterialBindingAPI(prim).Bind(prim_mat_shade, UsdShade.Tokens.strongerThanDescendants) 
+        # prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Labeled/{label}", False)
+        # prim = stage.DefinePrim(prim_path, "Xform")
+        # # asset_path = obj_url if obj_url.startswith("omniverse://") else assets_root_path + obj_url
+        # asset_path = obj_url if obj_url.startswith("omniverse://") else obj_url
+        # prim.GetReferences().AddReference(asset_path)
+        # object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
+        # object_based_sdg_utils.add_colliders(prim)
+        # object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=floating)
+
+        # prim_mat_shade = UsdShade.Material(mtl_prim)  
+        # UsdShade.MaterialBindingAPI(prim).Bind(prim_mat_shade, UsdShade.Tokens.strongerThanDescendants) 
+        
+        tag = rep.create.plane(
+            position = rand_loc,
+            scale = rand_scale, 
+            rotation = rand_rot,   
+            name = "tag0", 
+        )
+
+        # rep.bind.material(prim, mat)
+        with tag:       
+            mat = rep.create.material_omnipbr(
+                diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png",
+                roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+                metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+                emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+                emissive_intensity=rep.distribution.uniform(0, 1000),
+            )    
+            rep.modify.material(mat) 
+        
         # material_path = obj.get("material", "")
         # # material = assets_root_path + "/NVIDIA/Materials/vMaterials_2/Glass/Glass_Clear.mdl"
         # if material is not "": 
@@ -229,12 +249,14 @@ for obj in labeled_assets_and_properties:
         #                                                 prim_path=asset_path,
         #                                                 material_path=material)
         # Label the asset (any previous 'class' label will be overwritten)
-        add_update_semantics(prim, label)
-        if floating:
-            floating_labeled_prims.append(prim)
-        else:
-            falling_labeled_prims.append(prim)
-labeled_prims = floating_labeled_prims + falling_labeled_prims
+
+        # add_update_semantics(prim, label)
+        # if floating:
+        #     floating_labeled_prims.append(prim)
+        # else:
+        #     falling_labeled_prims.append(prim)
+
+# labeled_prims = floating_labeled_prims + falling_labeled_prims
 
 # trying: https://forums.developer.nvidia.com/t/seeking-a-faster-method-to-apply-materials-to-specific-prims-in-a-large-scene-as-current-approaches-are-too-slow/301080 
 # paths = []
@@ -481,36 +503,30 @@ with rep.trigger.on_custom_event(event_name="randomize_lights"):
         count=3,
     )
 
+tag_textures = [
+    "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png",
+    "/home/rp/Downloads/r2d2.jpeg",
+]    
+with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
+    print(f"\t Randomizing tag texture") 
+    with tag:       
+        mat = rep.create.material_omnipbr(
+            diffuse_texture=rep.distribution.choice(tag_textures),
+            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_intensity=rep.distribution.uniform(0, 1000),
+        )    
+        rep.modify.material(mat) 
 
 # Create a randomizer for the dome background, manually triggered at custom events
-dir_backgrounds = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/backgrounds/" 
+dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
 with rep.trigger.on_custom_event(event_name="randomize_dome_background"):
-    # dome_textures = [
-    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/autoshop_01_4k.hdr",
-    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/carpentry_shop_01_4k.hdr",
-    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/hotel_room_4k.hdr",
-    #     assets_root_path + "/NVIDIA/Assets/Skies/Indoor/wooden_lounge_4k.hdr",
-    # ]
-    dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
     dome_light = rep.create.light(light_type="Dome")
     with dome_light:
         rep.modify.attribute("inputs:texture:file", rep.distribution.choice(dome_textures))
         rep.randomizer.rotation()
-
-# with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
-#     tag_textures = [
-#         "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png", 
-#         "/home/rp/Downloads/r2d2.jpeg", 
-#     ]
-#     import pdb; pdb.set_trace()
-#     plane = rep.create.plane(
-#         position=rep.distribution.uniform((0,0,0), (100, 100, 100)),
-#         scale=2,
-#         rotation=(45, 45, 0),
-#         semantics=[("class", "plane")],
-#     )
-#     with plane: 
-#         rep.modify.attribute("diffuse_texture", rep.distribution.choice(tag_textures)) 
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -588,7 +604,7 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 # Initial trigger for randomizers before the SDG loop with several app updates (ensures materials/textures are loaded)
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 rep.utils.send_og_event(event_name="randomize_dome_background")
-# rep.utils.send_og_event(event_name="randomize_tag_texture") 
+rep.utils.send_og_event(event_name="randomize_tag_texture") 
 for _ in range(5):
     simulation_app.update()
 
@@ -608,44 +624,42 @@ wall_time_start = time.perf_counter()
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 for i in range(num_frames):
 
+    if i % 1 == 0: 
+        print(f"\t Randomizing marker texture") 
+        rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
-    # Cameras will be moved to a random position and look at a randomly selected labeled asset
-    if i % 3 == 0:
-        print(f"\t Randomizing camera poses")
-        randomize_camera_poses()
-        # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
-        if camera_colliders:
-            simulate_camera_collision(num_frames=4)
+    # # Cameras will be moved to a random position and look at a randomly selected labeled asset
+    # if i % 3 == 0:
+    #     print(f"\t Randomizing camera poses")
+    #     randomize_camera_poses()
+    #     # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
+    #     if camera_colliders:
+    #         simulate_camera_collision(num_frames=4)
 
     # Apply a random velocity towards the origin to the working area to pull the assets closer to the center
     # if i % 10 == 0:
     #     print(f"\t Applying velocity towards the origin")
     #     apply_velocities_towards_target(chain(labeled_prims, shape_distractors, mesh_distractors))
 
-    # Randomize lights locations and colors
-    if i % 5 == 0:
-        print(f"\t Randomizing lights")
-        rep.utils.send_og_event(event_name="randomize_lights")
+    # # Randomize lights locations and colors
+    # if i % 5 == 0:
+    #     print(f"\t Randomizing lights")
+    #     rep.utils.send_og_event(event_name="randomize_lights")
 
-    # Randomize the colors of the primitive shape distractors
-    if i % 15 == 0:
-        print(f"\t Randomizing shape distractors colors")
-        rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
+    # # Randomize the colors of the primitive shape distractors
+    # if i % 15 == 0:
+    #     print(f"\t Randomizing shape distractors colors")
+    #     rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 
-    # Randomize the texture of the dome background
-    if i % 25 == 0:
-        print(f"\t Randomizing dome background")
-        rep.utils.send_og_event(event_name="randomize_dome_background")
+    # # Randomize the texture of the dome background
+    # if i % 25 == 0:
+    #     print(f"\t Randomizing dome background")
+    #     rep.utils.send_og_event(event_name="randomize_dome_background")
 
-    # Apply a random velocity on the floating distractors (shapes and meshes)
-    if i % 17 == 0:
-        print(f"\t Randomizing shape distractors velocities")
-        rep.utils.send_og_event(event_name="randomize_floating_distractor_velocities")
-
-    # Randomize the tag texture 
-    # if i % 3 == 0:
-    #     print(f"\t Randomizing tag texture")
-    #     rep.utils.send_og_event(event_name="randomize_tag_texture")
+    # # Apply a random velocity on the floating distractors (shapes and meshes)
+    # if i % 17 == 0:
+    #     print(f"\t Randomizing shape distractors velocities")
+    #     rep.utils.send_og_event(event_name="randomize_floating_distractor_velocities")
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
