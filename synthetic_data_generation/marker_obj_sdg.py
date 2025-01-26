@@ -1,7 +1,6 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# add semantic labels back in and re-activate randomizations  
 # randomize pose of marker  
 # get tag pose 
 # output segmentation along with rgb image 
@@ -135,6 +134,88 @@ from omni.physx import get_physx_interface, get_physx_scene_query_interface
 from pxr import PhysxSchema, Sdf, UsdGeom, UsdPhysics
 from pxr import Usd, UsdShade, Gf
 
+# HELPER FUNCTIONS
+# Add transformation properties to the prim (if not already present)
+def set_transform_attributes(prim, location=None, orientation=None, rotation=None, scale=None):
+    if location is not None:
+        if not prim.HasAttribute("xformOp:translate"):
+            UsdGeom.Xformable(prim).AddTranslateOp()
+        prim.GetAttribute("xformOp:translate").Set(location)
+    if orientation is not None:
+        if not prim.HasAttribute("xformOp:orient"):
+            UsdGeom.Xformable(prim).AddOrientOp()
+        prim.GetAttribute("xformOp:orient").Set(orientation)
+    if rotation is not None:
+        if not prim.HasAttribute("xformOp:rotateXYZ"):
+            UsdGeom.Xformable(prim).AddRotateXYZOp()
+        prim.GetAttribute("xformOp:rotateXYZ").Set(rotation)
+    if scale is not None:
+        if not prim.HasAttribute("xformOp:scale"):
+            UsdGeom.Xformable(prim).AddScaleOp()
+        prim.GetAttribute("xformOp:scale").Set(scale)
+
+
+# Enables collisions with the asset (without rigid body dynamics the asset will be static)
+def add_colliders(prim):
+    # Iterate descendant prims (including root) and add colliders to mesh or primitive types
+    for desc_prim in Usd.PrimRange(prim):
+        if desc_prim.IsA(UsdGeom.Mesh) or desc_prim.IsA(UsdGeom.Gprim):
+            # Physics
+            if not desc_prim.HasAPI(UsdPhysics.CollisionAPI):
+                collision_api = UsdPhysics.CollisionAPI.Apply(desc_prim)
+            else:
+                collision_api = UsdPhysics.CollisionAPI(desc_prim)
+            collision_api.CreateCollisionEnabledAttr(True)
+            # PhysX
+            if not desc_prim.HasAPI(PhysxSchema.PhysxCollisionAPI):
+                physx_collision_api = PhysxSchema.PhysxCollisionAPI.Apply(desc_prim)
+            else:
+                physx_collision_api = PhysxSchema.PhysxCollisionAPI(desc_prim)
+            physx_collision_api.CreateRestOffsetAttr(0.0)
+
+        # Add mesh specific collision properties only to mesh types
+        if desc_prim.IsA(UsdGeom.Mesh):
+            if not desc_prim.HasAPI(UsdPhysics.MeshCollisionAPI):
+                mesh_collision_api = UsdPhysics.MeshCollisionAPI.Apply(desc_prim)
+            else:
+                mesh_collision_api = UsdPhysics.MeshCollisionAPI(desc_prim)
+            mesh_collision_api.CreateApproximationAttr().Set("convexHull")
+
+
+# Enables rigid body dynamics (physics simulation) on the prim (having valid colliders is recommended)
+def add_rigid_body_dynamics(prim, disable_gravity=False, angular_damping=None):
+    # Physics
+    if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        rigid_body_api = UsdPhysics.RigidBodyAPI.Apply(prim)
+    else:
+        rigid_body_api = UsdPhysics.RigidBodyAPI(prim)
+    rigid_body_api.CreateRigidBodyEnabledAttr(True)
+    # PhysX
+    if not prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI):
+        physx_rigid_body_api = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
+    else:
+        physx_rigid_body_api = PhysxSchema.PhysxRigidBodyAPI(prim)
+    physx_rigid_body_api.GetDisableGravityAttr().Set(disable_gravity)
+    if angular_damping is not None:
+        physx_rigid_body_api.CreateAngularDampingAttr().Set(angular_damping)
+
+
+# Create a new prim with the provided asset URL and transform properties
+def create_asset(stage, asset_url, path, location=None, rotation=None, orientation=None, scale=None):
+    prim_path = omni.usd.get_stage_next_free_path(stage, path, False)
+    reference_url = asset_url if asset_url.startswith("omniverse://") else get_assets_root_path() + asset_url
+    prim = stage.DefinePrim(prim_path, "Xform")
+    prim.GetReferences().AddReference(reference_url)
+    set_transform_attributes(prim, location=location, rotation=rotation, orientation=orientation, scale=scale)
+    return prim
+
+
+# Create a new prim with the provided asset URL and transform properties including colliders
+def create_asset_with_colliders(stage, asset_url, path, location=None, rotation=None, orientation=None, scale=None):
+    prim = create_asset(stage, asset_url, path, location, rotation, orientation, scale)
+    add_colliders(prim)
+    return prim
+
 # Isaac nucleus assets root path
 assets_root_path = get_assets_root_path()
 stage = None
@@ -224,9 +305,13 @@ for obj in labeled_assets_and_properties:
             scale = rand_scale, 
             rotation = rand_rot,   
             name = "tag0", 
+            semantics=[("class", label)],
         )
+        prim = tag.get_output_prims()["prims"][0] 
+        set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+        add_colliders(prim)
+        add_rigid_body_dynamics(prim, disable_gravity=floating)
 
-        # rep.bind.material(prim, mat)
         with tag:       
             mat = rep.create.material_omnipbr(
                 diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png",
@@ -237,26 +322,14 @@ for obj in labeled_assets_and_properties:
             )    
             rep.modify.material(mat) 
         
-        # material_path = obj.get("material", "")
-        # # material = assets_root_path + "/NVIDIA/Materials/vMaterials_2/Glass/Glass_Clear.mdl"
-        # if material is not "": 
-        #     # success, result = omni.kit.commands.execute('CreateMdlMaterialPrimCommand',
-        #     #                                             mtl_url=material,
-        #     #                                             mtl_name='AprilTag',
-        #     #                                             mtl_path="/World/Looks/AprilTag")
-        #     # mat = UsdShade.Material(stage.GetPrimAtPath("/World/Looks/AprilTag"))   
-        #     success, result = omni.kit.commands.execute('BindMaterial',
-        #                                                 prim_path=asset_path,
-        #                                                 material_path=material)
-        # Label the asset (any previous 'class' label will be overwritten)
+        # prim = rep.get.prim_at_path("/Replicator/tag0_Xform") # FIXME: make this generalized instead of hard-coded 
+        
+        if floating:
+            floating_labeled_prims.append(prim)
+        else:
+            falling_labeled_prims.append(prim)
 
-        # add_update_semantics(prim, label)
-        # if floating:
-        #     floating_labeled_prims.append(prim)
-        # else:
-        #     falling_labeled_prims.append(prim)
-
-# labeled_prims = floating_labeled_prims + falling_labeled_prims
+labeled_prims = floating_labeled_prims + falling_labeled_prims
 
 # trying: https://forums.developer.nvidia.com/t/seeking-a-faster-method-to-apply-materials-to-specific-prims-in-a-large-scene-as-current-approaches-are-too-slow/301080 
 # paths = []
@@ -452,6 +525,7 @@ def randomize_camera_poses():
             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
         )
         target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
+        # target_loc = target_asset.__getattribute__("position").Get() + loc_offset
         # Get a random distance to the target asset
         distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
         # Get a random pose of the camera looking at the target asset from the given distance
@@ -628,33 +702,33 @@ for i in range(num_frames):
         print(f"\t Randomizing marker texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
-    # # Cameras will be moved to a random position and look at a randomly selected labeled asset
-    # if i % 3 == 0:
-    #     print(f"\t Randomizing camera poses")
-    #     randomize_camera_poses()
-    #     # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
-    #     if camera_colliders:
-    #         simulate_camera_collision(num_frames=4)
+    # Cameras will be moved to a random position and look at a randomly selected labeled asset
+    if i % 3 == 0:
+        print(f"\t Randomizing camera poses")
+        randomize_camera_poses()
+        # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
+        if camera_colliders:
+            simulate_camera_collision(num_frames=4)
 
-    # Apply a random velocity towards the origin to the working area to pull the assets closer to the center
+    # # Apply a random velocity towards the origin to the working area to pull the assets closer to the center
     # if i % 10 == 0:
     #     print(f"\t Applying velocity towards the origin")
     #     apply_velocities_towards_target(chain(labeled_prims, shape_distractors, mesh_distractors))
 
-    # # Randomize lights locations and colors
-    # if i % 5 == 0:
-    #     print(f"\t Randomizing lights")
-    #     rep.utils.send_og_event(event_name="randomize_lights")
+    # Randomize lights locations and colors
+    if i % 5 == 0:
+        print(f"\t Randomizing lights")
+        rep.utils.send_og_event(event_name="randomize_lights")
 
     # # Randomize the colors of the primitive shape distractors
     # if i % 15 == 0:
     #     print(f"\t Randomizing shape distractors colors")
     #     rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 
-    # # Randomize the texture of the dome background
-    # if i % 25 == 0:
-    #     print(f"\t Randomizing dome background")
-    #     rep.utils.send_og_event(event_name="randomize_dome_background")
+    # Randomize the texture of the dome background
+    if i % 25 == 0:
+        print(f"\t Randomizing dome background")
+        rep.utils.send_og_event(event_name="randomize_dome_background")
 
     # # Apply a random velocity on the floating distractors (shapes and meshes)
     # if i % 17 == 0:
