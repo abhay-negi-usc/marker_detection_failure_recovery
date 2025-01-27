@@ -6,3 +6,5 @@ see materials commands available here: https://docs.omniverse.nvidia.com/kit/doc
 Examples: 
 https://github.com/DarioRepoRuler/synthetic_data/blob/main/synthetic_generator.py
 https://github.com/NVIDIA-Omniverse/synthetic-data-examples 
+https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_snippets.html#custom-event-randomization-and-writing
+https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_randomizers.html

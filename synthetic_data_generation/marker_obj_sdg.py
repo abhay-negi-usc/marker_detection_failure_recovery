@@ -1,8 +1,6 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# randomize pose of marker  
-# get tag pose 
 # output segmentation along with rgb image 
 
 import argparse
@@ -17,6 +15,8 @@ import asyncio
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
 os.makedirs(OUT_DIR, exist_ok=True) 
+dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
+tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) if os.path.isfile(os.path.join(dir_textures, f))] 
 
 # Default config dict, can be updated/replaced using json/yaml config files ('--config' cli argument)
 config = {
@@ -28,7 +28,7 @@ config = {
     "working_area_size": (4, 4, 3),
     "rt_subframes": 4,
     "num_frames": 100,
-    "num_cameras": 3,
+    "num_cameras": 4,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
     "simulation_duration_between_captures": 0.05,
@@ -39,8 +39,8 @@ config = {
         "fStop": 0.0,
         "clippingRange": (0.01, 10000),
     },
-    "camera_look_at_target_offset": 0.15,
-    "camera_distance_to_target_min_max": (0.25, 0.75),
+    "camera_look_at_target_offset": 0.5,
+    "camera_distance_to_target_min_max": (0.100, 1.000),
     "writer_type": "PoseWriter",
     "writer_kwargs": {
         "output_dir": OUT_DIR,
@@ -65,14 +65,11 @@ config = {
         #     "scale_min_max": (0.85, 1.25),
         # },
         {
-            # "url": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/usd/tag0_v2.usd", 
-            "url": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Props/Shapes/plane.usd", 
-            # "material": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Materials/AprilTag/AprilTag.mdl", 
-            # "material": "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/materials/Gold_Foil_Shiny_Wrinkled.usd", 
+            # "url": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Props/Shapes/plane.usd", 
             "label": "tag0", 
             "count": 1, 
             "floating": True, 
-            "scale_min_max": (1.0, 1.0),  
+            "scale_min_max": (0.1, 0.1), 
         }
     ],
     "shape_distractors_types": ["capsule", "cone", "cylinder", "sphere", "cube"],
@@ -240,16 +237,6 @@ else:
         UsdGeom.Xformable(distant_light).AddRotateXYZOp()
     distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
 
-mtl_created_list = []
-omni.kit.commands.execute(
-    "CreateAndBindMdlMaterialFromLibrary",
-    mdl_name="OmniPBR.mdl",
-    mtl_name="OmniPBR",
-    mtl_created_list=mtl_created_list,
-), 
-mtl_prim = stage.GetPrimAtPath(mtl_created_list[0]) 
-omni.usd.create_material_input(mtl_prim, "diffuse_texture", "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png", Sdf.ValueTypeNames.Asset)
-
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (3, 3, 3))
 working_area_min = (working_area_size[0] / -2, working_area_size[1] / -2, working_area_size[2] / -2)
@@ -282,7 +269,7 @@ for obj in labeled_assets_and_properties:
     label = obj.get("label", "unknown")
     count = obj.get("count", 1)
     floating = obj.get("floating", False)
-    scale_min_max = obj.get("randomize_scale", (1, 1))
+    scale_min_max = obj.get("scale_min_max", (1, 1))
     for i in range(count):
         # Create a prim and add the asset reference
         rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
@@ -314,39 +301,20 @@ for obj in labeled_assets_and_properties:
 
         with tag:       
             mat = rep.create.material_omnipbr(
-                diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png",
+                # diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png",
+                diffuse_texture=tag_textures[0],
                 roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
                 metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
                 emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
                 emissive_intensity=rep.distribution.uniform(0, 1000),
             )    
             rep.modify.material(mat) 
-        
-        # prim = rep.get.prim_at_path("/Replicator/tag0_Xform") # FIXME: make this generalized instead of hard-coded 
-        
         if floating:
             floating_labeled_prims.append(prim)
         else:
             falling_labeled_prims.append(prim)
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
-
-# trying: https://forums.developer.nvidia.com/t/seeking-a-faster-method-to-apply-materials-to-specific-prims-in-a-large-scene-as-current-approaches-are-too-slow/301080 
-# paths = []
-# for prim in stage.Traverse():
-#     if prim.GetTypeName() == "Xform":
-#         paths.append(prim.GetPath().pathString)
-
-# Set using individual USD material binding API calls
-# for path in paths:
-#    prim = stage.GetPrimAtPath(path)
-#    prim.ApplyAPI(UsdShade.MaterialBindingAPI)
-#    UsdShade.MaterialBindingAPI(prim).Bind(material_white, UsdShade.Tokens.weakerThanDescendants, UsdShade.Tokens.allPurpose)
-
-# for path in paths:
-#     fabric_prim = fabric_stage.GetPrimAtPath(usdrt.Sdf.Path(path))
-#     bindingAPI = usdrt.UsdShade.MaterialBindingAPI(fabric_prim)
-#     bindingAPI.Bind(usdrt_material_white)
 
 # DISTRACTORS
 # Add shape distractors to the environment as floating or falling objects
@@ -525,7 +493,6 @@ def randomize_camera_poses():
             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
         )
         target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
-        # target_loc = target_asset.__getattribute__("position").Get() + loc_offset
         # Get a random distance to the target asset
         distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
         # Get a random pose of the camera looking at the target asset from the given distance
@@ -577,12 +544,7 @@ with rep.trigger.on_custom_event(event_name="randomize_lights"):
         count=3,
     )
 
-tag_textures = [
-    "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11-0.png",
-    "/home/rp/Downloads/r2d2.jpeg",
-]    
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
-    print(f"\t Randomizing tag texture") 
     with tag:       
         mat = rep.create.material_omnipbr(
             diffuse_texture=rep.distribution.choice(tag_textures),
@@ -679,6 +641,7 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 rep.utils.send_og_event(event_name="randomize_dome_background")
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
+print("[SDG] Initial randomizers triggered") 
 for _ in range(5):
     simulation_app.update()
 
@@ -696,6 +659,7 @@ simulation_app.update()
 wall_time_start = time.perf_counter()
 
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
+print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
 
     if i % 1 == 0: 
