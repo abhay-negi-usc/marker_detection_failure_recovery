@@ -2,6 +2,10 @@
 
 # TODO: 
 # output segmentation along with rgb image 
+# add variable light sources: dome light, directional light, point light, spot light 
+# add distractors: mesh, shape, texture 
+# add distractor randomization: color, texture, position, rotation, scale 
+# add distractor physics: floating, falling, bouncing 
 
 import argparse
 import json
@@ -48,6 +52,8 @@ config = {
         "use_subfolders": False,
         "write_debug_images": True,
         "skip_empty_frames": False,
+        # "semantic_segmentation": True,  
+        # "colorize_semantic_segmentation": True,
     },
     "labeled_assets_and_properties": [
         # {
@@ -275,18 +281,7 @@ for obj in labeled_assets_and_properties:
         rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
             loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
         )
-        # prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Labeled/{label}", False)
-        # prim = stage.DefinePrim(prim_path, "Xform")
-        # # asset_path = obj_url if obj_url.startswith("omniverse://") else assets_root_path + obj_url
-        # asset_path = obj_url if obj_url.startswith("omniverse://") else obj_url
-        # prim.GetReferences().AddReference(asset_path)
-        # object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
-        # object_based_sdg_utils.add_colliders(prim)
-        # object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=floating)
 
-        # prim_mat_shade = UsdShade.Material(mtl_prim)  
-        # UsdShade.MaterialBindingAPI(prim).Bind(prim_mat_shade, UsdShade.Tokens.strongerThanDescendants) 
-        
         tag = rep.create.plane(
             position = rand_loc,
             scale = rand_scale, 
