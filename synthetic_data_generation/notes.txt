@@ -5,3 +5,4 @@ https://github.com/NVIDIA-Omniverse/synthetic-data-examples
 https://github.com/DarioRepoRuler/synthetic_data/blob/main/synthetic_generator.py
 https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_snippets.html#custom-event-randomization-and-writing
 https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_randomizers.html
+https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_pose_estimation.html 

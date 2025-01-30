@@ -1,6 +1,7 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
+# output pose data corresponding to each image AND segmentation image 
 # add variable light sources: dome light, directional light, point light, spot light 
 # add distractors: mesh, shape, texture 
 # add distractor randomization: color, texture, position, rotation, scale 
@@ -20,7 +21,10 @@ import numpy as np
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
-os.makedirs(OUT_DIR, exist_ok=True) 
+os.makedirs(OUT_DIR, exist_ok=True)
+os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
+os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
+os.makedirs(os.path.join(OUT_DIR,"pose"), exist_ok=True) 
 dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
 tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) if os.path.isfile(os.path.join(dir_textures, f))] 
 
@@ -28,13 +32,13 @@ tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) 
 config = {
     "launch_config": {
         "renderer": "RayTracedLighting",
-        "headless": False,
+        "headless": True,
     },
     "env_url": "",
     "working_area_size": (4, 4, 3),
     "rt_subframes": 4,
     "num_frames": 100,
-    "num_cameras": 4,
+    "num_cameras": 1,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
     "simulation_duration_between_captures": 0.05,
@@ -291,10 +295,10 @@ for obj in labeled_assets_and_properties:
             name = "tag0", 
             semantics=[("class", label)],
         )
-        prim = tag.get_output_prims()["prims"][0] 
-        set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
-        add_colliders(prim)
-        add_rigid_body_dynamics(prim, disable_gravity=floating)
+        tag_prim = tag.get_output_prims()["prims"][0] 
+        set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+        add_colliders(tag_prim)
+        add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
             mat = rep.create.material_omnipbr(
@@ -307,9 +311,9 @@ for obj in labeled_assets_and_properties:
             )    
             rep.modify.material(mat) 
         if floating:
-            floating_labeled_prims.append(prim)
+            floating_labeled_prims.append(tag_prim)
         else:
-            falling_labeled_prims.append(prim)
+            falling_labeled_prims.append(tag_prim)
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
@@ -414,7 +418,7 @@ disable_render_products_between_captures = config.get("disable_render_products_b
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
 
-## WRITER 
+# # WRITER 
 # # Create the writer and attach the render products
 # writer_type = config.get("writer_type", "PoseWriter")
 # writer_kwargs = config.get("writer_kwargs", {})
@@ -429,12 +433,6 @@ if disable_render_products_between_captures:
 #     writer = rep.writers.get(writer_type)
 #     writer.initialize(**writer_kwargs)
 #     writer.attach(render_products)
-
-writer = rep.WriterRegistry.get("BasicWriter")
-writer.initialize(
-    output_dir=f"{OUT_DIR}", rgb=True, semantic_segmentation=True, colorize_semantic_segmentation=True
-)
-writer.attach(rp)
 
 # Example of accessing the data directly from annotators
 rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -455,6 +453,10 @@ def write_sem_data(sem_data, file_path):
     sem_image_data = np.frombuffer(sem_data["data"], dtype=np.uint8).reshape(*sem_data["data"].shape, -1)
     sem_img = Image.fromarray(sem_image_data, "RGBA")
     sem_img.save(file_path + ".png")
+
+def write_pose_data(pose_data, file_path):
+    with open(file_path + ".json", "w") as f:
+        json.dump(pose_data, f) 
 
 # RANDOMIZERS
 # Apply a random (mostly) uppwards velocity to the objects overlapping the 'bounce' area
@@ -733,6 +735,18 @@ for i in range(num_frames):
         capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
     else:
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
+
+    # gather pose data 
+    xform_cam = UsdGeom.Xformable(cam) 
+    tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0) 
+    tf_cam = np.asarray(tf_cam_pxr) 
+    xform_tag = UsdGeom.Xformable(tag_prim) 
+    tf_cam_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
+    tf_tag = np.asarray(tf_cam_pxr) 
+    pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist()} 
+    write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
+    write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
+    write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
 
     # Disable render products between captures
     if disable_render_products_between_captures:
