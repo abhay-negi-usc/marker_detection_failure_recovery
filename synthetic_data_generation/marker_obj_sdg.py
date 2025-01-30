@@ -1,7 +1,6 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# output segmentation along with rgb image 
 # add variable light sources: dome light, directional light, point light, spot light 
 # add distractors: mesh, shape, texture 
 # add distractor randomization: color, texture, position, rotation, scale 
@@ -15,6 +14,9 @@ import yaml
 from isaacsim import SimulationApp
 import time 
 import asyncio
+from PIL import Image
+import numpy as np 
+
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
@@ -412,20 +414,47 @@ disable_render_products_between_captures = config.get("disable_render_products_b
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
 
-# Create the writer and attach the render products
-writer_type = config.get("writer_type", "PoseWriter")
-writer_kwargs = config.get("writer_kwargs", {})
-# If not an absolute path, set it relative to the current working directory
-if out_dir := writer_kwargs.get("output_dir"):
-    if not os.path.isabs(out_dir):
-        out_dir = os.path.join(out_dir)
-        import pdb; pdb.set_trace()
-        writer_kwargs["output_dir"] = out_dir
-    print(f"[SDG] Writing data to: {out_dir}")
-if writer_type is not None and len(render_products) > 0:
-    writer = rep.writers.get(writer_type)
-    writer.initialize(**writer_kwargs)
-    writer.attach(render_products)
+## WRITER 
+# # Create the writer and attach the render products
+# writer_type = config.get("writer_type", "PoseWriter")
+# writer_kwargs = config.get("writer_kwargs", {})
+# # If not an absolute path, set it relative to the current working directory
+# if out_dir := writer_kwargs.get("output_dir"):
+#     if not os.path.isabs(out_dir):
+#         out_dir = os.path.join(out_dir)
+#         import pdb; pdb.set_trace()
+#         writer_kwargs["output_dir"] = out_dir
+#     print(f"[SDG] Writing data to: {out_dir}")
+# if writer_type is not None and len(render_products) > 0:
+#     writer = rep.writers.get(writer_type)
+#     writer.initialize(**writer_kwargs)
+#     writer.attach(render_products)
+
+writer = rep.WriterRegistry.get("BasicWriter")
+writer.initialize(
+    output_dir=f"{OUT_DIR}", rgb=True, semantic_segmentation=True, colorize_semantic_segmentation=True
+)
+writer.attach(rp)
+
+# Example of accessing the data directly from annotators
+rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
+rgb_annot.attach(rp)
+sem_annot = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": True})
+sem_annot.attach(rp)
+
+# Util function to save rgb annotator data
+def write_rgb_data(rgb_data, file_path):
+    rgb_img = Image.fromarray(rgb_data, "RGBA")
+    rgb_img.save(file_path + ".png")
+
+# Util function to save semantic segmentation annotator data
+def write_sem_data(sem_data, file_path):
+    id_to_labels = sem_data["info"]["idToLabels"]
+    with open(file_path + ".json", "w") as f:
+        json.dump(id_to_labels, f)
+    sem_image_data = np.frombuffer(sem_data["data"], dtype=np.uint8).reshape(*sem_data["data"].shape, -1)
+    sem_img = Image.fromarray(sem_image_data, "RGBA")
+    sem_img.save(file_path + ".png")
 
 # RANDOMIZERS
 # Apply a random (mostly) uppwards velocity to the objects overlapping the 'bounce' area
