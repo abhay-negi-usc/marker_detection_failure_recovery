@@ -578,6 +578,7 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
 # Create a randomizer for lights in the working area, manually triggered at custom events
 with rep.trigger.on_custom_event(event_name="randomize_lights"):
     # types: "cylinder" "disk" "distant" "dome" "rect" "sphere"
+    
     lights = rep.create.light(
         light_type="Sphere",
         color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
@@ -621,15 +622,6 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_pose"):
         # rep.randomizer.translation() 
         rep.randomizer.rotation() 
         # rep.randomizer.scale() 
-
-# Create a randomizer for the dome background, manually triggered at custom events
-# dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
-# dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
-# with rep.trigger.on_custom_event(event_name="randomize_dome_background"):
-#     dome_light = rep.create.light(light_type="Dome")
-#     with dome_light:
-#         rep.modify.attribute("inputs:texture:file", rep.distribution.choice(dome_textures))
-#         rep.randomizer.rotation()
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -731,7 +723,7 @@ wall_time_start = time.perf_counter()
 print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
 
-    if i % 1 == 0: 
+    if i % 3 == 0: 
         print(f"\t Randomizing marker texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
         print(f"\t Randomizing marker pose")
@@ -740,7 +732,7 @@ for i in range(num_frames):
         rep.utils.send_og_event(event_name="randomize_plane_texture") 
     
     # Cameras will be moved to a random position and look at a randomly selected labeled asset
-    if i % 3 == 0:
+    if i % 1 == 0:
         print(f"\t Randomizing camera poses")
         randomize_camera_poses()
         # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects

@@ -1,7 +1,7 @@
 SYNTHETIC DATA GENERATION  
 
 Isaac Sim Data Generation: 
-* add variable light sources: dome light, directional light, point light, spot light 
+* add variable light sources
 * add distractors: mesh, shape, texture 
 * add distractor randomization: color, texture, position, rotation, scale 
 * add distractor physics: floating, falling, bouncing 

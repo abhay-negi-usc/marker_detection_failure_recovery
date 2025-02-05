@@ -1,4 +1,6 @@
+Forum: https://forums.developer.nvidia.com/
 Replicator: https://docs.omniverse.nvidia.com/py/replicator/1.11.16/source/extensions/omni.replicator.core/docs/API.html#module-omni.replicator.core 
+Lights: https://docs.omniverse.nvidia.com/materials-and-rendering/latest/lighting.html
 
 Examples: 
 https://github.com/NVIDIA-Omniverse/synthetic-data-examples 
@@ -6,3 +8,16 @@ https://github.com/DarioRepoRuler/synthetic_data/blob/main/synthetic_generator.p
 https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_snippets.html#custom-event-randomization-and-writing
 https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_isaac_randomizers.html
 https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/tutorial_replicator_pose_estimation.html 
+
+
+Lighting: 
+
+- desired lighting effects: 
+    - high/low brightness <-- light brightness [DONE]
+    - shadows <-- objects between light source and marker, or texture on light, or post-processing 
+    - sun/earth <-- distant light 
+    - illuminator <-- rect light  
+    - glare <-- high intensity medium disk light directed at marker 
+    - glint/stray light <-- high intensity small disk light directed at camera 
+
+    
