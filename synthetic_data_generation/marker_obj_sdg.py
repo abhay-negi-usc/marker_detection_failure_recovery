@@ -1,4 +1,4 @@
-# ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
+# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 import argparse
 import json
@@ -20,7 +20,8 @@ match os.getcwd():
     case '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
         OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
         dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
-        sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
+        # sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
+        sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
         dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     case _: # boeing machine 
         OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
@@ -86,7 +87,7 @@ config = {
             "label": "tag0", 
             "count": 1, 
             "floating": True, 
-            "scale_min_max": (0.1, 0.1), 
+            "scale_min_max": (0.1, 0.1), # default plane is 100cm x 100cm, 0.1 scale makes this 10cm x 10cm 
         }
     ],
     "shape_distractors_types": ["capsule", "cone", "cylinder", "sphere", "cube"],
@@ -247,12 +248,12 @@ if env_url:
 else:
     omni.usd.get_context().new_stage()
     stage = omni.usd.get_context().get_stage()
-    # Add a distant light to the empty stage
-    distant_light = stage.DefinePrim("/World/Lights/DistantLight", "DistantLight")
-    distant_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
-    if not distant_light.HasAttribute("xformOp:rotateXYZ"):
-        UsdGeom.Xformable(distant_light).AddRotateXYZOp()
-    distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
+    # # Add a distant light to the empty stage
+    # distant_light = stage.DefinePrim("/World/Lights/DistantLight", "DistantLight")
+    # distant_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
+    # if not distant_light.HasAttribute("xformOp:rotateXYZ"):
+    #     UsdGeom.Xformable(distant_light).AddRotateXYZOp()
+    # distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
 
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (3, 3, 3))
@@ -574,19 +575,53 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
 #             angular_velocity=rep.distribution.uniform((-45, -45, -45), (45, 45, 45)),
 #         )
 
-
 # Create a randomizer for lights in the working area, manually triggered at custom events
-with rep.trigger.on_custom_event(event_name="randomize_lights"):
-    # types: "cylinder" "disk" "distant" "dome" "rect" "sphere"
-    
+with rep.trigger.on_custom_event(event_name="randomize_distant_light"):
+    rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+            loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
+        )
     lights = rep.create.light(
-        light_type="Sphere",
+        light_type="distant",
         color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
         temperature=rep.distribution.normal(6500, 500),
-        intensity=rep.distribution.normal(35000, 5000),
+        # intensity=rep.distribution.normal(35000, 5000),
+        intensity=1.0, 
+        exposure=rep.distribution.uniform(4, 16), 
         position=rep.distribution.uniform(working_area_min, working_area_max),
-        scale=rep.distribution.uniform(0.1, 1),
-        count=3,
+        rotation=rand_rot, 
+        # position=(0,0,0),
+        # rotation=rep.randomizer.rotation(), 
+        # scale=rep.distribution.uniform(0.1, 1),
+        count=1,
+    )
+
+with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
+    
+    target_asset = tag_prim # FIXME: this should be 
+    # Add a look_at offset so the target is not always in the center of the camera view
+    loc_offset = (
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+    )
+    target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
+    # Get a random distance to the target asset
+    distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
+    # Get a random pose of the camera looking at the target asset from the given distance
+    loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+
+    lights = rep.create.light(
+        light_type="rect",
+        color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+        temperature=rep.distribution.normal(6500, 500),
+        # intensity=rep.distribution.normal(35000, 5000),
+        intensity=1.0, 
+        exposure=rep.distribution.uniform(4, 16), 
+        # position=rep.distribution.uniform(working_area_min, working_area_max),
+        position=loc, 
+        # rotation=quat, # FIXME: convert quat to something usable for rotation  
+        # scale=rep.distribution.uniform(0.1, 1),
+        count=1,
     )
 
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
@@ -747,7 +782,9 @@ for i in range(num_frames):
     # Randomize lights locations and colors
     if i % 5 == 0:
         print(f"\t Randomizing lights")
-        rep.utils.send_og_event(event_name="randomize_lights")
+        # rep.utils.send_og_event(event_name="randomize_lights")
+        # rep.utils.send_og_event(event_name="randomize_distant_light")
+        rep.utils.send_og_event(event_name="randomize_rect_light")
 
     # # Randomize the colors of the primitive shape distractors
     # if i % 15 == 0:

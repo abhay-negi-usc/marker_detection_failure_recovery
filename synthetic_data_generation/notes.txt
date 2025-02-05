@@ -15,9 +15,8 @@ Lighting:
 - desired lighting effects: 
     - high/low brightness <-- light brightness [DONE]
     - shadows <-- objects between light source and marker, or texture on light, or post-processing 
-    - sun/earth <-- distant light 
+    - sun/earth <-- distant light [DONE]
     - illuminator <-- rect light  
     - glare <-- high intensity medium disk light directed at marker 
     - glint/stray light <-- high intensity small disk light directed at camera 
 
-    
