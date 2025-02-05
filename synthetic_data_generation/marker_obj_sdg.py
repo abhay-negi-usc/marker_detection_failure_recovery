@@ -1,7 +1,8 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
 # TODO: 
-# output pose data corresponding to each image AND segmentation image 
+# refactor code such that marker is static in xy plane 
+# refactor code such that background image is a plane behind the marker 
 # add variable light sources: dome light, directional light, point light, spot light 
 # add distractors: mesh, shape, texture 
 # add distractor randomization: color, texture, position, rotation, scale 
@@ -32,7 +33,7 @@ tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) 
 config = {
     "launch_config": {
         "renderer": "RayTracedLighting",
-        "headless": True,
+        "headless": False,
     },
     "env_url": "",
     "working_area_size": (4, 4, 3),
@@ -49,7 +50,7 @@ config = {
         "fStop": 0.0,
         "clippingRange": (0.01, 10000),
     },
-    "camera_look_at_target_offset": 0.5,
+    "camera_look_at_target_offset": 0.,
     "camera_distance_to_target_min_max": (0.100, 1.000),
     "writer_type": "PoseWriter",
     "writer_kwargs": {
@@ -269,7 +270,6 @@ else:
     physx_scene = PhysxSchema.PhysxSceneAPI.Apply(stage.GetPrimAtPath("/PhysicsScene"))
 physx_scene.GetTimeStepsPerSecondAttr().Set(60)
 
-
 # TRAINING ASSETS
 # Add the objects to be trained in the environment with their labels and properties
 labeled_assets_and_properties = config.get("labeled_assets_and_properties", [])
@@ -288,8 +288,15 @@ for obj in labeled_assets_and_properties:
             loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
         )
 
+        # tag = rep.create.plane(
+        #     position = rand_loc,
+        #     scale = rand_scale, 
+        #     rotation = rand_rot,   
+        #     name = "tag0", 
+        #     semantics=[("class", label)],
+        # )
         tag = rep.create.plane(
-            position = rand_loc,
+            position = (0,0,0),
             scale = rand_scale, 
             rotation = rand_rot,   
             name = "tag0", 
@@ -298,7 +305,7 @@ for obj in labeled_assets_and_properties:
         tag_prim = tag.get_output_prims()["prims"][0] 
         set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
         add_colliders(tag_prim)
-        add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
+        # add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
             mat = rep.create.material_omnipbr(
@@ -314,6 +321,15 @@ for obj in labeled_assets_and_properties:
             floating_labeled_prims.append(tag_prim)
         else:
             falling_labeled_prims.append(tag_prim)
+
+# add a plane to the environment at (0,0,0) with scale (1,1,1) 
+background_plane = rep.create.plane(
+    position = (0,0,-1.0),
+    scale = (20,20,20), 
+    rotation = (0,0,0),   
+    name = "background_plane", 
+    semantics=[("class", "background")],
+)
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
@@ -413,10 +429,14 @@ for cam in cameras:
     rp = rep.create.render_product(cam.GetPath(), resolution)
     render_products.append(rp)
 
+print('mark 1')
+
 # Enable rendering only at capture time
 disable_render_products_between_captures = config.get("disable_render_products_between_captures", True)
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
+
+print('mark 2') 
 
 # # WRITER 
 # # Create the writer and attach the render products
@@ -439,6 +459,8 @@ rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
 rgb_annot.attach(rp)
 sem_annot = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": True})
 sem_annot.attach(rp)
+
+print('mark 3') 
 
 # Util function to save rgb annotator data
 def write_rgb_data(rgb_data, file_path):
@@ -478,6 +500,7 @@ overlap_area_extent = (
     overlap_area_thickness / 2 * 0.99,
 )
 
+print('mark 4')
 
 # Triggered every physics update step to check for overlapping objects
 def on_physics_step(dt: float):
@@ -493,6 +516,7 @@ def on_physics_step(dt: float):
 # Subscribe to the physics step events to check for objects overlapping the 'bounce' area
 physx_sub = get_physx_interface().subscribe_physics_step_events(on_physics_step)
 
+print('mark 5') 
 
 # Pull assets towards the working area center by applying a random velocity towards the given target
 def apply_velocities_towards_target(assets, target=(0, 0, 0)):
@@ -507,6 +531,7 @@ def apply_velocities_towards_target(assets, target=(0, 0, 0)):
 camera_distance_to_target_min_max = config.get("camera_distance_to_target_min_max", (0.1, 0.5))
 camera_look_at_target_offset = config.get("camera_look_at_target_offset", 0.2)
 
+print('mark 6') 
 
 def randomize_camera_poses():
     for cam in cameras:
@@ -547,6 +572,8 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
     with shape_distractors_group:
         rep.randomizer.color(colors=rep.distribution.uniform((0, 0, 0), (1, 1, 1)))
 
+print('mark 7') 
+
 # Create a randomizer to apply random velocities to the floating shape distractors
 # with rep.trigger.on_custom_event(event_name="randomize_floating_distractor_velocities"):
 #     shape_distractors_paths = [prim.GetPath() for prim in chain(floating_shape_distractors, floating_mesh_distractors)]
@@ -560,6 +587,7 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
 
 # Create a randomizer for lights in the working area, manually triggered at custom events
 with rep.trigger.on_custom_event(event_name="randomize_lights"):
+    # types: "cylinder" "disk" "distant" "dome" "rect" "sphere"
     lights = rep.create.light(
         light_type="Sphere",
         color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
@@ -581,14 +609,38 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
         )    
         rep.modify.material(mat) 
 
-# Create a randomizer for the dome background, manually triggered at custom events
 dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
-dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
-with rep.trigger.on_custom_event(event_name="randomize_dome_background"):
-    dome_light = rep.create.light(light_type="Dome")
-    with dome_light:
-        rep.modify.attribute("inputs:texture:file", rep.distribution.choice(dome_textures))
-        rep.randomizer.rotation()
+plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
+with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
+    with background_plane:       
+        mat = rep.create.material_omnipbr(
+            diffuse_texture=rep.distribution.choice(plane_textures),
+            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_intensity=rep.distribution.uniform(0, 1000),
+        )    
+        rep.modify.material(mat) 
+
+with rep.trigger.on_custom_event(event_name="randomize_tag_pose"): 
+    with tag:       
+        # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+        #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
+        # )
+        # rand_loc = (0,0,0)
+        # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+        # rep.randomizer.translation() 
+        rep.randomizer.rotation() 
+        # rep.randomizer.scale() 
+
+# Create a randomizer for the dome background, manually triggered at custom events
+# dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+# dome_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
+# with rep.trigger.on_custom_event(event_name="randomize_dome_background"):
+#     dome_light = rep.create.light(light_type="Dome")
+#     with dome_light:
+#         rep.modify.attribute("inputs:texture:file", rep.distribution.choice(dome_textures))
+#         rep.randomizer.rotation()
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -665,11 +717,15 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 
 # Initial trigger for randomizers before the SDG loop with several app updates (ensures materials/textures are loaded)
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
-rep.utils.send_og_event(event_name="randomize_dome_background")
+# rep.utils.send_og_event(event_name="randomize_dome_background")
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
+rep.utils.send_og_event(event_name="randomize_tag_pose") 
+rep.utils.send_og_event(event_name="randomize_plane_texture") 
 print("[SDG] Initial randomizers triggered") 
 for _ in range(5):
     simulation_app.update()
+
+print('mark 8') 
 
 # Set the timeline parameters (start, end, no looping) and start the timeline
 timeline = omni.timeline.get_timeline_interface()
@@ -684,6 +740,8 @@ simulation_app.update()
 # Store the wall start time for stats
 wall_time_start = time.perf_counter()
 
+print('mark 9') 
+
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
@@ -691,7 +749,11 @@ for i in range(num_frames):
     if i % 1 == 0: 
         print(f"\t Randomizing marker texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
-
+        print(f"\t Randomizing marker pose")
+        rep.utils.send_og_event(event_name="randomize_tag_pose") 
+        print(f"\t Randomizing plane background")   
+        rep.utils.send_og_event(event_name="randomize_plane_texture") 
+    
     # Cameras will be moved to a random position and look at a randomly selected labeled asset
     if i % 3 == 0:
         print(f"\t Randomizing camera poses")
@@ -716,9 +778,9 @@ for i in range(num_frames):
     #     rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 
     # Randomize the texture of the dome background
-    if i % 25 == 0:
-        print(f"\t Randomizing dome background")
-        rep.utils.send_og_event(event_name="randomize_dome_background")
+    # if i % 25 == 0:
+    #     print(f"\t Randomizing dome background")
+    #     rep.utils.send_og_event(event_name="randomize_dome_background")
 
     # # Apply a random velocity on the floating distractors (shapes and meshes)
     # if i % 17 == 0:
