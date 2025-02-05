@@ -17,11 +17,11 @@ import sys
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 print(os.getcwd())
 match os.getcwd(): 
-    case '/home/anegi/marker_detection_failure_recovery': # isaac machine 
-        OUT_DIR = os.path.join(os.getcwd(),"synthetic_data_generation","output","markers_"+timestr)
-        dir_textures = "/home/anegi/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
+    case '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
+        OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
+        dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
         sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
-        dir_backgrounds = "/home/anegi/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+        dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     case _: # boeing machine 
         OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
         dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
@@ -54,7 +54,7 @@ config = {
         "fStop": 0.0,
         "clippingRange": (0.01, 10000),
     },
-    "camera_look_at_target_offset": 0.,
+    "camera_look_at_target_offset": 0.25,
     "camera_distance_to_target_min_max": (0.100, 1.000),
     "writer_type": "PoseWriter",
     "writer_kwargs": {
@@ -433,14 +433,10 @@ for cam in cameras:
     rp = rep.create.render_product(cam.GetPath(), resolution)
     render_products.append(rp)
 
-print('mark 1')
-
 # Enable rendering only at capture time
 disable_render_products_between_captures = config.get("disable_render_products_between_captures", True)
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
-
-print('mark 2') 
 
 # # WRITER 
 # # Create the writer and attach the render products
@@ -463,8 +459,6 @@ rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
 rgb_annot.attach(rp)
 sem_annot = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": True})
 sem_annot.attach(rp)
-
-print('mark 3') 
 
 # Util function to save rgb annotator data
 def write_rgb_data(rgb_data, file_path):
@@ -504,8 +498,6 @@ overlap_area_extent = (
     overlap_area_thickness / 2 * 0.99,
 )
 
-print('mark 4')
-
 # Triggered every physics update step to check for overlapping objects
 def on_physics_step(dt: float):
     hit_info = get_physx_scene_query_interface().overlap_box(
@@ -520,8 +512,6 @@ def on_physics_step(dt: float):
 # Subscribe to the physics step events to check for objects overlapping the 'bounce' area
 physx_sub = get_physx_interface().subscribe_physics_step_events(on_physics_step)
 
-print('mark 5') 
-
 # Pull assets towards the working area center by applying a random velocity towards the given target
 def apply_velocities_towards_target(assets, target=(0, 0, 0)):
     for prim in assets:
@@ -534,8 +524,6 @@ def apply_velocities_towards_target(assets, target=(0, 0, 0)):
 # Randomize camera poses to look at a random target asset (random distance and center offset)
 camera_distance_to_target_min_max = config.get("camera_distance_to_target_min_max", (0.1, 0.5))
 camera_look_at_target_offset = config.get("camera_look_at_target_offset", 0.2)
-
-print('mark 6') 
 
 def randomize_camera_poses():
     for cam in cameras:
@@ -575,8 +563,6 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
     shape_distractors_group = rep.create.group(shape_distractors_paths)
     with shape_distractors_group:
         rep.randomizer.color(colors=rep.distribution.uniform((0, 0, 0), (1, 1, 1)))
-
-print('mark 7') 
 
 # Create a randomizer to apply random velocities to the floating shape distractors
 # with rep.trigger.on_custom_event(event_name="randomize_floating_distractor_velocities"):
@@ -728,8 +714,6 @@ print("[SDG] Initial randomizers triggered")
 for _ in range(5):
     simulation_app.update()
 
-print('mark 8') 
-
 # Set the timeline parameters (start, end, no looping) and start the timeline
 timeline = omni.timeline.get_timeline_interface()
 timeline.set_start_time(0)
@@ -742,8 +726,6 @@ simulation_app.update()
 
 # Store the wall start time for stats
 wall_time_start = time.perf_counter()
-
-print('mark 9') 
 
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 print(f"[SDG] Starting SDG loop for {num_frames} frames")

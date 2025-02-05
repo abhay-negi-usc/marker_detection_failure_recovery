@@ -1,11 +1,14 @@
 SYNTHETIC DATA GENERATION  
 
-Objectives: 
-* add randomization and tuning of camera with respect to marker pose  
+Isaac Sim Data Generation: 
 * add variable light sources: dome light, directional light, point light, spot light 
 * add distractors: mesh, shape, texture 
 * add distractor randomization: color, texture, position, rotation, scale 
 * add distractor physics: floating, falling, bouncing 
+
+Data Processing and Augmentation: 
+* add luma balancing between marker and background using segmentation images 
+* compute keypoints based on marker pattern, marker-cam pose, and camera properties 
 
 Housekeeping: 
 * refactor directory handling 
