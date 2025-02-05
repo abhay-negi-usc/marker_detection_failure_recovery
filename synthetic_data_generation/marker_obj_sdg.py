@@ -1,13 +1,5 @@
 # ~/.local/share/ov/pkg/isaac-sim-4.2.0/python.sh synthetic_data_generation/marker_obj_sdg.py 
 
-# TODO: 
-# refactor code such that marker is static in xy plane 
-# refactor code such that background image is a plane behind the marker 
-# add variable light sources: dome light, directional light, point light, spot light 
-# add distractors: mesh, shape, texture 
-# add distractor randomization: color, texture, position, rotation, scale 
-# add distractor physics: floating, falling, bouncing 
-
 import argparse
 import json
 import os
@@ -19,14 +11,26 @@ import asyncio
 from PIL import Image
 import numpy as np 
 
+import sys 
+
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
-OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
+print(os.getcwd())
+match os.getcwd(): 
+    case '/home/anegi/marker_detection_failure_recovery': # isaac machine 
+        OUT_DIR = os.path.join(os.getcwd(),"synthetic_data_generation","output","markers_"+timestr)
+        dir_textures = "/home/anegi/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
+        sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
+        dir_backgrounds = "/home/anegi/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+    case _: # boeing machine 
+        OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
+        dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
+        sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
+        dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"pose"), exist_ok=True) 
-dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
 tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) if os.path.isfile(os.path.join(dir_textures, f))] 
 
 # Default config dict, can be updated/replaced using json/yaml config files ('--config' cli argument)
@@ -132,7 +136,7 @@ import carb.settings
 # Custom util functions for the example
 # import object_based_sdg_utils
 import sys 
-sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
+# sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
 import object_based_sdg_utils  
 import omni.replicator.core as rep
 import omni.timeline
@@ -609,7 +613,6 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
         )    
         rep.modify.material(mat) 
 
-dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
 plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
 with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
     with background_plane:       
