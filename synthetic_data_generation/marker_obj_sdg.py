@@ -16,18 +16,17 @@ import sys
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 print(os.getcwd())
-match os.getcwd(): 
-    case '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
-        OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
-        dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
-        # sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
-        sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-        dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
-    case _: # boeing machine 
-        OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
-        dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
-        sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
-        dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
+    OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
+    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
+    sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
+    dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
+else: # CAM machine 
+    OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
+    dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
+    sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
+    dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
@@ -55,7 +54,7 @@ config = {
         "fStop": 0.0,
         "clippingRange": (0.01, 10000),
     },
-    "camera_look_at_target_offset": 0.25,
+    "camera_look_at_target_offset": 0, #0.25, # REVERT 
     "camera_distance_to_target_min_max": (0.100, 1.000),
     "writer_type": "PoseWriter",
     "writer_kwargs": {
@@ -135,7 +134,6 @@ from itertools import chain
 import carb.settings
 
 # Custom util functions for the example
-# import object_based_sdg_utils
 import sys 
 # sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.2.0/standalone_examples/replicator/object_based_sdg")
 import object_based_sdg_utils  
@@ -143,7 +141,8 @@ import omni.replicator.core as rep
 import omni.timeline
 import omni.usd
 import usdrt
-from omni.isaac.core.utils.semantics import add_update_semantics, remove_all_semantics
+# from omni.isaac.core.utils.semantics import add_update_semantics, remove_all_semantics
+from isaacsim.core.utils.semantics import add_update_semantics, remove_all_semantics
 from omni.isaac.nucleus import get_assets_root_path
 from omni.physx import get_physx_interface, get_physx_scene_query_interface
 from pxr import PhysxSchema, Sdf, UsdGeom, UsdPhysics
@@ -231,6 +230,31 @@ def create_asset_with_colliders(stage, asset_url, path, location=None, rotation=
     add_colliders(prim)
     return prim
 
+def get_random_pose_on_hemisphere(origin, radius, camera_forward_axis=(0, 0, -1)):
+    origin = Gf.Vec3f(origin)
+    camera_forward_axis = Gf.Vec3f(camera_forward_axis)
+
+    # Generate random angles for spherical coordinates
+    theta = np.random.uniform(0, 2 * np.pi)
+    phi = np.arcsin(np.random.uniform(-1, 1))
+
+    # Spherical to Cartesian conversion
+    x = radius * np.cos(theta) * np.cos(phi)
+    y = radius * np.sin(phi)
+    z = abs(radius * np.sin(theta) * np.cos(phi))
+
+    location = origin + Gf.Vec3f(x, y, z)
+
+    # Calculate direction vector from camera to look_at point
+    direction = origin - location
+    direction_normalized = direction.GetNormalized()
+
+    # Calculate rotation from forward direction (rotateFrom) to direction vector (rotateTo)
+    rotation = Gf.Rotation(Gf.Vec3d(camera_forward_axis), Gf.Vec3d(direction_normalized))
+    orientation = Gf.Quatf(rotation.GetQuat())
+
+    return location, orientation
+
 # Isaac nucleus assets root path
 assets_root_path = get_assets_root_path()
 stage = None
@@ -248,12 +272,17 @@ if env_url:
 else:
     omni.usd.get_context().new_stage()
     stage = omni.usd.get_context().get_stage()
+
     # # Add a distant light to the empty stage
     # distant_light = stage.DefinePrim("/World/Lights/DistantLight", "DistantLight")
     # distant_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
     # if not distant_light.HasAttribute("xformOp:rotateXYZ"):
     #     UsdGeom.Xformable(distant_light).AddRotateXYZOp()
     # distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
+
+    # # Add a dome light to the empty stage # REVERT 
+    dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
+    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
 
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (3, 3, 3))
@@ -300,10 +329,12 @@ for obj in labeled_assets_and_properties:
         #     name = "tag0", 
         #     semantics=[("class", label)],
         # )
+
         tag = rep.create.plane(
             position = (0,0,0),
-            scale = rand_scale, 
-            rotation = rand_rot,   
+            scale = (0.1,0.1,0.1), 
+            # rotation = rand_rot,  
+            rotation = (0,0,0),   
             name = "tag0", 
             semantics=[("class", label)],
         )
@@ -316,10 +347,10 @@ for obj in labeled_assets_and_properties:
             mat = rep.create.material_omnipbr(
                 # diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png",
                 diffuse_texture=tag_textures[0],
-                roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-                metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
-                emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-                emissive_intensity=rep.distribution.uniform(0, 1000),
+                # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+                # metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+                # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+                # emissive_intensity=rep.distribution.uniform(0, 1000),
             )    
             rep.modify.material(mat) 
         if floating:
@@ -328,13 +359,13 @@ for obj in labeled_assets_and_properties:
             falling_labeled_prims.append(tag_prim)
 
 # add a plane to the environment at (0,0,0) with scale (1,1,1) 
-background_plane = rep.create.plane(
-    position = (0,0,-1.0),
-    scale = (20,20,20), 
-    rotation = (0,0,0),   
-    name = "background_plane", 
-    semantics=[("class", "background")],
-)
+# background_plane = rep.create.plane(
+#     position = (0,0,-0.1),
+#     scale = (10,10,10), 
+#     rotation = (0,0,0),   
+#     name = "background_plane", 
+#     semantics=[("class", "background")],
+# )
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
@@ -534,15 +565,16 @@ def randomize_camera_poses():
         loc_offset = (
             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-            random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+            # random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+            random.uniform(0, camera_look_at_target_offset),
         )
         target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
         # Get a random distance to the target asset
         distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
         # Get a random pose of the camera looking at the target asset from the given distance
-        cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+        # cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+        cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
         object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
-
 
 # Temporarily enable camera colliders and simulate for the given number of frames to push out any overlapping objects
 def simulate_camera_collision(num_frames=1):
@@ -586,7 +618,8 @@ with rep.trigger.on_custom_event(event_name="randomize_distant_light"):
         temperature=rep.distribution.normal(6500, 500),
         # intensity=rep.distribution.normal(35000, 5000),
         intensity=1.0, 
-        exposure=rep.distribution.uniform(4, 16), 
+        # exposure=rep.distribution.uniform(4, 16), 
+        exposure=rep.distribution.uniform(9, 11), 
         position=rep.distribution.uniform(working_area_min, working_area_max),
         rotation=rand_rot, 
         # position=(0,0,0),
@@ -597,7 +630,7 @@ with rep.trigger.on_custom_event(event_name="randomize_distant_light"):
 
 with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
     
-    target_asset = tag_prim # FIXME: this should be 
+    target_asset = tag_prim 
     # Add a look_at offset so the target is not always in the center of the camera view
     loc_offset = (
         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
@@ -616,7 +649,7 @@ with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
         temperature=rep.distribution.normal(6500, 500),
         # intensity=rep.distribution.normal(35000, 5000),
         intensity=1.0, 
-        exposure=rep.distribution.uniform(4, 16), 
+        exposure=rep.distribution.uniform(9, 11), 
         # position=rep.distribution.uniform(working_area_min, working_area_max),
         position=loc, 
         # rotation=quat, # FIXME: convert quat to something usable for rotation  
@@ -624,39 +657,50 @@ with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
         count=1,
     )
 
-with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
-    with tag:       
-        mat = rep.create.material_omnipbr(
-            diffuse_texture=rep.distribution.choice(tag_textures),
-            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
-            emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-            emissive_intensity=rep.distribution.uniform(0, 1000),
-        )    
-        rep.modify.material(mat) 
+# with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
+#     with tag:       
+#         mat = rep.create.material_omnipbr(
+#             diffuse_texture=rep.distribution.choice(tag_textures),
+#             roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             emissive_intensity=rep.distribution.uniform(0, 1000),
+#         )    
+#         rep.modify.material(mat) 
 
-plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
-with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
-    with background_plane:       
-        mat = rep.create.material_omnipbr(
-            diffuse_texture=rep.distribution.choice(plane_textures),
-            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
-            emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-            emissive_intensity=rep.distribution.uniform(0, 1000),
-        )    
-        rep.modify.material(mat) 
+# plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
+# with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
+    
+#     tag_loc = tag_prim.GetAttribute("xformOp:translate").Get()
+#     cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+#     cam_2_tag_delta_norm = (np.array(tag_loc) - np.array(cam_loc))/np.linalg.norm(np.array(tag_loc) - np.array(cam_loc))  
+#     plane_loc = cam_loc + 0.1*cam_2_tag_delta_norm 
 
-with rep.trigger.on_custom_event(event_name="randomize_tag_pose"): 
-    with tag:       
-        # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
-        #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
-        # )
-        # rand_loc = (0,0,0)
-        # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
-        # rep.randomizer.translation() 
-        rep.randomizer.rotation() 
-        # rep.randomizer.scale() 
+#     with background_plane:       
+#         mat = rep.create.material_omnipbr(
+#             diffuse_texture=rep.distribution.choice(plane_textures),
+#             roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+#             emissive_intensity=rep.distribution.uniform(0, 1000),
+#         )    
+#         rep.modify.material(mat) 
+
+#         rep.modify.pose(position=plane_loc) 
+    
+# with rep.trigger.on_custom_event(event_name="randomize_tag_pose"): 
+#     with tag:       
+#         # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+#         #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
+#         # )
+#         # rand_loc = (0,0,0)
+#         # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+
+#         # rep.randomizer.translation() 
+#         # rep.randomizer.rotation() 
+#         # rep.randomizer.scale() 
+
+#         rep.modify.pose(rotation=rep.distribution.uniform((0,0,-180), (0,0,+180))) 
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -722,7 +766,7 @@ def run_simulation_loop(duration):
 
 # SDG
 # Number of frames to capture
-num_frames = config.get("num_frames", 1000)
+num_frames = config.get("num_frames", 100)
 
 # Increase subframes if materials are not loaded on time, or ghosting artifacts appear on moving objects,
 # see: https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/subframes_examples.html
@@ -734,9 +778,10 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 # Initial trigger for randomizers before the SDG loop with several app updates (ensures materials/textures are loaded)
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
 # rep.utils.send_og_event(event_name="randomize_dome_background")
-rep.utils.send_og_event(event_name="randomize_tag_texture") 
-rep.utils.send_og_event(event_name="randomize_tag_pose") 
+# rep.utils.send_og_event(event_name="randomize_tag_texture") 
+# rep.utils.send_og_event(event_name="randomize_tag_pose") 
 rep.utils.send_og_event(event_name="randomize_plane_texture") 
+rep.utils.send_og_event(event_name="randomize_cam_pose_and_background_pose") 
 print("[SDG] Initial randomizers triggered") 
 for _ in range(5):
     simulation_app.update()
@@ -754,25 +799,86 @@ simulation_app.update()
 # Store the wall start time for stats
 wall_time_start = time.perf_counter()
 
+with rep.trigger.on_custom_event(event_name="randomize_cam_pose_and_background_pose"): 
+    # for cam in cameras:
+    #     print("randomizing camera pose")    
+    #     # Get a random target asset to look at
+    #     target_asset = random.choice(labeled_prims)
+    #     # Add a look_at offset so the target is not always in the center of the camera view
+    #     loc_offset = (
+    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+    #     )
+    #     target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
+    #     # Get a random distance to the target asset
+    #     distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
+    #     # Get a random pose of the camera looking at the target asset from the given distance
+    #     cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+    #     # cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
+    #     object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
+    #     print("end: randomizing background pose")
+
+    # Get a random target asset to look at
+    # target_asset = random.choice(labeled_prims)
+    target_asset = tag_prim
+    # Add a look_at offset so the target is not always in the center of the camera view
+    loc_offset = (
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+    )
+    target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
+    # Get a random distance to the target asset
+    distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
+    # Get a random pose of the camera looking at the target asset from the given distance
+    # loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+    cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
+    object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
+    print("end: randomizing background pose")
+
+    # with background_plane:       
+    #     mat = rep.create.material_omnipbr(
+    #         diffuse_texture=rep.distribution.choice(plane_textures),
+    #         roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+    #         metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+    #         emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+    #         emissive_intensity=rep.distribution.uniform(0, 1000),
+    #     )    
+    #     rep.modify.material(mat) 
+    #     # import pdb; pdb.set_trace() 
+    #     # plane_loc = target_loc + 10*(np.array(target_loc) - np.array(loc)) 
+    #     w, (x, y, z) = quat.real, quat.imaginary 
+    #     # rep.modify.pose(position=plane_loc, rotation=(w,x,y,z)) 
+    #     rep.modify.pose(position=loc, rotation=(w,x,y,z)) 
+
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
 
-    if i % 3 == 0: 
-        print(f"\t Randomizing marker texture") 
-        rep.utils.send_og_event(event_name="randomize_tag_texture") 
-        print(f"\t Randomizing marker pose")
-        rep.utils.send_og_event(event_name="randomize_tag_pose") 
-        print(f"\t Randomizing plane background")   
-        rep.utils.send_og_event(event_name="randomize_plane_texture") 
-    
-    # Cameras will be moved to a random position and look at a randomly selected labeled asset
-    if i % 1 == 0:
+    if i % 1 == 0: 
         print(f"\t Randomizing camera poses")
         randomize_camera_poses()
-        # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
-        if camera_colliders:
-            simulate_camera_collision(num_frames=4)
+
+        # print(f"\t Randomizing marker texture") 
+        # rep.utils.send_og_event(event_name="randomize_tag_texture") 
+        # print(f"\t Randomizing tag pose")
+        # rep.utils.send_og_event(event_name="randomize_tag_pose") 
+        # print(f"\t Randomizing plane background")   
+        # rep.utils.send_og_event(event_name="randomize_plane_texture")
+         
+        # print(f"Randomizing camera pose and background plane pose") 
+        # rep.utils.send_og_event(event_name="randomize_cam_pose_and_background_pose") 
+        # randomize_cam_pose_and_background_pose()    
+
+
+    # # Cameras will be moved to a random position and look at a randomly selected labeled asset
+    # if i % 1 == 0:
+        # print(f"\t Randomizing camera poses")
+        # randomize_camera_poses()
+    #     # Temporarily enable camera colliders and simulate for a few frames to push out any overlapping objects
+    #     if camera_colliders:
+    #         simulate_camera_collision(num_frames=4)
 
     # # Apply a random velocity towards the origin to the working area to pull the assets closer to the center
     # if i % 10 == 0:
@@ -781,9 +887,9 @@ for i in range(num_frames):
 
     # Randomize lights locations and colors
     if i % 5 == 0:
-        print(f"\t Randomizing lights")
+        # print(f"\t Randomizing lights")
         # rep.utils.send_og_event(event_name="randomize_lights")
-        # rep.utils.send_og_event(event_name="randomize_distant_light")
+        rep.utils.send_og_event(event_name="randomize_distant_light")
         rep.utils.send_og_event(event_name="randomize_rect_light")
 
     # # Randomize the colors of the primitive shape distractors

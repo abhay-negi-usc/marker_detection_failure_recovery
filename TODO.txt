@@ -1,6 +1,9 @@
 SYNTHETIC DATA GENERATION  
 
 Isaac Sim Data Generation: 
+* add rect light to model illuminator 
+* add disk light to model glare 
+* add disk light to model glint/stray light 
 * add variable light sources
 * add distractors: mesh, shape, texture 
 * add distractor randomization: color, texture, position, rotation, scale 
