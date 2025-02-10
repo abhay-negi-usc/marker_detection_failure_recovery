@@ -54,7 +54,7 @@ config = {
         "fStop": 0.0,
         "clippingRange": (0.01, 10000),
     },
-    "camera_look_at_target_offset": 0, #0.25, # REVERT 
+    "camera_look_at_target_offset": 0.25,  
     "camera_distance_to_target_min_max": (0.100, 1.000),
     "writer_type": "PoseWriter",
     "writer_kwargs": {
@@ -280,9 +280,9 @@ else:
     #     UsdGeom.Xformable(distant_light).AddRotateXYZOp()
     # distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
 
-    # # Add a dome light to the empty stage # REVERT 
-    dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
-    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
+    # # Add a dome light to the empty stage 
+    # dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
+    # dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
 
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (3, 3, 3))
@@ -322,14 +322,6 @@ for obj in labeled_assets_and_properties:
             loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
         )
 
-        # tag = rep.create.plane(
-        #     position = rand_loc,
-        #     scale = rand_scale, 
-        #     rotation = rand_rot,   
-        #     name = "tag0", 
-        #     semantics=[("class", label)],
-        # )
-
         tag = rep.create.plane(
             position = (0,0,0),
             scale = (0.1,0.1,0.1), 
@@ -357,15 +349,6 @@ for obj in labeled_assets_and_properties:
             floating_labeled_prims.append(tag_prim)
         else:
             falling_labeled_prims.append(tag_prim)
-
-# add a plane to the environment at (0,0,0) with scale (1,1,1) 
-# background_plane = rep.create.plane(
-#     position = (0,0,-0.1),
-#     scale = (10,10,10), 
-#     rotation = (0,0,0),   
-#     name = "background_plane", 
-#     semantics=[("class", "background")],
-# )
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
@@ -469,22 +452,6 @@ for cam in cameras:
 disable_render_products_between_captures = config.get("disable_render_products_between_captures", True)
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
-
-# # WRITER 
-# # Create the writer and attach the render products
-# writer_type = config.get("writer_type", "PoseWriter")
-# writer_kwargs = config.get("writer_kwargs", {})
-# # If not an absolute path, set it relative to the current working directory
-# if out_dir := writer_kwargs.get("output_dir"):
-#     if not os.path.isabs(out_dir):
-#         out_dir = os.path.join(out_dir)
-#         import pdb; pdb.set_trace()
-#         writer_kwargs["output_dir"] = out_dir
-#     print(f"[SDG] Writing data to: {out_dir}")
-# if writer_type is not None and len(render_products) > 0:
-#     writer = rep.writers.get(writer_type)
-#     writer.initialize(**writer_kwargs)
-#     writer.attach(render_products)
 
 # Example of accessing the data directly from annotators
 rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -668,40 +635,6 @@ with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
 #         )    
 #         rep.modify.material(mat) 
 
-# plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
-# with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
-    
-#     tag_loc = tag_prim.GetAttribute("xformOp:translate").Get()
-#     cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
-#     cam_2_tag_delta_norm = (np.array(tag_loc) - np.array(cam_loc))/np.linalg.norm(np.array(tag_loc) - np.array(cam_loc))  
-#     plane_loc = cam_loc + 0.1*cam_2_tag_delta_norm 
-
-#     with background_plane:       
-#         mat = rep.create.material_omnipbr(
-#             diffuse_texture=rep.distribution.choice(plane_textures),
-#             roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-#             metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
-#             emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-#             emissive_intensity=rep.distribution.uniform(0, 1000),
-#         )    
-#         rep.modify.material(mat) 
-
-#         rep.modify.pose(position=plane_loc) 
-    
-# with rep.trigger.on_custom_event(event_name="randomize_tag_pose"): 
-#     with tag:       
-#         # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
-#         #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
-#         # )
-#         # rand_loc = (0,0,0)
-#         # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
-
-#         # rep.randomizer.translation() 
-#         # rep.randomizer.rotation() 
-#         # rep.randomizer.scale() 
-
-#         rep.modify.pose(rotation=rep.distribution.uniform((0,0,-180), (0,0,+180))) 
-
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
     # For small step sizes the physics FPS needs to be temporarily increased to provide movements every syb sample
@@ -799,59 +732,6 @@ simulation_app.update()
 # Store the wall start time for stats
 wall_time_start = time.perf_counter()
 
-with rep.trigger.on_custom_event(event_name="randomize_cam_pose_and_background_pose"): 
-    # for cam in cameras:
-    #     print("randomizing camera pose")    
-    #     # Get a random target asset to look at
-    #     target_asset = random.choice(labeled_prims)
-    #     # Add a look_at offset so the target is not always in the center of the camera view
-    #     loc_offset = (
-    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-    #         random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-    #     )
-    #     target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
-    #     # Get a random distance to the target asset
-    #     distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
-    #     # Get a random pose of the camera looking at the target asset from the given distance
-    #     cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
-    #     # cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
-    #     object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
-    #     print("end: randomizing background pose")
-
-    # Get a random target asset to look at
-    # target_asset = random.choice(labeled_prims)
-    target_asset = tag_prim
-    # Add a look_at offset so the target is not always in the center of the camera view
-    loc_offset = (
-        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-        random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-    )
-    target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
-    # Get a random distance to the target asset
-    distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
-    # Get a random pose of the camera looking at the target asset from the given distance
-    # loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
-    cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
-    object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
-    print("end: randomizing background pose")
-
-    # with background_plane:       
-    #     mat = rep.create.material_omnipbr(
-    #         diffuse_texture=rep.distribution.choice(plane_textures),
-    #         roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-    #         metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
-    #         emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-    #         emissive_intensity=rep.distribution.uniform(0, 1000),
-    #     )    
-    #     rep.modify.material(mat) 
-    #     # import pdb; pdb.set_trace() 
-    #     # plane_loc = target_loc + 10*(np.array(target_loc) - np.array(loc)) 
-    #     w, (x, y, z) = quat.real, quat.imaginary 
-    #     # rep.modify.pose(position=plane_loc, rotation=(w,x,y,z)) 
-    #     rep.modify.pose(position=loc, rotation=(w,x,y,z)) 
-
 # Run the simulation and capture data triggering randomizations and actions at custom frame intervals
 print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
@@ -862,15 +742,6 @@ for i in range(num_frames):
 
         # print(f"\t Randomizing marker texture") 
         # rep.utils.send_og_event(event_name="randomize_tag_texture") 
-        # print(f"\t Randomizing tag pose")
-        # rep.utils.send_og_event(event_name="randomize_tag_pose") 
-        # print(f"\t Randomizing plane background")   
-        # rep.utils.send_og_event(event_name="randomize_plane_texture")
-         
-        # print(f"Randomizing camera pose and background plane pose") 
-        # rep.utils.send_og_event(event_name="randomize_cam_pose_and_background_pose") 
-        # randomize_cam_pose_and_background_pose()    
-
 
     # # Cameras will be moved to a random position and look at a randomly selected labeled asset
     # if i % 1 == 0:
@@ -913,7 +784,7 @@ for i in range(num_frames):
 
     # Capture the current frame
     print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
-    if i % 5 == 0:
+    if i % 1 == 0:
         capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
     else:
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
