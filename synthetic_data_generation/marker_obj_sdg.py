@@ -256,6 +256,26 @@ def get_random_pose_on_hemisphere(origin, radius, camera_forward_axis=(0, 0, -1)
 
     return location, orientation
 
+def get_world_transform_xform(prim: Usd.Prim):
+    """
+    Get the local transformation of a prim using Xformable.
+    See https://openusd.org/release/api/class_usd_geom_xformable.html
+    Args:
+        prim: The prim to calculate the world transformation.
+    Returns:
+        A tuple of:
+        - Translation vector.
+        - Rotation quaternion, i.e. 3d vector plus angle.
+        - Scale vector.
+    """
+    xform = UsdGeom.Xformable(prim)
+    time = Usd.TimeCode.Default() # The time at which we compute the bounding box
+    world_transform: Gf.Matrix4d = xform.ComputeLocalToWorldTransform(time)
+    translation: Gf.Vec3d = world_transform.ExtractTranslation()
+    rotation: Gf.Rotation = world_transform.ExtractRotation()
+    scale: Gf.Vec3d = Gf.Vec3d(*(v.GetLength() for v in world_transform.ExtractRotationMatrix()))
+    return translation, rotation, scale
+
 # Isaac nucleus assets root path
 assets_root_path = get_assets_root_path()
 stage = None
@@ -929,19 +949,41 @@ for i in range(num_frames):
     # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0) 
     # tf_cam = np.asarray(tf_cam_pxr) 
 
-    xform_cam = UsdGeom.Xformable(cam_prim) 
-    tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0)
-    tf_cam = np.asarray(tf_cam_pxr) 
+    # xform_cam = UsdGeom.Xformable(cam_prim) 
+    # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0)
+    # tf_cam = np.asarray(tf_cam_pxr) 
+    cam_translation, cam_rotation, cam_scale = get_world_transform_xform(cam_prim) 
     
-    xform_tag = UsdGeom.Xformable(tag_prim) 
-    tf_tag_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
-    tf_tag = np.asarray(tf_tag_pxr) 
+    # xform_tag = UsdGeom.Xformable(tag_prim) 
+    # tf_tag_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
+    # tf_tag_pxr = get_world_transform_xform(tag_prim)
+    # tf_tag = np.asarray(tf_tag_pxr) 
+    tag_translation, tag_rotation, tag_scale = get_world_transform_xform(tag_prim) 
 
-    xform_plane = UsdGeom.Xformable(background_plane_prim) 
-    tf_plane_pxr = xform_plane.ComputeLocalToWorldTransform(0) 
-    tf_plane = np.asarray(tf_plane_pxr) 
+    # xform_plane = UsdGeom.Xformable(background_plane_prim) 
+    # tf_plane_pxr = xform_plane.ComputeLocalToWorldTransform(0) 
+    # tf_plane_pxr = get_world_transform_xform(background_plane_prim) 
+    # tf_plane = np.asarray(tf_plane_pxr) 
+    plane_translation, plane_rotation, plane_scale = get_world_transform_xform(background_plane_prim) 
 
-    pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist(), "plane": tf_plane.tolist()} 
+    # pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist(), "plane": tf_plane.tolist()} 
+
+    import pdb; pdb.set_trace() 
+
+    pose_data = {
+        "cam": {
+            "translation": np.array(cam_translation).tolist(), 
+            "rotation": np.array(cam_rotation).tolist(), 
+        }, 
+        "tag": {
+            "translation": np.array(tag_translation).tolist(), 
+            "rotation": np.array(tag_rotation).tolist(), 
+        }, 
+        "plane": {
+            "translation": np.array(plane_translation).tolist(), 
+            "rotation": np.array(plane_rotation).tolist(), 
+        }, 
+    } 
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
