@@ -367,6 +367,7 @@ background_plane = rep.create.plane(
     name = "background_plane", 
     semantics=[("class", "background")],
 )
+background_plane_prim = background_plane.get_output_prims()["prims"][0] 
 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
@@ -433,16 +434,17 @@ rep.orchestrator.set_capture_on_play(False)
 #     cameras.append(cam_prim)
 
 # try cameras as a replicator item 
-# cam = rep.create.camera() 
-# rp = rep.create.render_product(cam, (640, 480)) 
-# cameras = [cam] 
+cam = rep.create.camera() 
+rp_cam = rep.create.render_product(cam, (640, 480)) 
+cam_prim = cam.get_output_prims()["prims"][0] 
 
-cam = stage.DefinePrim("/World/Camera", "Camera")
-if not cam.GetAttribute("xformOp:translate"):
-    UsdGeom.Xformable(cam).AddTranslateOp()
-if not cam.GetAttribute("xformOp:orient"):
-    UsdGeom.Xformable(cam).AddOrientOp()
-rp_cam = rep.create.render_product(str(cam.GetPath()), (640, 480), name="camera") 
+# cam = stage.DefinePrim("/World/Camera", "Camera")
+# if not cam.GetAttribute("xformOp:translate"):
+#     UsdGeom.Xformable(cam).AddTranslateOp()
+# if not cam.GetAttribute("xformOp:orient"):
+#     UsdGeom.Xformable(cam).AddOrientOp()
+# rp_cam = rep.create.render_product(str(cam.GetPath()), (640, 480), name="camera") 
+
 cameras = [cam]
 render_products = [rp_cam]
 
@@ -718,9 +720,43 @@ with rep.trigger.on_custom_event(event_name="randomize_plane_texture"):
         )
 
 with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"): 
-    camera_path = cam.GetPath() 
-    with background_plane: 
-        rep.modify.pose_camera_relative(camera_path, rp_cam, distance=-1.0, horizontal_location=0, vertical_location=0)
+
+    # this isn't changing the camera pose 
+    # with background_plane: 
+    #     rep.modify.pose_camera_relative(cam, rp_cam, distance=1.0, horizontal_location=0, vertical_location=0)
+
+    target_asset = background_plane_prim 
+    target_loc = target_asset.GetAttribute("xformOp:translate").Get() 
+    # target_rot = target_asset.GetAttribute("xformOp:rotateXYZ").Get() # this is not connected to the background plane rotation 
+
+    # # try computing vector and pointing accordingly 
+    # with cam: 
+    #     rep.modify.pose(
+    #         position = target_loc, 
+    #         # rotation = target_rot  
+    #         rotation = rep.distribution.uniform((0,0,-180), (90,90,180)), 
+    #     ) 
+
+    # cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=1.0) 
+    # quat_np = np.hstack([quat.GetImaginary(), quat.GetReal()]) # FIXME: utilize or write a function to do this 
+    # cam_angles = R.from_quat(quat_np).as_euler("zyx",degrees=True) 
+
+
+    cam_loc = np.random.rand(3) * 1.0 
+
+    vec_cam_to_target = np.array(target_loc) - np.array(cam_loc) 
+    cam_z_axis = -1 * (vec_cam_to_target) / np.linalg.norm((vec_cam_to_target)) 
+    rand_axis = np.random.rand(3) 
+    cam_y_axis = np.cross(rand_axis, cam_z_axis) 
+    cam_x_axis = np.cross(cam_z_axis, cam_y_axis)  
+    cam_rot = np.vstack([cam_x_axis, cam_y_axis, cam_z_axis]).transpose() 
+    cam_angles = R.from_matrix(cam_rot).as_euler("zyx", degrees=True) 
+
+    with cam: 
+        rep.modify.pose(
+            position = cam_loc, 
+            rotation = cam_angles 
+        )
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -887,13 +923,25 @@ for i in range(num_frames):
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
 
     # gather pose data 
-    xform_cam = UsdGeom.Xformable(cam) 
-    tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0) 
+
+    # getting camera pose when cam is a prim 
+    # xform_cam = UsdGeom.Xformable(cam) 
+    # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0) 
+    # tf_cam = np.asarray(tf_cam_pxr) 
+
+    xform_cam = UsdGeom.Xformable(cam_prim) 
+    tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0)
     tf_cam = np.asarray(tf_cam_pxr) 
+    
     xform_tag = UsdGeom.Xformable(tag_prim) 
-    tf_cam_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
-    tf_tag = np.asarray(tf_cam_pxr) 
-    pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist()} 
+    tf_tag_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
+    tf_tag = np.asarray(tf_tag_pxr) 
+
+    xform_plane = UsdGeom.Xformable(background_plane_prim) 
+    tf_plane_pxr = xform_plane.ComputeLocalToWorldTransform(0) 
+    tf_plane = np.asarray(tf_plane_pxr) 
+
+    pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist(), "plane": tf_plane.tolist()} 
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
