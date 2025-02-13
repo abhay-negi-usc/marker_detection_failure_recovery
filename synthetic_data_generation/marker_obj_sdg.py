@@ -12,6 +12,7 @@ from PIL import Image
 import numpy as np 
 
 import sys 
+from scipy.spatial.transform import Rotation as R 
 
 # import sdg_utils 
 timestr = time.strftime("%Y%m%d-%H%M%S") 
@@ -91,14 +92,14 @@ config = {
     ],
     "shape_distractors_types": ["capsule", "cone", "cylinder", "sphere", "cube"],
     "shape_distractors_scale_min_max": (0.015, 0.15),
-    "shape_distractors_num": 350,
+    "shape_distractors_num": 0,
     "mesh_distractors_urls": [
-        # "/Isaac/Environments/Simple_Warehouse/Props/SM_CardBoxD_04_1847.usd",
-        # "/Isaac/Environments/Simple_Warehouse/Props/SM_CardBoxA_01_414.usd",
+        "/Isaac/Environments/Simple_Warehouse/Props/SM_CardBoxD_04_1847.usd",
+        "/Isaac/Environments/Simple_Warehouse/Props/SM_CardBoxA_01_414.usd",
         "/Isaac/Environments/Simple_Warehouse/Props/S_TrafficCone.usd",
     ],
-    "mesh_distractors_scale_min_max": (0.35, 1.35),
-    "mesh_distractors_num": 75,
+    "mesh_distractors_scale_min_max": (0.015, 0.15),
+    "mesh_distractors_num": 0,
 }
 
 import carb
@@ -273,21 +274,29 @@ else:
     omni.usd.get_context().new_stage()
     stage = omni.usd.get_context().get_stage()
 
-    # # Add a distant light to the empty stage
-    # distant_light = stage.DefinePrim("/World/Lights/DistantLight", "DistantLight")
-    # distant_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
-    # if not distant_light.HasAttribute("xformOp:rotateXYZ"):
-    #     UsdGeom.Xformable(distant_light).AddRotateXYZOp()
-    # distant_light.GetAttribute("xformOp:rotateXYZ").Set((0, 60, 0))
-
     # # Add a dome light to the empty stage 
     # dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
     # dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
 
 # Get the working area size and bounds (width=x, depth=y, height=z)
-working_area_size = config.get("working_area_size", (3, 3, 3))
+working_area_size = config.get("working_area_size", (2, 2, 2))
 working_area_min = (working_area_size[0] / -2, working_area_size[1] / -2, working_area_size[2] / -2)
 working_area_max = (working_area_size[0] / 2, working_area_size[1] / 2, working_area_size[2] / 2)
+
+# add a distant light replicator object 
+rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+        loc_min=working_area_min, loc_max=working_area_max, scale_min_max=(1,1)
+    )
+distant_light = rep.create.light(
+    light_type="distant",
+    color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+    temperature=rep.distribution.normal(6500, 500),
+    intensity=1.0, 
+    exposure=rep.distribution.uniform(11, 16), 
+    rotation=rand_rot, 
+    position=(0,0,0),
+    count=1,
+)
 
 # Create a collision box area around the assets to prevent them from drifting away
 object_based_sdg_utils.create_collision_box_walls(
@@ -350,6 +359,15 @@ for obj in labeled_assets_and_properties:
         else:
             falling_labeled_prims.append(tag_prim)
 
+# add a plane to the environment at (0,0,0) with scale (1,1,1) 
+background_plane = rep.create.plane(
+    position = (0,0,-1.0),
+    scale = (20,20,20), 
+    rotation = (0,0,0),   
+    name = "background_plane", 
+    semantics=[("class", "background")],
+)
+
 labeled_prims = floating_labeled_prims + falling_labeled_prims
 
 # DISTRACTORS
@@ -360,93 +378,97 @@ shape_distractors_num = config.get("shape_distractors_num", 350)
 shape_distractors = []
 floating_shape_distractors = []
 falling_shape_distractors = []
-# for i in range(shape_distractors_num):
-#     rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
-#         loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
-#     )
-#     rand_shape = random.choice(shape_distractors_types)
-#     prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Distractors/{rand_shape}", False)
-#     prim = stage.DefinePrim(prim_path, rand_shape.capitalize())
-#     object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
-#     object_based_sdg_utils.add_colliders(prim)
-#     disable_gravity = random.choice([True, False])
-#     object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity)
-#     if disable_gravity:
-#         floating_shape_distractors.append(prim)
-#     else:
-#         falling_shape_distractors.append(prim)
-#     shape_distractors.append(prim)
+
+# Create shape distractors 
+for i in range(shape_distractors_num):
+    rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+        loc_min=working_area_min, loc_max=working_area_max, scale_min_max=shape_distractors_scale_min_max
+    )
+    rand_shape = random.choice(shape_distractors_types)
+    prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Distractors/{rand_shape}", False)
+    prim = stage.DefinePrim(prim_path, rand_shape.capitalize())
+    object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
+    object_based_sdg_utils.add_colliders(prim)
+    shape_distractors.append(prim)
 
 # Add mesh distractors to the environment as floating of falling objects
-# mesh_distactors_urls = config.get("mesh_distractors_urls", [])
-# mesh_distactors_scale_min_max = config.get("mesh_distractors_scale_min_max", (0.1, 2.0))
-# mesh_distactors_num = config.get("mesh_distractors_num", 10)
-# mesh_distractors = []
-# floating_mesh_distractors = []
-# falling_mesh_distractors = []
-# for i in range(mesh_distactors_num):
-#     rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
-#         loc_min=working_area_min, loc_max=working_area_max, scale_min_max=mesh_distactors_scale_min_max
-#     )
-#     mesh_url = random.choice(mesh_distactors_urls)
-#     prim_name = os.path.basename(mesh_url).split(".")[0]
-#     prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Distractors/{prim_name}", False)
-#     prim = stage.DefinePrim(prim_path, "Xform")
-#     asset_path = mesh_url if mesh_url.startswith("omniverse://") else assets_root_path + mesh_url
-#     prim.GetReferences().AddReference(asset_path)
-#     object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
-#     object_based_sdg_utils.add_colliders(prim)
-#     disable_gravity = random.choice([True, False])
-#     object_based_sdg_utils.add_rigid_body_dynamics(prim, disable_gravity=disable_gravity)
-#     if disable_gravity:
-#         floating_mesh_distractors.append(prim)
-#     else:
-#         falling_mesh_distractors.append(prim)
-#     mesh_distractors.append(prim)
-#     # Remove any previous semantics on the mesh distractor
-#     remove_all_semantics(prim, recursive=True)
+mesh_distactors_urls = config.get("mesh_distractors_urls", [])
+mesh_distactors_scale_min_max = config.get("mesh_distractors_scale_min_max", (0.1, 2.0))
+mesh_distactors_num = config.get("mesh_distractors_num", 10)
+mesh_distractors = []
+floating_mesh_distractors = []
+falling_mesh_distractors = []
+
+# create mesh distractors 
+for i in range(mesh_distactors_num):
+    rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+        loc_min=working_area_min, loc_max=working_area_max, scale_min_max=mesh_distactors_scale_min_max
+    )
+    mesh_url = random.choice(mesh_distactors_urls)
+    prim_name = os.path.basename(mesh_url).split(".")[0]
+    prim_path = omni.usd.get_stage_next_free_path(stage, f"/World/Distractors/{prim_name}", False)
+    prim = stage.DefinePrim(prim_path, "Xform")
+    asset_path = mesh_url if mesh_url.startswith("omniverse://") else assets_root_path + mesh_url
+    prim.GetReferences().AddReference(asset_path)
+    object_based_sdg_utils.set_transform_attributes(prim, location=rand_loc, rotation=rand_rot, scale=rand_scale)
+    object_based_sdg_utils.add_colliders(prim)
+    remove_all_semantics(prim, recursive=True)
 
 # REPLICATOR
 # Disable capturing every frame (capture will be triggered manually using the step function)
 rep.orchestrator.set_capture_on_play(False)
 
-# Create the camera prims and their properties
-cameras = []
-num_cameras = config.get("num_cameras", 1)
-camera_properties_kwargs = config.get("camera_properties_kwargs", {})
-for i in range(num_cameras):
-    # Create camera and add its properties (focal length, focus distance, f-stop, clipping range, etc.)
-    cam_prim = stage.DefinePrim(f"/World/Cameras/cam_{i}", "Camera")
-    for key, value in camera_properties_kwargs.items():
-        if cam_prim.HasAttribute(key):
-            cam_prim.GetAttribute(key).Set(value)
-        else:
-            print(f"Unknown camera attribute with {key}:{value}")
-    cameras.append(cam_prim)
+# # Create the camera prims and their properties
+# cameras = []
+# num_cameras = config.get("num_cameras", 1)
+# camera_properties_kwargs = config.get("camera_properties_kwargs", {})
+# for i in range(num_cameras):
+#     # Create camera and add its properties (focal length, focus distance, f-stop, clipping range, etc.)
+#     cam_prim = stage.DefinePrim(f"/World/Cameras/cam_{i}", "Camera")
+#     for key, value in camera_properties_kwargs.items():
+#         if cam_prim.HasAttribute(key):
+#             cam_prim.GetAttribute(key).Set(value)
+#         else:
+#             print(f"Unknown camera attribute with {key}:{value}")
+#     cameras.append(cam_prim)
 
-# Add collision spheres (disabled by default) to cameras to avoid objects overlaping with the camera view
-camera_colliders = []
-camera_collider_radius = config.get("camera_collider_radius", 0)
-if camera_collider_radius > 0:
-    for cam in cameras:
-        cam_path = cam.GetPath()
-        cam_collider = stage.DefinePrim(f"{cam_path}/CollisionSphere", "Sphere")
-        cam_collider.GetAttribute("radius").Set(camera_collider_radius)
-        object_based_sdg_utils.add_colliders(cam_collider)
-        collision_api = UsdPhysics.CollisionAPI(cam_collider)
-        collision_api.GetCollisionEnabledAttr().Set(False)
-        UsdGeom.Imageable(cam_collider).MakeInvisible()
-        camera_colliders.append(cam_collider)
+# try cameras as a replicator item 
+# cam = rep.create.camera() 
+# rp = rep.create.render_product(cam, (640, 480)) 
+# cameras = [cam] 
+
+cam = stage.DefinePrim("/World/Camera", "Camera")
+if not cam.GetAttribute("xformOp:translate"):
+    UsdGeom.Xformable(cam).AddTranslateOp()
+if not cam.GetAttribute("xformOp:orient"):
+    UsdGeom.Xformable(cam).AddOrientOp()
+rp_cam = rep.create.render_product(str(cam.GetPath()), (640, 480), name="camera") 
+cameras = [cam]
+render_products = [rp_cam]
+
+# # Add collision spheres (disabled by default) to cameras to avoid objects overlaping with the camera view
+# camera_colliders = []
+# camera_collider_radius = config.get("camera_collider_radius", 0)
+# if camera_collider_radius > 0:
+#     for cam in cameras:
+#         cam_path = cam.GetPath()
+#         cam_collider = stage.DefinePrim(f"{cam_path}/CollisionSphere", "Sphere")
+#         cam_collider.GetAttribute("radius").Set(camera_collider_radius)
+#         object_based_sdg_utils.add_colliders(cam_collider)
+#         collision_api = UsdPhysics.CollisionAPI(cam_collider)
+#         collision_api.GetCollisionEnabledAttr().Set(False)
+#         UsdGeom.Imageable(cam_collider).MakeInvisible()
+#         camera_colliders.append(cam_collider)
 
 # Wait an app update to ensure the prim changes are applied
 simulation_app.update()
 
-# Create render products using the cameras
-render_products = []
-resolution = config.get("resolution", (640, 480))
-for cam in cameras:
-    rp = rep.create.render_product(cam.GetPath(), resolution)
-    render_products.append(rp)
+# # Create render products using the cameras
+# render_products = []
+# resolution = config.get("resolution", (640, 480))
+# for cam in cameras:
+#     rp = rep.create.render_product(cam.GetPath(), resolution)
+#     render_products.append(rp)
 
 # Enable rendering only at capture time
 disable_render_products_between_captures = config.get("disable_render_products_between_captures", True)
@@ -455,9 +477,11 @@ if disable_render_products_between_captures:
 
 # Example of accessing the data directly from annotators
 rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
-rgb_annot.attach(rp)
+# rgb_annot.attach(rp)
+rgb_annot.attach(rp_cam)
 sem_annot = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": True})
-sem_annot.attach(rp)
+# sem_annot.attach(rp)
+sem_annot.attach(rp_cam)
 
 # Util function to save rgb annotator data
 def write_rgb_data(rgb_data, file_path):
@@ -509,7 +533,7 @@ def on_physics_step(dt: float):
 
 
 # Subscribe to the physics step events to check for objects overlapping the 'bounce' area
-physx_sub = get_physx_interface().subscribe_physics_step_events(on_physics_step)
+# physx_sub = get_physx_interface().subscribe_physics_step_events(on_physics_step)
 
 # Pull assets towards the working area center by applying a random velocity towards the given target
 def apply_velocities_towards_target(assets, target=(0, 0, 0)):
@@ -543,19 +567,18 @@ def randomize_camera_poses():
         cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
         object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
 
-# Temporarily enable camera colliders and simulate for the given number of frames to push out any overlapping objects
-def simulate_camera_collision(num_frames=1):
-    for cam_collider in camera_colliders:
-        collision_api = UsdPhysics.CollisionAPI(cam_collider)
-        collision_api.GetCollisionEnabledAttr().Set(True)
-    if not timeline.is_playing():
-        timeline.play()
-    for _ in range(num_frames):
-        simulation_app.update()
-    for cam_collider in camera_colliders:
-        collision_api = UsdPhysics.CollisionAPI(cam_collider)
-        collision_api.GetCollisionEnabledAttr().Set(False)
-
+# # Temporarily enable camera colliders and simulate for the given number of frames to push out any overlapping objects
+# def simulate_camera_collision(num_frames=1):
+#     for cam_collider in camera_colliders:
+#         collision_api = UsdPhysics.CollisionAPI(cam_collider)
+#         collision_api.GetCollisionEnabledAttr().Set(True)
+#     if not timeline.is_playing():
+#         timeline.play()
+#     for _ in range(num_frames):
+#         simulation_app.update()
+#     for cam_collider in camera_colliders:
+#         collision_api = UsdPhysics.CollisionAPI(cam_collider)
+#         collision_api.GetCollisionEnabledAttr().Set(False)
 
 # Create a randomizer for the shape distractors colors, manually triggered at custom events
 with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors"):
@@ -563,6 +586,16 @@ with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_colors")
     shape_distractors_group = rep.create.group(shape_distractors_paths)
     with shape_distractors_group:
         rep.randomizer.color(colors=rep.distribution.uniform((0, 0, 0), (1, 1, 1)))
+
+with rep.trigger.on_custom_event(event_name="randomize_shape_distractor_pose"):
+    shape_distractors_paths = [prim.GetPath() for prim in chain(floating_shape_distractors, falling_shape_distractors)]
+    shape_distractors_group = rep.create.group(shape_distractors_paths)
+    with shape_distractors_group:
+        rep.modify.pose(
+            position=rep.distribution.uniform(working_area_min, working_area_max),
+            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+            scale=rep.distribution.uniform(0.015, 1.5),
+        )
 
 # Create a randomizer to apply random velocities to the floating shape distractors
 # with rep.trigger.on_custom_event(event_name="randomize_floating_distractor_velocities"):
@@ -579,21 +612,26 @@ with rep.trigger.on_custom_event(event_name="randomize_distant_light"):
     rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
             loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
         )
-    lights = rep.create.light(
-        light_type="distant",
-        color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
-        temperature=rep.distribution.normal(6500, 500),
-        # intensity=rep.distribution.normal(35000, 5000),
-        intensity=1.0, 
-        # exposure=rep.distribution.uniform(4, 16), 
-        exposure=rep.distribution.uniform(9, 11), 
-        position=rep.distribution.uniform(working_area_min, working_area_max),
-        rotation=rand_rot, 
-        # position=(0,0,0),
-        # rotation=rep.randomizer.rotation(), 
-        # scale=rep.distribution.uniform(0.1, 1),
-        count=1,
-    )
+    # lights = rep.create.light(
+    #     light_type="distant",
+    #     color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+    #     temperature=rep.distribution.normal(6500, 500),
+    #     # intensity=rep.distribution.normal(35000, 5000),
+    #     intensity=1.0, 
+    #     exposure=rep.distribution.uniform(11, 16), 
+    #     # position=rep.distribution.uniform(working_area_min, working_area_max),
+    #     rotation=rand_rot, 
+    #     position=(0,0,0),
+    #     # rotation=rep.randomizer.rotation(), 
+    #     # scale=rep.distribution.uniform(0.1, 1),
+    #     count=1,
+    # )
+    with distant_light: 
+        rep.modify.pose(
+            rotation=rep.distribution.uniform((0,0,-180), (90,90,180)), 
+        )
+        rep.modify.attribute("exposure", rep.distribution.uniform(4, 16))   
+        rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1))) 
 
 with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
     
@@ -634,6 +672,55 @@ with rep.trigger.on_custom_event(event_name="randomize_rect_light"):
 #             emissive_intensity=rep.distribution.uniform(0, 1000),
 #         )    
 #         rep.modify.material(mat) 
+
+plane_textures = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))] 
+with rep.trigger.on_custom_event(event_name="randomize_plane_texture"): 
+    with background_plane:       
+        mat = rep.create.material_omnipbr(
+            diffuse_texture=rep.distribution.choice(plane_textures),
+            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+            emissive_intensity=rep.distribution.uniform(0, 1000),
+        )    
+        rep.modify.material(mat) 
+
+        # render_product = rep.create.render_product(cameras[0], (640, 480)) 
+        # rep.modify.pose_camera_relative(cameras[0], rp, distance=1.0, horizontal_location=0, vertical_location=0)
+        # rep.modify.pose_camera_relative(cam, rp_cam, distance=1.0, horizontal_location=0, vertical_location=0)
+
+        # xform = UsdGeom.Xform(cameras[0]) # assuming only one camera 
+        # transform = xform.GetLocalTransformation()
+        # position = transform.GetRow(3)  # The last column of the matrix (translation)
+        # cam_position = Gf.Vec3d(position[0], position[1], position[2])
+        # # translation = Gf.Vec3f(position[0], position[1], position[2])
+        # # cam_rotation = transform.ExtractRotation().GetQuaternion() 
+        # # cam_quat = transform.ExtractRotation().GetQuaternion() 
+        # cam_rot_matrix = np.array(transform)[:3,:3] 
+        # # cam_rotation = R.from_matrix(cam_rot_matrix).as_euler("zyx", degrees=True) 
+        # cam_rotation = R.from_matrix(cam_rot_matrix).as_quat() 
+        # # move first index to last 
+        # cam_rotation = np.roll(cam_rotation, -1) 
+
+        # target_asset = tag_prim 
+        # target_loc = target_asset.GetAttribute("xformOp:translate").Get() 
+
+        # vec_cam_to_target = target_loc - cam_position 
+        # vec_cam_to_plane = vec_cam_to_target + vec_cam_to_target.GetNormalized() * 0.010 
+        # vec_plane = cam_position + vec_cam_to_plane 
+
+        rep.modify.pose(
+            # position = vec_plane,
+            # rotation = tuple(cam_rotation), 
+            # position = rep.distribution.uniform(working_area_min, working_area_max), 
+            position = rep.distribution.uniform((0,0,-0.010), (0,0,-0.001)),
+            rotation=rep.distribution.uniform((0,0,-180), (90,90,180)), 
+        )
+
+with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"): 
+    camera_path = cam.GetPath() 
+    with background_plane: 
+        rep.modify.pose_camera_relative(camera_path, rp_cam, distance=-1.0, horizontal_location=0, vertical_location=0)
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -710,11 +797,11 @@ sim_duration_between_captures = config.get("simulation_duration_between_captures
 
 # Initial trigger for randomizers before the SDG loop with several app updates (ensures materials/textures are loaded)
 rep.utils.send_og_event(event_name="randomize_shape_distractor_colors")
-# rep.utils.send_og_event(event_name="randomize_dome_background")
+rep.utils.send_og_event(event_name="randomize_shape_distractor_pose")
 # rep.utils.send_og_event(event_name="randomize_tag_texture") 
-# rep.utils.send_og_event(event_name="randomize_tag_pose") 
 rep.utils.send_og_event(event_name="randomize_plane_texture") 
-rep.utils.send_og_event(event_name="randomize_cam_pose_and_background_pose") 
+rep.utils.send_og_event(event_name="randomize_distant_light") 
+rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
 print("[SDG] Initial randomizers triggered") 
 for _ in range(5):
     simulation_app.update()
@@ -737,8 +824,15 @@ print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
 
     if i % 1 == 0: 
-        print(f"\t Randomizing camera poses")
-        randomize_camera_poses()
+        # print(f"\t Randomizing camera poses")
+        # randomize_camera_poses()
+        
+        print(f"\t Randomizing plane texture") 
+        rep.utils.send_og_event(event_name="randomize_plane_texture") 
+        
+        print(f"\t Point camera at background plane") 
+        rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
+        
 
         # print(f"\t Randomizing marker texture") 
         # rep.utils.send_og_event(event_name="randomize_tag_texture") 
@@ -757,11 +851,14 @@ for i in range(num_frames):
     #     apply_velocities_towards_target(chain(labeled_prims, shape_distractors, mesh_distractors))
 
     # Randomize lights locations and colors
-    if i % 5 == 0:
-        # print(f"\t Randomizing lights")
-        # rep.utils.send_og_event(event_name="randomize_lights")
-        rep.utils.send_og_event(event_name="randomize_distant_light")
-        rep.utils.send_og_event(event_name="randomize_rect_light")
+    # if i % 1 == 0:
+    #     print(f"\t Randomizing lights")
+    #     rep.utils.send_og_event(event_name="randomize_distant_light")
+    #     # rep.utils.send_og_event(event_name="randomize_rect_light")
+
+    # if i % 1 == 0:  
+    #     print(f"Randomizing distractors") 
+    #     rep.utils.send_og_event(event_name="randomize_shape_distractor_pose") 
 
     # # Randomize the colors of the primitive shape distractors
     # if i % 15 == 0:
@@ -829,8 +926,8 @@ print(
 )
 
 # Unsubscribe the physics overlap checks and stop the timeline
-physx_sub.unsubscribe()
-physx_sub = None
+# physx_sub.unsubscribe()
+# physx_sub = None
 simulation_app.update()
 timeline.stop()
 
