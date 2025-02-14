@@ -6,10 +6,7 @@ Isaac Sim Data Generation:
     - randomized plane pose and texture 
     - assigning value to camera pose but doesn't seem to change 
 * DEBUG: 
-    - in pose saving section convert the translation and rotation to a tf matrix (make this a function) 
-    - plane pose rotation matrix is not normalized 
-    - tag pose rotation matrix is not normalized 
-    - camera pose rotation matrix is normalized, but is not changing 
+    - camera pose rotation matrix is not changing 
 * get camera to point at marker/background 
 * randomize object poses within bounds 
 * add rect light to model illuminator 

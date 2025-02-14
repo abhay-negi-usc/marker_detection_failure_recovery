@@ -276,6 +276,24 @@ def get_world_transform_xform(prim: Usd.Prim):
     scale: Gf.Vec3d = Gf.Vec3d(*(v.GetLength() for v in world_transform.ExtractRotationMatrix()))
     return translation, rotation, scale
 
+def get_world_transform_xform_as_np_tf(prim: Usd.Prim):
+    """
+    Get the local transformation of a prim using Xformable.
+    See https://openusd.org/release/api/class_usd_geom_xformable.html
+    Args:
+        prim: The prim to calculate the world transformation.
+    Returns:
+        A tuple of:
+        - Translation vector.
+        - Rotation quaternion, i.e. 3d vector plus angle.
+        - Scale vector.
+    """
+    xform = UsdGeom.Xformable(prim)
+    time = Usd.TimeCode.Default() # The time at which we compute the bounding box
+    world_transform: Gf.Matrix4d = xform.ComputeLocalToWorldTransform(time)
+
+    return np.array(world_transform)
+
 # Isaac nucleus assets root path
 assets_root_path = get_assets_root_path()
 stage = None
@@ -761,7 +779,6 @@ with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"):
     # quat_np = np.hstack([quat.GetImaginary(), quat.GetReal()]) # FIXME: utilize or write a function to do this 
     # cam_angles = R.from_quat(quat_np).as_euler("zyx",degrees=True) 
 
-
     cam_loc = np.random.rand(3) * 1.0 
 
     vec_cam_to_target = np.array(target_loc) - np.array(cam_loc) 
@@ -773,9 +790,11 @@ with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"):
     cam_angles = R.from_matrix(cam_rot).as_euler("zyx", degrees=True) 
 
     with cam: 
+        # this is not changing pose of camera 
+        import pdb; pdb.set_trace() 
         rep.modify.pose(
             position = cam_loc, 
-            rotation = cam_angles 
+            rotation = cam_angles, 
         )
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
@@ -952,37 +971,26 @@ for i in range(num_frames):
     # xform_cam = UsdGeom.Xformable(cam_prim) 
     # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0)
     # tf_cam = np.asarray(tf_cam_pxr) 
-    cam_translation, cam_rotation, cam_scale = get_world_transform_xform(cam_prim) 
-    
+    cam_tf = get_world_transform_xform_as_np_tf(cam_prim)
+
     # xform_tag = UsdGeom.Xformable(tag_prim) 
     # tf_tag_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
     # tf_tag_pxr = get_world_transform_xform(tag_prim)
     # tf_tag = np.asarray(tf_tag_pxr) 
-    tag_translation, tag_rotation, tag_scale = get_world_transform_xform(tag_prim) 
+    tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
 
     # xform_plane = UsdGeom.Xformable(background_plane_prim) 
     # tf_plane_pxr = xform_plane.ComputeLocalToWorldTransform(0) 
     # tf_plane_pxr = get_world_transform_xform(background_plane_prim) 
     # tf_plane = np.asarray(tf_plane_pxr) 
-    plane_translation, plane_rotation, plane_scale = get_world_transform_xform(background_plane_prim) 
+    plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
 
     # pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist(), "plane": tf_plane.tolist()} 
 
-    import pdb; pdb.set_trace() 
-
     pose_data = {
-        "cam": {
-            "translation": np.array(cam_translation).tolist(), 
-            "rotation": np.array(cam_rotation).tolist(), 
-        }, 
-        "tag": {
-            "translation": np.array(tag_translation).tolist(), 
-            "rotation": np.array(tag_rotation).tolist(), 
-        }, 
-        "plane": {
-            "translation": np.array(plane_translation).tolist(), 
-            "rotation": np.array(plane_rotation).tolist(), 
-        }, 
+        "cam": cam_tf.tolist(), 
+        "tag": tag_tf.tolist(), 
+        "plane": plane_tf.tolist(), 
     } 
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
