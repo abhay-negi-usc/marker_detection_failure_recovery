@@ -2,13 +2,17 @@ SYNTHETIC DATA GENERATION
 
 Isaac Sim Data Generation: 
 * STATUS: 
-    - fixed plane pose 
-    - randomized plane pose and texture 
-    - assigning value to camera pose but doesn't seem to change 
-* DEBUG: 
-    - camera pose rotation matrix is not changing 
-* get camera to point at marker/background 
+    - camera xform works as expected but the actual replicator camera behaves strangely 
+    - set up script to move marker instead of camera 
+* TODO: 
+* work on new script 
+* bring marker and background in view of camera 
+* randomize marker pose wrt camera 
+* tune range values  
+* add in randomized lighting 
+* add in distractor objects 
 * randomize object poses within bounds 
+* set up different scripts for different failure cases (i.e., brightness, occlusion, shadowing, glare, etc.) 
 * add rect light to model illuminator 
 * add disk light to model glare 
 * add disk light to model glint/stray light 
@@ -17,7 +21,6 @@ Isaac Sim Data Generation:
 * add distractor physics: floating, falling, bouncing 
 
 Data Processing and Augmentation: 
-* add background in blank pixels 
 * add luma balancing between marker and background using segmentation images 
 * compute keypoints based on marker pattern, marker-cam pose, and camera properties 
 
