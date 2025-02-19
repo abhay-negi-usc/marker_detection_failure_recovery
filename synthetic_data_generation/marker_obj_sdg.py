@@ -18,10 +18,12 @@ from scipy.spatial.transform import Rotation as R
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
-    OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
+    # OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
+    OUT_DIR = os.path.join("/home/anegi/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
     dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
+    # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
+    dir_backgrounds = "/home/anegi/Downloads/test2017" 
 else: # CAM machine 
     OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
     dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
@@ -312,9 +314,9 @@ else:
     omni.usd.get_context().new_stage()
     stage = omni.usd.get_context().get_stage()
 
-    # # Add a dome light to the empty stage 
-    # dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
-    # dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
+    # Add a dome light to the empty stage 
+    dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
+    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
 
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (2, 2, 2))
@@ -400,7 +402,8 @@ for obj in labeled_assets_and_properties:
 # add a plane to the environment at (0,0,0) with scale (1,1,1) 
 background_plane = rep.create.plane(
     position = (0,0,-1.0),
-    scale = (20,20,20), 
+    # scale = (20,20,20), 
+    scale = (1,1,1), 
     rotation = (0,0,0),   
     name = "background_plane", 
     semantics=[("class", "background")],
@@ -472,7 +475,10 @@ rep.orchestrator.set_capture_on_play(False)
 #     cameras.append(cam_prim)
 
 # try cameras as a replicator item 
-cam = rep.create.camera() 
+cam = rep.create.camera(
+    position=(0,0,0),
+    rotation=(0,0,0), 
+) 
 rp_cam = rep.create.render_product(cam, (640, 480)) 
 cam_prim = cam.get_output_prims()["prims"][0] 
 
@@ -588,24 +594,24 @@ def apply_velocities_towards_target(assets, target=(0, 0, 0)):
 camera_distance_to_target_min_max = config.get("camera_distance_to_target_min_max", (0.1, 0.5))
 camera_look_at_target_offset = config.get("camera_look_at_target_offset", 0.2)
 
-def randomize_camera_poses():
-    for cam in cameras:
-        # Get a random target asset to look at
-        target_asset = random.choice(labeled_prims)
-        # Add a look_at offset so the target is not always in the center of the camera view
-        loc_offset = (
-            random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-            random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-            # random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
-            random.uniform(0, camera_look_at_target_offset),
-        )
-        target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
-        # Get a random distance to the target asset
-        distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
-        # Get a random pose of the camera looking at the target asset from the given distance
-        # cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
-        cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
-        object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
+# def randomize_camera_poses():
+#     for cam in cameras:
+#         # Get a random target asset to look at
+#         target_asset = random.choice(labeled_prims)
+#         # Add a look_at offset so the target is not always in the center of the camera view
+#         loc_offset = (
+#             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+#             random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+#             # random.uniform(-camera_look_at_target_offset, camera_look_at_target_offset),
+#             random.uniform(0, camera_look_at_target_offset),
+#         )
+#         target_loc = target_asset.GetAttribute("xformOp:translate").Get() + loc_offset
+#         # Get a random distance to the target asset
+#         distance = random.uniform(camera_distance_to_target_min_max[0], camera_distance_to_target_min_max[1])
+#         # Get a random pose of the camera looking at the target asset from the given distance
+#         # cam_loc, quat = object_based_sdg_utils.get_random_pose_on_sphere(origin=target_loc, radius=distance)
+#         cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=distance)
+#         object_based_sdg_utils.set_transform_attributes(cam, location=cam_loc, orientation=quat)
 
 # # Temporarily enable camera colliders and simulate for the given number of frames to push out any overlapping objects
 # def simulate_camera_collision(num_frames=1):
@@ -753,31 +759,19 @@ with rep.trigger.on_custom_event(event_name="randomize_plane_texture"):
             # position = vec_plane,
             # rotation = tuple(cam_rotation), 
             # position = rep.distribution.uniform(working_area_min, working_area_max), 
-            position = rep.distribution.uniform((0,0,-0.010), (0,0,-0.001)),
-            rotation=rep.distribution.uniform((0,0,-180), (90,90,180)), 
+            # position = rep.distribution.uniform((0,0,-0.010), (0,0,-0.001)),
+            position = (0,0,0),
+            # rotation=rep.distribution.uniform((0,0,-180), (90,90,180)), 
+            rotation=rep.distribution.uniform((-30,-30,-180), (30,30,180)), 
         )
 
-with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"): 
 
-    # this isn't changing the camera pose 
-    # with background_plane: 
-    #     rep.modify.pose_camera_relative(cam, rp_cam, distance=1.0, horizontal_location=0, vertical_location=0)
+def randomize_camera_pose_pointed_at_plane(plane_tf):  
+    # NOTE: assuming one camera 
 
     target_asset = background_plane_prim 
     target_loc = target_asset.GetAttribute("xformOp:translate").Get() 
-    # target_rot = target_asset.GetAttribute("xformOp:rotateXYZ").Get() # this is not connected to the background plane rotation 
-
-    # # try computing vector and pointing accordingly 
-    # with cam: 
-    #     rep.modify.pose(
-    #         position = target_loc, 
-    #         # rotation = target_rot  
-    #         rotation = rep.distribution.uniform((0,0,-180), (90,90,180)), 
-    #     ) 
-
-    # cam_loc, quat = get_random_pose_on_hemisphere(origin=target_loc, radius=1.0) 
-    # quat_np = np.hstack([quat.GetImaginary(), quat.GetReal()]) # FIXME: utilize or write a function to do this 
-    # cam_angles = R.from_quat(quat_np).as_euler("zyx",degrees=True) 
+    target_rot = np.array(target_asset.GetAttribute("xformOp:rotateXYZ").Get() )
 
     cam_loc = np.random.rand(3) * 1.0 
 
@@ -787,15 +781,20 @@ with rep.trigger.on_custom_event(event_name="point_camera_at_background_plane"):
     cam_y_axis = np.cross(rand_axis, cam_z_axis) 
     cam_x_axis = np.cross(cam_z_axis, cam_y_axis)  
     cam_rot = np.vstack([cam_x_axis, cam_y_axis, cam_z_axis]).transpose() 
-    cam_angles = R.from_matrix(cam_rot).as_euler("zyx", degrees=True) 
+    # compensate for camera offset pose (90,0,90) 
+    cam_offset = R.from_euler("xyz", [90,0,90], degrees=True).as_matrix().transpose() # NOTE: ideally, the camera offset pose should be set to zero 
+    cam_rot = cam_rot * cam_offset  
+    cam_angles = R.from_matrix(cam_rot).as_euler("xyz", degrees=True) 
 
     with cam: 
-        # this is not changing pose of camera 
-        import pdb; pdb.set_trace() 
         rep.modify.pose(
-            position = cam_loc, 
+            # position = cam_loc,
+            position = (0,0,1), 
             rotation = cam_angles, 
+            # rotation = target_rot, 
         )
+
+    return cam.node 
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
 def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
@@ -899,15 +898,18 @@ print(f"[SDG] Starting SDG loop for {num_frames} frames")
 for i in range(num_frames):
 
     if i % 1 == 0: 
-        # print(f"\t Randomizing camera poses")
-        # randomize_camera_poses()
-        
+
         print(f"\t Randomizing plane texture") 
         rep.utils.send_og_event(event_name="randomize_plane_texture") 
-        
+        # step to update variables 
+        rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)     
+        plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
+
         print(f"\t Point camera at background plane") 
-        rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
-        
+        # rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
+        randomize_camera_pose_pointed_at_plane(plane_tf) 
+        # step to update variables 
+        rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)      
 
         # print(f"\t Randomizing marker texture") 
         # rep.utils.send_og_event(event_name="randomize_tag_texture") 
@@ -962,36 +964,16 @@ for i in range(num_frames):
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
 
     # gather pose data 
-
-    # getting camera pose when cam is a prim 
-    # xform_cam = UsdGeom.Xformable(cam) 
-    # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0) 
-    # tf_cam = np.asarray(tf_cam_pxr) 
-
-    # xform_cam = UsdGeom.Xformable(cam_prim) 
-    # tf_cam_pxr = xform_cam.ComputeLocalToWorldTransform(0)
-    # tf_cam = np.asarray(tf_cam_pxr) 
     cam_tf = get_world_transform_xform_as_np_tf(cam_prim)
-
-    # xform_tag = UsdGeom.Xformable(tag_prim) 
-    # tf_tag_pxr = xform_tag.ComputeLocalToWorldTransform(0) 
-    # tf_tag_pxr = get_world_transform_xform(tag_prim)
-    # tf_tag = np.asarray(tf_tag_pxr) 
     tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
-
-    # xform_plane = UsdGeom.Xformable(background_plane_prim) 
-    # tf_plane_pxr = xform_plane.ComputeLocalToWorldTransform(0) 
-    # tf_plane_pxr = get_world_transform_xform(background_plane_prim) 
-    # tf_plane = np.asarray(tf_plane_pxr) 
     plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
-
-    # pose_data = {"cam": tf_cam.tolist(), "tag": tf_tag.tolist(), "plane": tf_plane.tolist()} 
 
     pose_data = {
         "cam": cam_tf.tolist(), 
         "tag": tag_tf.tolist(), 
         "plane": plane_tf.tolist(), 
     } 
+
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 

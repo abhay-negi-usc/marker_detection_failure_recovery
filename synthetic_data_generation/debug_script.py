@@ -19,10 +19,12 @@ from scipy.spatial.transform import Rotation as R
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
-    OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
+    # OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr) 
+    OUT_DIR = os.path.join("/home/anegi/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr) 
     dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
+    # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
+    dir_backgrounds = "/home/anegi/Downloads/test2017" 
 else: # CAM machine 
     OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
     dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
@@ -120,11 +122,37 @@ cam = rep.create.camera(
 rp_cam = rep.create.render_product(cam, (640, 480)) 
 cam_prim = cam.get_output_prims()["prims"][0] 
 
+print("Initial Pose")
 print(get_world_transform_xform(cam_prim)) 
 
-with cam: 
-    rep.modify.pose(
-        position = (1,2,3) 
-    )
+# attempt 1 
+# with cam: 
+#     rep.modify.pose(
+#         position = (1,2,3) 
+#     )
 
+# attempt 2 
+# cam = rep.create.camera(
+#     position=(1,2,3)
+# )  
+# rp_cam = rep.create.render_product(cam, (640, 480)) 
+# cam_prim = cam.get_output_prims()["prims"][0] 
+
+# attempt 3 
+def get_CameraDR():
+    with cam:
+        rep.modify.pose(
+            #  position=rep.distribution.uniform((-5, -5, 0), (5, 5, 0)),
+             position=(4,1,5),
+        )
+    return cam.node
+rep.randomizer.register(get_CameraDR)
+
+with rep.trigger.on_frame(num_frames=30):
+    rep.randomizer.get_CameraDR()
+
+# stepping works! (causes different error but at least pose changes)
+rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)
+
+print("Final Pose")
 print(get_world_transform_xform(cam_prim)) 
