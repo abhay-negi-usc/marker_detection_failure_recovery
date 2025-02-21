@@ -43,8 +43,6 @@ else: # CAM machine
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
 
-
-
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
@@ -59,7 +57,7 @@ config = {
         "headless": False,
     },
     "env_url": "",
-    "working_area_size": (4, 4, 3),
+    "working_area_size": (0,0,10),
     "rt_subframes": 4,
     "num_frames": 100,
     "num_cameras": 1,
@@ -306,8 +304,8 @@ else:
     stage = omni.usd.get_context().get_stage()
 # Get the working area size and bounds (width=x, depth=y, height=z)
 working_area_size = config.get("working_area_size", (2, 2, 2))
-working_area_min = (working_area_size[0] / -2, working_area_size[1] / -2, working_area_size[2] / -2)
-working_area_max = (working_area_size[0] / 2, working_area_size[1] / 2, working_area_size[2] / 2)
+working_area_min = (working_area_size[0] / -2, working_area_size[1] / -2, -working_area_size[2])
+working_area_max = (working_area_size[0] / 2, working_area_size[1] / 2, 0)
 # Create a physics scene to add or modify custom physics settings
 usdrt_stage = usdrt.Usd.Stage.Attach(omni.usd.get_context().get_stage_id())
 physics_scenes = usdrt_stage.GetPrimsWithAppliedAPIName("PhysxSceneAPI")
@@ -323,7 +321,7 @@ rep.orchestrator.set_capture_on_play(False)
 # CAMERA 
 cam = rep.create.camera(
     position=(0,0,0), 
-    rotation=(0,0,0), 
+    rotation=(0,-90,270), 
 ) 
 rp_cam = rep.create.render_product(cam, (640, 480)) 
 cam_prim = cam.get_output_prims()["prims"][0] 
@@ -337,7 +335,6 @@ if config["lights"] == "dome":
     print("Applying dome light.") 
     dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
     dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
-
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # MARKERS 
@@ -389,7 +386,7 @@ for obj in labeled_assets_and_properties:
 # ADD BACKGROUND PLANE 
 background_plane = rep.create.plane(
     position = (0,0,-10.0),
-    scale = (20,20,20), 
+    scale = (50,50,50), 
     rotation = (0,0,0),   
     name = "background_plane", 
     semantics=[("class", "background")],
@@ -422,6 +419,26 @@ with rep.trigger.on_custom_event(event_name="randomize_plane_texture"):
         )    
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_plane_texture") 
+
+with rep.trigger.on_custom_event(event_name="randomize_marker_pose"):
+    with tag:
+        rep.modify.pose(
+            position=rep.distribution.uniform(working_area_min, working_area_max),
+            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+        )
+rep.utils.send_og_event(event_name="randomize_marker_pose") 
+
+
+with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
+    with tag: 
+        rep.modify.pose_camera_relative(
+            camera=cam, #NOTE: assume single camera 
+            render_product=rp_cam,
+            distance=rep.distribution.uniform(0.1, 5.0), 
+            horizontal_location=rep.distribution.uniform(-1.0, 1.0),
+            vertical_location=rep.distribution.uniform(-1.0, 1.0),
+        )
+rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SDG SETUP 
@@ -463,6 +480,13 @@ for i in range(num_frames):
         
         # print(f"\t Point camera at background plane") 
         # rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
+
+        print(f"Randomize marker pose")
+        # rep.utils.send_og_event(event_name="randomize_marker_pose") 
+        rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
+
+        # update the app to apply the randomization 
+        rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
