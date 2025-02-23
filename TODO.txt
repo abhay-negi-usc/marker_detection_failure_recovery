@@ -2,14 +2,10 @@ SYNTHETIC DATA GENERATION
 
 Isaac Sim Data Generation: 
 * STATUS: 
-    - camera xform works as expected but the actual replicator camera behaves strangely 
     - set up script to move marker instead of camera 
+    - marker pose randomization working
+    - lighting randomization working  
 * TODO: 
-* work on new script 
-* bring marker and background in view of camera 
-* randomize marker pose wrt camera 
-* tune range values  
-* add in randomized lighting 
 * add in distractor objects 
 * randomize object poses within bounds 
 * set up different scripts for different failure cases (i.e., brightness, occlusion, shadowing, glare, etc.) 

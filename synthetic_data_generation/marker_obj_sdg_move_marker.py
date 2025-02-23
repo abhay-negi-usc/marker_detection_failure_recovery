@@ -47,6 +47,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"pose"), exist_ok=True) 
+os.makedirs(os.path.join(OUT_DIR,"metadata"), exist_ok=True) 
 tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) if os.path.isfile(os.path.join(dir_textures, f))] 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
@@ -54,12 +55,12 @@ tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) 
 config = {
     "launch_config": {
         "renderer": "RayTracedLighting",
-        "headless": False,
+        "headless": True,
     },
     "env_url": "",
-    "working_area_size": (0,0,10),
+    "working_area_size": (1,1,10),
     "rt_subframes": 4,
-    "num_frames": 100,
+    "num_frames": 100_000,
     "num_cameras": 1,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
@@ -69,7 +70,8 @@ config = {
         "focalLength": 24.0,
         "focusDistance": 400,
         "fStop": 0.0,
-        "clippingRange": (0.01, 10000),
+        "clippingRange": (0., 10000),
+        "cameraNearFar": (0.0001, 10000),
     },
     "camera_look_at_target_offset": 0.25,  
     "camera_distance_to_target_min_max": (0.100, 1.000),
@@ -116,7 +118,7 @@ config = {
     ],
     "mesh_distractors_scale_min_max": (0.015, 0.15),
     "mesh_distractors_num": 0, 
-    "lights": "dome", # dome, random 
+    "lights": "distant_light", # dome, distant_light 
 }
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
@@ -268,6 +270,14 @@ def write_pose_data(pose_data, file_path):
     with open(file_path + ".json", "w") as f:
         json.dump(pose_data, f) 
 
+def write_metadata(metadata, file_path): 
+    with open(file_path + ".json", "w") as f:
+        json.dump(metadata, f) 
+
+def serialize_vec3f(vec3f):
+    # Convert Gf.Vec3f to a list or dictionary
+    return [vec3f[0], vec3f[1], vec3f[2]]
+
 # Update the app until a given simulation duration has passed (simulate the world between captures)
 def run_simulation_loop(duration):
     timeline = omni.timeline.get_timeline_interface()
@@ -287,6 +297,10 @@ def run_simulation_loop(duration):
     print(
         f"[SDG] Simulation loop finished in {elapsed_time:.2f} seconds at {timeline.get_current_time():.2f} with {app_updates_counter} app updates."
     )
+
+def rand_position_in_frustrum():  
+    return (0,0,-1.0) 
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SET UP ENVIRONMENT
@@ -328,6 +342,10 @@ cam_prim = cam.get_output_prims()["prims"][0]
 camera = [cam]
 render_products = [rp_cam]
 num_cameras = config["num_cameras"] # NOTE: placeholder for now because only using 1 cam 
+cam_cam_prim = cam_prim.GetChildren()[0] 
+cam_cam_prim.GetAttribute("clippingRange").Set((0.0001, 1000000)) 
+
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # LIGHTS 
@@ -335,6 +353,23 @@ if config["lights"] == "dome":
     print("Applying dome light.") 
     dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
     dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(400.0)
+elif config["lights"] == "distant_light": 
+    # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+    #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=(1,1)
+    # )
+    distant_light = rep.create.light(
+        light_type="distant",
+        color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+        temperature=rep.distribution.normal(6500, 500),
+        intensity=1.0, 
+        exposure=rep.distribution.uniform(11, 16), 
+        rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
+        position=(0,0,0),
+        count=1,
+    )
+    distant_light_prim = distant_light.get_output_prims()["prims"][0] 
+    distant_light_lighting_prim = distant_light_prim.GetChildren()[0]
+    
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # MARKERS 
@@ -386,7 +421,7 @@ for obj in labeled_assets_and_properties:
 # ADD BACKGROUND PLANE 
 background_plane = rep.create.plane(
     position = (0,0,-10.0),
-    scale = (50,50,50), 
+    scale = (10,10,1), 
     rotation = (0,0,0),   
     name = "background_plane", 
     semantics=[("class", "background")],
@@ -423,7 +458,8 @@ rep.utils.send_og_event(event_name="randomize_plane_texture")
 with rep.trigger.on_custom_event(event_name="randomize_marker_pose"):
     with tag:
         rep.modify.pose(
-            position=rep.distribution.uniform(working_area_min, working_area_max),
+            position=rand_position_in_frustrum(), 
+            # position=rep.distribution.uniform(working_area_min, working_area_max),
             rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
         )
 rep.utils.send_og_event(event_name="randomize_marker_pose") 
@@ -437,8 +473,25 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
             distance=rep.distribution.uniform(0.1, 5.0), 
             horizontal_location=rep.distribution.uniform(-1.0, 1.0),
             vertical_location=rep.distribution.uniform(-1.0, 1.0),
+            # distance=rep.distribution.uniform(0.010, 5.0), # NOTE: this does not work 
+            # horizontal_location=rep.distribution.uniform(0,0),
+            # vertical_location=rep.distribution.uniform(0,0),
+        )
+        rep.modify.pose(
+            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
         )
 rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
+
+with rep.trigger.on_custom_event(event_name="randomize_lighting"):
+    with distant_light:
+        rep.modify.pose(
+            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+        )
+        # rep.modify.attribute("exposure", rep.distribution.uniform(4, 18))   
+        rep.modify.attribute("exposure", rep.distribution.uniform(12,12))   
+        rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1))) 
+rep.utils.send_og_event(event_name="randomize_lighting") 
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SDG SETUP 
@@ -485,6 +538,9 @@ for i in range(num_frames):
         # rep.utils.send_og_event(event_name="randomize_marker_pose") 
         rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
 
+        print(f"Randomize lighting") 
+        rep.utils.send_og_event(event_name="randomize_lighting") 
+
         # update the app to apply the randomization 
         rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)
 
@@ -502,16 +558,26 @@ for i in range(num_frames):
     cam_tf = get_world_transform_xform_as_np_tf(cam_prim)
     tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
     plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
-
+    light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
 
     pose_data = {
         "cam": cam_tf.tolist(), 
         "tag": tag_tf.tolist(), 
         "plane": plane_tf.tolist(), 
+        "light": light_tf.tolist(), 
     } 
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
+
+    metadata = {
+        "light": {
+            "exposure": distant_light_lighting_prim.GetAttribute("inputs:exposure").Get(), 
+            "color": serialize_vec3f(distant_light_lighting_prim.GetAttribute("inputs:color").Get()), 
+        }
+    } 
+
+    write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")
 
     # Disable render products between captures
     if disable_render_products_between_captures:
