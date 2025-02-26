@@ -12,20 +12,21 @@ from utils import (
     check_accuracy,
     save_predictions_as_imgs,
 )
+import os 
 
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 18
+BATCH_SIZE = 8
 NUM_EPOCHS = 1000 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 270 
 IMAGE_WIDTH = 480 
 PIN_MEMORY = True 
-LOAD_MODEL = True   
-TRAIN_IMG_DIR = "data/train_images_resized_2/"
-TRAIN_MASK_DIR = "data/train_masks_resized_2/" 
-VAL_IMG_DIR = "data/val_images_resized_2/"
-VAL_MASK_DIR = "data/val_masks_resized_2/" 
+LOAD_MODEL = True     
+TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/train/rgb"
+TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/train/seg" 
+VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/val/rgb"
+VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/val/seg" 
 
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
@@ -98,7 +99,7 @@ def main():
     )
 
     if LOAD_MODEL: 
-        load_checkpoint(torch.load("my_checkpoint.pth_0.9996.tar"), model)
+        load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
         accuracy = 0.9996 
     else: 
         accuracy = 0.0 
@@ -123,8 +124,10 @@ def main():
             save_checkpoint(checkpoint) # update to save checkpoint with dice score in filename 
 
             # print some examples to folder 
+            saved_images_dir = "saved_images/"
+            os.makedirs(saved_images_dir, exist_ok=True)
             save_predictions_as_imgs(
-                val_loader, model, folder="saved_images/", device=DEVICE
+                val_loader, model, folder=saved_images_dir, device=DEVICE
             )
 
 if __name__ == "__main__": 

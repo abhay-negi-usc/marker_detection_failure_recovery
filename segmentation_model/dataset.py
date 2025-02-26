@@ -32,7 +32,7 @@ class MarkersDataset(Dataset):
         img_path = os.path.join(self.image_dir, self.images[index])
         mask_path = os.path.join(
             self.mask_dir, 
-            self.images[index].replace(".jpg", ".png")
+            self.images[index].replace(".jpg", ".png").replace("img","seg")
         )
 
         # Load image and convert to numpy array

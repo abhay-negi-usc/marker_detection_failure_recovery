@@ -301,6 +301,37 @@ def run_simulation_loop(duration):
 def rand_position_in_frustrum():  
     return (0,0,-1.0) 
 
+def quatf_to_eul(quatf): 
+    qw = quatf.real 
+    qx, qy, qz = np.array(quatf.imaginary) 
+    a,b,c = R.from_quat([qx,qy,qz,qw]).as_euler('xyz',degrees=True) 
+    return a,b,c 
+
+def get_random_pose_on_hemisphere(origin, radius, camera_forward_axis=(0, 0, -1)):
+    origin = Gf.Vec3f(origin)
+    camera_forward_axis = Gf.Vec3f(camera_forward_axis)
+
+    # Generate random angles for spherical coordinates
+    theta = np.random.uniform(0, 2 * np.pi)
+    phi = np.arcsin(np.random.uniform(-1, 1))
+
+    # Spherical to Cartesian conversion
+    x = radius * np.cos(theta) * np.cos(phi)
+    y = radius * np.sin(phi)
+    z = abs(radius * np.sin(theta) * np.cos(phi))
+
+    location = origin + Gf.Vec3f(x, y, z)
+
+    # Calculate direction vector from camera to look_at point
+    direction = origin - location
+    direction_normalized = direction.GetNormalized()
+
+    # Calculate rotation from forward direction (rotateFrom) to direction vector (rotateTo)
+    rotation = Gf.Rotation(Gf.Vec3d(camera_forward_axis), Gf.Vec3d(direction_normalized))
+    orientation = Gf.Quatf(rotation.GetQuat())
+
+    return location, orientation
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SET UP ENVIRONMENT
@@ -470,7 +501,7 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
         rep.modify.pose_camera_relative(
             camera=cam, #NOTE: assume single camera 
             render_product=rp_cam,
-            distance=rep.distribution.uniform(0.1, 5.0), 
+            distance=rep.distribution.uniform(0.1, 2.5), 
             horizontal_location=rep.distribution.uniform(-1.0, 1.0),
             vertical_location=rep.distribution.uniform(-1.0, 1.0),
             # distance=rep.distribution.uniform(0.010, 5.0), # NOTE: this does not work 
@@ -479,18 +510,37 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
         )
         rep.modify.pose(
             rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+            # rotation=(0,0,0),   
+            # position=(0,0,-0.5), 
         )
 rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
 
 with rep.trigger.on_custom_event(event_name="randomize_lighting"):
+    
+    # location, orientation = get_random_pose_on_hemisphere(origin=(0,0,0), radius=1.0, camera_forward_axis=(0,0,-1))
+    # a,b,c = quatf_to_eul(orientation) 
+
     with distant_light:
         rep.modify.pose(
-            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+            rotation=rep.distribution.uniform((-90,-90,0), (90,90,0)), # NOTE: believe that this is not perfect but workable 
+            # rotation=(a,b,c),  
         )
-        # rep.modify.attribute("exposure", rep.distribution.uniform(4, 18))   
-        rep.modify.attribute("exposure", rep.distribution.uniform(12,12))   
-        rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1))) 
+        rep.modify.attribute("exposure", rep.distribution.uniform(6, 18))   
+        # rep.modify.attribute("exposure", rep.distribution.uniform(12,12))  
+        rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
 rep.utils.send_og_event(event_name="randomize_lighting") 
+
+with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
+    with tag:       
+        mat = rep.create.material_omnipbr(
+            diffuse_texture=rep.distribution.choice(tag_textures),
+            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+            # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+            # emissive_intensity=rep.distribution.uniform(0, 1000),
+        )    
+        rep.modify.material(mat) 
+rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
@@ -541,8 +591,11 @@ for i in range(num_frames):
         print(f"Randomize lighting") 
         rep.utils.send_og_event(event_name="randomize_lighting") 
 
+        print(f"Randomize tag texture") 
+        rep.utils.send_og_event(event_name="randomize_tag_texture") 
+
         # update the app to apply the randomization 
-        rep.orchestrator.step(delta_time=0.0, rt_subframes=10, pause_timeline=False)
+        rep.orchestrator.step(delta_time=0.0, rt_subframes=5, pause_timeline=False)
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
