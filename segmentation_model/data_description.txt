@@ -1,0 +1,2 @@
+markers_20250225-182909, 8K, variable lighting 
+markers_20250226-180416, XK, directed variable lighting and marker texture and reduced marker dist 
