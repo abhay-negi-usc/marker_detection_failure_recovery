@@ -1,4 +1,4 @@
-# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh synthetic_data_generation/marker_obj_sdg_move_marker.py 
+#  
 
 # DESCRIPTION: 
 # fixed camera, moving marker, plane fixed behind marker region 
@@ -533,7 +533,8 @@ rep.utils.send_og_event(event_name="randomize_lighting")
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
     with tag:       
         mat = rep.create.material_omnipbr(
-            diffuse_texture=rep.distribution.choice(tag_textures),
+            # diffuse_texture=rep.distribution.choice(tag_textures), 
+            diffuse_texture=tag_textures[0],  
             roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
             metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
             # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),

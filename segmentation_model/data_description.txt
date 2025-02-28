@@ -1,2 +1,5 @@
+markers_20250225-151250, 4K, variable lighting  
 markers_20250225-182909, 8K, variable lighting 
-markers_20250226-180416, XK, directed variable lighting and marker texture and reduced marker dist 
+markers_20250226-180416, XXK-RROS, directed variable lighting and marker texture and reduced marker dist 
+markers_20250226-154959, XXK-ISAAC, directed variable lighting and marker texture and reduced marker dist 
+--- everything above is a mix of two tags and are not labeled --- 
