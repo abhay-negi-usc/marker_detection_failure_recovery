@@ -22,11 +22,11 @@ NUM_WORKERS = 8
 IMAGE_HEIGHT = 270 
 IMAGE_WIDTH = 480 
 PIN_MEMORY = True 
-LOAD_MODEL = True     
-TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/train/rgb"
-TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/train/seg" 
-VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/val/rgb"
-VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250225-174134/val/seg" 
+LOAD_MODEL = False      
+TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250228-184002/train/rgb"
+TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250228-184002/train/seg" 
+VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250228-184002/val/rgb"
+VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250228-184002/val/seg" 
 
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
