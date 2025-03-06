@@ -1,4 +1,4 @@
-#  
+# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh synthetic_data_generation/marker_obj_sdg_move_marker.py 
 
 # DESCRIPTION: 
 # fixed camera, moving marker, plane fixed behind marker region 
@@ -509,7 +509,8 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
             # vertical_location=rep.distribution.uniform(0,0),
         )
         rep.modify.pose(
-            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+            # rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
+            rotation=rep.distribution.uniform((-45,-45,-180), (45,45,180)), # REDUCED ANGULAR RANGE 
             # rotation=(0,0,0),   
             # position=(0,0,-0.5), 
         )
@@ -522,10 +523,10 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
 
     with distant_light:
         rep.modify.pose(
-            rotation=rep.distribution.uniform((-90,-90,0), (90,90,0)), # NOTE: believe that this is not perfect but workable 
+            rotation=rep.distribution.uniform((-45,-45,0), (45,45,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
             # rotation=(a,b,c),  
         )
-        rep.modify.attribute("exposure", rep.distribution.uniform(6, 18))   
+        rep.modify.attribute("exposure", rep.distribution.uniform(8, 18)) 
         # rep.modify.attribute("exposure", rep.distribution.uniform(12,12))  
         rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
 rep.utils.send_og_event(event_name="randomize_lighting") 
@@ -535,8 +536,8 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
         mat = rep.create.material_omnipbr(
             # diffuse_texture=rep.distribution.choice(tag_textures), 
             diffuse_texture=tag_textures[0],  
-            roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-            metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+            # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+            # metallic_texture=rep.distribution.choice(rep.example.TEXTURES), # NOTE: turning this off because believe it is causing very dark markers about 5% of the time 
             # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
             # emissive_intensity=rep.distribution.uniform(0, 1000),
         )    
