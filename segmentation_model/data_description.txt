@@ -1,6 +1,3 @@
-markers_20250225-151250, 4K, variable lighting  
-markers_20250225-182909, 8K, variable lighting 
-markers_20250226-180416, XXK-RROS, directed variable lighting and marker texture and reduced marker dist 
-markers_20250226-154959, XXK-ISAAC, directed variable lighting and marker texture and reduced marker dist 
---- everything above is a mix of two tags and are not labeled --- 
-/home/anegi/abhay_ws/marker_detection_failure_recovery/output/markers_20250310-005350/, 72K, increased range to [-60,60]
+--- reduced angular ranges of marker and light and turned off marker textures 
+markers_20250305-165003, 33K, isaac 
+markers_20250310-005350/, 72K, isaac, increased range to [-60,60]
