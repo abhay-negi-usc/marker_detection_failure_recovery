@@ -510,7 +510,7 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
         )
         rep.modify.pose(
             # rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
-            rotation=rep.distribution.uniform((-45,-45,-180), (45,45,180)), # REDUCED ANGULAR RANGE 
+            rotation=rep.distribution.uniform((-60,-60,-180), (60,60,180)), # REDUCED ANGULAR RANGE 
             # rotation=(0,0,0),   
             # position=(0,0,-0.5), 
         )
