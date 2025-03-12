@@ -1,2 +1,3 @@
 --- reduced angular ranges of marker and light and turned off marker textures 
 markers_20250305-165003, 33K, isaac 
+markers_20250310-005350/, 72K, isaac, increased range to [-60,60]

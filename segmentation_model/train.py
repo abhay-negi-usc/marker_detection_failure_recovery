@@ -19,16 +19,16 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 4
 NUM_EPOCHS = 1000 
 NUM_WORKERS = 8
-# IMAGE_HEIGHT = 270
-# IMAGE_WIDTH = 480
+# IMAGE_HEIGHT = 270 * 2
+# IMAGE_WIDTH = 480 * 2
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = False      
-TRAIN_IMG_DIR = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/markers_20250305-165003/train/rgb"
-TRAIN_MASK_DIR = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/markers_20250305-165003/train/seg" 
-VAL_IMG_DIR = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/markers_20250305-165003/val/rgb"
-VAL_MASK_DIR = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/markers_20250305-165003/val/seg" 
+LOAD_MODEL = False       
+TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/train/rgb"
+TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/train/seg" 
+VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/val/rgb"
+VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/val/seg" 
 
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
