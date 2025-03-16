@@ -114,13 +114,11 @@ def classical_marker_pose_estimation(image, camera_matrix, dist_coeffs, aruco_di
     # Iterate over all detected markers
     for i in range(len(ids)):
         # Compute the pose (rotation and translation vectors)
-        # ret = cv2.aruco.estimatePoseSingleMarkers(corners[i], marker_length, camera_matrix, dist_coeffs)
-        # FIXME: cv2.aruco.estimatePoseSingleMarkers is deprecated, use cv::solvePnP instead 
         ret = cv2.solvePnP(marker_frame_corners, corners[i], camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)  # Use the marker frame corners as object points 
         
         # Unpack the results (rotation and translation vectors)
         # rotation_vector, translation_vector = ret[0][0], ret[1][0]
-        rotation_vector, translation_vector = ret[1][0], ret[2][0]
+        rotation_vector, translation_vector = ret[1], ret[2] 
         
         rotation_vectors.append(rotation_vector)
         translation_vectors.append(translation_vector)
@@ -156,6 +154,30 @@ def convert_to_serializable(obj):
     else:
         # Return other objects as they are
         return obj
+
+def compute_segmentation_IOU(segmentation_mask, ground_truth_mask):
+    """
+    Compute the Intersection over Union (IoU) between a segmentation mask and a ground truth mask.
+
+    Args:
+        segmentation_mask (numpy.ndarray): The predicted segmentation mask.
+        ground_truth_mask (numpy.ndarray): The ground truth segmentation mask.
+
+    Returns:
+        float: The IoU score between the two masks.
+    """
+    # Ensure both masks are binary (0 or 1)
+    segmentation_mask = (segmentation_mask > 0).astype(np.uint8)
+    ground_truth_mask = (ground_truth_mask > 0).astype(np.uint8)
+
+    # Compute intersection and union
+    intersection = np.logical_and(segmentation_mask, ground_truth_mask).sum()
+    union = np.logical_or(segmentation_mask, ground_truth_mask).sum()
+
+    # Compute IoU
+    iou = intersection / union if union != 0 else 0.0
+
+    return iou
 
 class datapoint:
     def __init__(self, metadata_filepath, pose_filepath, rgb_filepath, seg_png_filepath, seg_json_filepath):
@@ -549,7 +571,6 @@ class DataProcessor:
                 # Save the image with bounding boxes drawn on it
                 rgb_image = cv2.imread(dp.rgb_filepath)
                 if corners is None: 
-                    # TODO: keep count of number of failed detections and print at the end 
                     # save original rgb image to dir_save_image 
                     save_path = os.path.join(dir_save_image, f"{filename}_bbox.png")
                     cv2.imwrite(save_path, rgb_image) 
@@ -606,11 +627,56 @@ class DataProcessor:
             axs[i].set_title(f'Pose Error Distribution - {labels[i]}')  # Set the title for the subplot
             axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
             axs[i].set_ylabel('Error')  # Set the y-label for the subplot
-            axs[i].set_ylim(-0.5, 0.5)  # Set y-axis limits for better visualization
             axs[i].grid(True)  # Add grid for better readability
         plt.tight_layout()  # Adjust layout to prevent overlap
         plt.savefig(os.path.join(self.out_dir, "CCV_pose_error_distribution.png"), dpi=300)  # Save the figure as an image
         plt.close()
+
+    def run_learning_based_segmentation(self):
+        # TODO: add in later, for now just read data 
+        pass 
+
+    def read_segmentation_predictions(self, seg_filepath):
+        for idx, dp in enumerate(self.datapoints): 
+            self.datapoints[idx].LBCV_seg_filepath = os.path.join(seg_filepath, os.path.basename(dp.rgb_filepath).replace(".png","_prediction.png"))  # Extract the filename from the path 
+
+    def compute_segmentation_IOU(self): 
+        # compute the segmentation accuracy for each datapoint 
+        for idx, dp in enumerate(self.datapoints): 
+            if dp.seg_png is not None and dp.LBCV_seg_filepath is not None: 
+                # Read the segmentation mask and ground truth mask
+                seg_mask = np.array(self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath))  # Load the segmentation mask 
+                pred_mask = cv2.imread(dp.LBCV_seg_filepath, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
+                if pred_mask is None: 
+                    print(f"Segmentation prediction not found for datapoint {idx}.") 
+                    import pdb; pdb.set_trace() 
+                    continue
+                self.datapoints[idx].LBCV_seg_IOU = compute_segmentation_IOU(segmentation_mask=seg_mask, ground_truth_mask=pred_mask)  # Compute the IoU score 
+            else: 
+                self.datapoints[idx].LBCV_seg_IOU = None  # Set to None if either mask is not available 
+
+        # compute mean IOU 
+        self.LBCV_mean_IOU = np.mean([dp.LBCV_seg_IOU for dp in self.datapoints if dp.LBCV_seg_IOU is not None]) 
+        self.LBCV_std_IOU = np.std([dp.LBCV_seg_IOU for dp in self.datapoints if dp.LBCV_seg_IOU is not None]) 
+        print(f"Mean segmentation IOU: {self.LBCV_mean_IOU:.2f}") 
+        print(f"Std segmentation IOU: {self.LBCV_std_IOU:.2f}") 
+
+        # loop through datapoints and compute fraction of successful detections 
+        detection_IOU_threshold = 0.5  # Define a threshold for successful detection 
+        num_success = 0 
+        for dp in self.datapoints: 
+            if dp.LBCV_seg_IOU is not None and dp.LBCV_seg_IOU >= detection_IOU_threshold: 
+                num_success += 1 
+        num_total = len(self.datapoints)
+        self.LBCV_detection_fraction = num_success / num_total 
+        print(f"Fraction of successful detections: {self.LBCV_detection_fraction:.2f} ({num_success}/{num_total})") 
+
+    def run_optimization_pose_estimation(self): 
+        for idx, dp in enumerate(self.datapoints): 
+            # read segmentation image 
+            seg_mask = self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath)  # Load the segmentation mask 
+            pass 
+            
 
 if __name__ == "__main__":
     # DATA PROCESSING 
@@ -626,8 +692,11 @@ if __name__ == "__main__":
     sdp.run_classical_marker_pose_estimation(save_pose=True, save_image=True) 
 
     # run segmentation model 
+    # TODO: add in later, for now just read data 
+    sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
 
     # compute detection accuracy (IOU) 
+    sdp.compute_segmentation_IOU() 
 
     # run optimization pose estimation 
     # save data 
