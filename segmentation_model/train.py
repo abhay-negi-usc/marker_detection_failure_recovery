@@ -14,22 +14,20 @@ from utils import (
 )
 import os 
 
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-5 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 4
+BATCH_SIZE = 8 
 NUM_EPOCHS = 1000 
 NUM_WORKERS = 8
-# IMAGE_HEIGHT = 270 * 2
-# IMAGE_WIDTH = 480 * 2
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = False       
-TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/train/rgb"
-TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/train/seg" 
-VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/val/rgb"
-VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250311-130911/val/seg" 
-
+LOAD_MODEL = False                 
+TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/train/rgb"
+TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/train/seg" 
+VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/val/rgb"
+VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/val/seg" 
+    
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
 
@@ -101,7 +99,8 @@ def main():
     )
 
     if LOAD_MODEL: 
-        load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
+        load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint_20250314.pth.tar"), model)
+        # load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
         accuracy = 0.99 
     else: 
         accuracy = 0.0 
