@@ -4,7 +4,7 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm 
 import torch.nn as nn 
 import torch.optim as optim 
-from model import UNET 
+from model import UNET, UNETWithDropout
 from utils import (
     load_checkpoint, 
     save_checkpoint, 
@@ -14,7 +14,7 @@ from utils import (
 )
 import os 
 
-LEARNING_RATE = 1e-5 
+LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
 BATCH_SIZE = 8 
 NUM_EPOCHS = 1000 
@@ -82,7 +82,9 @@ def main():
         ]
     )
 
-    model = UNET(in_channels=3, out_channels=1).to(DEVICE) 
+    # model = UNET(in_channels=3, out_channels=1).to(DEVICE)
+    model = UNETWithDropout(in_channels=3, out_channels=1).to(DEVICE) 
+    
     loss_fn = nn.BCEWithLogitsLoss() 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
