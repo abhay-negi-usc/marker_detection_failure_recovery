@@ -4,7 +4,7 @@ _palletjack_data
 synthetic_data_generation/output
 synthetic_data_generation/assets/background_images
 segmentation_model/test_images_real
-segmentation_model/data 
+segmentation_model/sim_data 
 *.pth 
 *.pyc
 *.tar 
