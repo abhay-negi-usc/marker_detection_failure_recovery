@@ -1,3 +1,4 @@
+# IMPORTS 
 import os 
 import matplotlib.pyplot as plt 
 import numpy as np 
@@ -8,6 +9,7 @@ import random
 import math 
 from scipy.spatial.transform import Rotation as R
 
+# HELPER FUNCTIONS 
 def project_point_to_image(C,T,P): 
     P_H = np.array([[P[0]],[P[1]],[P[2]],[1]]) 
     T_H = T[:3,:4]  
@@ -179,6 +181,83 @@ def compute_segmentation_IOU(segmentation_mask, ground_truth_mask):
 
     return iou
 
+def marker_reprojection(image, pred, marker_image, marker_corners_2d, marker_corners_3d, rvec, tvec, camera_matrix, dist_coeffs, alpha):
+    # Load the image and marker image 
+    image = np.array(image) 
+    if image.shape[2] == 4: 
+        image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB) 
+    marker_image = np.array(marker_image) 
+
+    # if pred is a binary image convert it to rgb 
+    if len(pred.shape) == 2: 
+        pred = cv2.cvtColor(pred, cv2.COLOR_GRAY2RGB) 
+
+    # Project the 3D model points of the marker to the image
+    image_points, _ = cv2.projectPoints(marker_corners_3d, rvec, tvec, camera_matrix, dist_coeffs)
+
+    # Convert the image points to integer
+    image_points = np.round(image_points).astype(int)
+
+    # Draw the marker on the image 
+    reprojected_marker_mask = cv2.fillPoly(image*0, [image_points], (255, 255, 255)) 
+
+    image = cv2.addWeighted(image, alpha, pred, 1 - alpha, 0) 
+
+    marker_image_corners = np.array([
+        [0, 0],
+        [marker_image.shape[1], 0],
+        [marker_image.shape[1], marker_image.shape[0]],
+        [0, marker_image.shape[0]] 
+    ], dtype=np.float32)
+
+    image_points = np.array(image_points).reshape(-1, 2).astype(np.float32)
+    M = cv2.getPerspectiveTransform(marker_image_corners, image_points) 
+
+    # define overlay to be each pixel of the marker image transformed using H 
+    reprojected_marker_image = cv2.warpPerspective(marker_image, M, (image.shape[1], image.shape[0])) 
+    blended_image = cv2.addWeighted(image, 1-alpha, reprojected_marker_image, alpha, 0) 
+    
+    return reprojected_marker_image, reprojected_marker_mask, blended_image   
+
+def detect_corners(seg_mask, area_threshold=100, epsilon_factor=0.02):
+    """
+    Detects corners of a polygon in a segmentation mask.
+    
+    Parameters:
+        seg_mask (numpy.ndarray): The binary segmentation mask.
+        area_threshold (int): Minimum area threshold to ignore small contours (default is 100).
+        epsilon_factor (float): Factor to control the approximation accuracy (default is 0.02).
+    
+    Returns:
+        numpy.ndarray: Detected corners of the polygon (could be any polygon with > 3 points), or None if no valid contour is found.
+    """
+    # Find contours in the segmentation mask
+    contours, _ = cv2.findContours(seg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    for contour in contours:
+        # Check if the contour is large enough to be considered
+        area = cv2.contourArea(contour)
+        if area < area_threshold:
+            continue
+
+        # Approximate the contour to a polygon (reduce epsilon for higher accuracy)
+        epsilon = epsilon_factor * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        
+        # this is for forcing a quadrilateral fit 
+        # # If the contour has more than 4 points, apply convex hull and approximate again
+        # if len(approx) > 4:
+        #     hull = cv2.convexHull(contour)
+        #     epsilon = epsilon_factor * cv2.arcLength(hull, True)
+        #     approx = cv2.approxPolyDP(hull, epsilon, True)
+        
+        # Return the detected corners (polygon with at least 3 points)
+        return approx.reshape(-1, 2)  # Flatten the points and return as a numpy array
+
+    # Return None if no valid contour was found
+    return None
+
+# DATAPOINT CLASS DEFINITION 
 class datapoint:
     def __init__(self, metadata_filepath, pose_filepath, rgb_filepath, seg_png_filepath, seg_json_filepath):
         # Store the filepaths
@@ -258,6 +337,7 @@ class datapoint:
         ]
         return "\n".join(description) 
 
+# DATAPROCESSOR CLASS DEFINITION 
 class DataProcessor:
 
     def __init__(self, data_folders, out_dir):
@@ -521,6 +601,17 @@ class DataProcessor:
             # assume no distortion  
             self.distortion_coefficients = np.array([0,0,0,0,0])  # Assuming no distortion for simplicity 
 
+    def set_marker(self, marker_image_filepath=None, marker_side_length=0.1): 
+        self.marker_image = cv2.imread(marker_image_filepath)
+        self.marker_side_length = marker_side_length  # Set the marker length (in meters) for pose estimation 
+        marker_corners_3d = [
+            [+marker_side_length/2,0,0], 
+            [0,+marker_side_length/2,0], 
+            [-marker_side_length/2,0,0], 
+            [0,-marker_side_length/2,0]
+        ] 
+        self.marker_corners_3d = np.array(marker_corners_3d, dtype=np.float32)      
+
     def run_classical_marker_pose_estimation(self, save_pose=False, save_image=False): 
         if save_pose: 
             dir_save_pose = os.path.join(self.out_dir, "classical_CV_pose") 
@@ -590,7 +681,7 @@ class DataProcessor:
                 num_success += len(dp.CCV_marker_ids) 
         num_total = len(self.datapoints) 
         self.CCV_detection_fraction = num_success / num_total         
-        print(f"Fraction of successful detections: {self.CCV_detection_fraction:.2f} ({num_success}/{num_total})")
+        print(f"CCV: Fraction of successful detections: {self.CCV_detection_fraction:.2f} ({num_success}/{num_total})")
 
     def compute_CCV_pose_error(self): 
         for idx, dp in enumerate(self.datapoints): 
@@ -611,8 +702,12 @@ class DataProcessor:
         # compute mean and std of pose error 
         self.CCV_pose_error_mean = np.mean([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None], axis=0) 
         self.CCV_pose_error_std = np.std([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None], axis=0) 
-        print(f"Mean pose error: {self.CCV_pose_error_mean}") 
-        print(f"Std pose error: {self.CCV_pose_error_std}") 
+        print(f"CCV: Mean pose error: {self.CCV_pose_error_mean}") 
+        print(f"CCV: Std pose error: {self.CCV_pose_error_std}") 
+
+        # compute covariance matrix of pose error
+        self.CCV_pose_error_cov = np.cov(np.array([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None]).T)  # Transpose to get correct shape
+        print(f"CCV: Covariance matrix of pose error: {self.CCV_pose_error_cov}")
 
         # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c) 
         errors = [dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None] 
@@ -658,8 +753,8 @@ class DataProcessor:
         # compute mean IOU 
         self.LBCV_mean_IOU = np.mean([dp.LBCV_seg_IOU for dp in self.datapoints if dp.LBCV_seg_IOU is not None]) 
         self.LBCV_std_IOU = np.std([dp.LBCV_seg_IOU for dp in self.datapoints if dp.LBCV_seg_IOU is not None]) 
-        print(f"Mean segmentation IOU: {self.LBCV_mean_IOU:.2f}") 
-        print(f"Std segmentation IOU: {self.LBCV_std_IOU:.2f}") 
+        print(f"LBCV: Mean segmentation IOU: {self.LBCV_mean_IOU:.2f}") 
+        print(f"LBCV: Std segmentation IOU: {self.LBCV_std_IOU:.2f}") 
 
         # loop through datapoints and compute fraction of successful detections 
         detection_IOU_threshold = 0.5  # Define a threshold for successful detection 
@@ -669,14 +764,341 @@ class DataProcessor:
                 num_success += 1 
         num_total = len(self.datapoints)
         self.LBCV_detection_fraction = num_success / num_total 
-        print(f"Fraction of successful detections: {self.LBCV_detection_fraction:.2f} ({num_success}/{num_total})") 
+        print(f"LBCV: Fraction of successful detections: {self.LBCV_detection_fraction:.2f} ({num_success}/{num_total})") 
+
+    def image_overlap_error(self, img, img_mask, pred, pred_mask): 
+
+        filter = "mean_threshold" # "min_max", "local", "mean_threshold"
+
+        img = np.array(img) 
+        if img.shape[2] == 4:   
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB) 
+        img_mask = np.array(img_mask) 
+        pred = np.array(pred) 
+        pred = cv2.cvtColor(pred, cv2.COLOR_BGR2GRAY) # convert pred to grayscale 
+        _, pred_mask = cv2.threshold(pred, 127, 255, cv2.THRESH_BINARY)  # Threshold to create a binary mask
+        pred_mask = np.array(pred_mask) 
+
+        img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    
+
+        binary_mask = img_mask.copy() 
+        binary_mask[binary_mask > 0] = 255 
+
+        masked_pixels = img[img_mask == 255]
+
+        if filter == "min_max": 
+            # Find the minimum and maximum pixel values in the masked region
+            min_pixel_value = np.min(masked_pixels)
+            max_pixel_value = np.max(masked_pixels)
+
+            # normalize img using range of img_mask 
+            img_dot_mask = cv2.bitwise_and(img, img_mask)     
+            img_filtered = cv2.normalize(img_dot_mask, None, min_pixel_value, max_pixel_value, cv2.NORM_MINMAX) 
+        elif filter == "local":
+            # TODO: localized regions normalization 
+            pass 
+        elif filter == "mean_threshold": 
+            img_masked_mean = masked_pixels.mean() 
+            # threshold img using img_masked_mean as threshold 
+            _, img_filtered = cv2.threshold(img_grey, img_masked_mean, 255, cv2.THRESH_BINARY) 
+            img_filtered = np.array(img_filtered)
+
+        intersection = cv2.bitwise_and(img_mask, pred_mask) 
+        if len(intersection.shape) == 3:  # In case the image is a color image (unexpected)
+            intersection = np.mean(intersection, axis=2)  # Convert to grayscale by averaging the color channels             
+
+        # for each pixel of intersection, compute error between img and pred 
+        error = 0 
+        for i in range(intersection.shape[0]):
+            for j in range(intersection.shape[1]):
+                if intersection[i][j] == 255:
+
+                    # error += np.linalg.norm(img_filtered[i][j] - pred[i][j]) 
+                    
+                    if img_filtered[i][j] == pred[i][j]: 
+                        error -= 1 
+                    
+                    # error += np.sum((img_grey[i][j] - pred[i][j]) ** 2)
+        return error 
 
     def run_optimization_pose_estimation(self): 
         for idx, dp in enumerate(self.datapoints): 
             # read segmentation image 
-            seg_mask = self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath)  # Load the segmentation mask 
-            pass 
+            seg_pred = cv2.imread(dp.LBCV_seg_filepath)
+            seg_pred_np = np.array(seg_pred)  
+            img = cv2.imread(dp.rgb)  
+
+            if len(seg_pred_np.shape) == 3:  # In case the image is a color image (unexpected)
+                seg_pred = cv2.cvtColor(seg_pred, cv2.COLOR_BGR2GRAY)
+                seg_pred_np = np.array(seg_pred)  
             
+            marker_corners_2d = detect_corners(seg_pred_np)  # Detect corners in the segmentation mask
+            
+            if marker_corners_2d is None or marker_corners_2d.shape[0] != 4: 
+                self.datapoints[idx].LBCV_tag_pose = None  
+                self.datapoints[idx].LBCV_corners = None  
+                continue
+
+            # FIXME: placeholder for pipeline testing 
+            if idx > 10: 
+                self.datapoints[idx].LBCV_tag_pose = None  
+                self.datapoints[idx].LBCV_corners = None  
+                continue
+                
+            # TODO: output image of detected corners on the segmentation mask 
+
+            # loop through all permutations of the corners and compute the overlap error for all, return pose of lowest overlap error 
+            for i in range(2): 
+                marker_corners_2d = np.flip(marker_corners_2d, axis=0) # flip marker_corners_2d
+                for j in range(4): 
+                    # roll marker_corners_2d 
+                    marker_corners_2d = np.roll(marker_corners_2d, 1, axis=0) 
+
+                    # use PnP algorithm to determine pose of parallelogram 
+                    dist_coeffs = None 
+
+                    # Solve PnP to get the rotation and translation vectors
+                    try: 
+                        success, rotation_vector, translation_vector = cv2.solvePnP(
+                            self.marker_corners_3d,  # 3D points in world space
+                            np.array(marker_corners_2d, dtype=np.float32),  # Corresponding 2D points in image space
+                            self.camera_matrix,      # Camera matrix (intrinsics)
+                            dist_coeffs         # Distortion coefficients (can be None if no distortion)
+                        )
+                    except cv2.error as e:
+                        print(f"OpenCV error during solvePnP: {e}")
+                        import pdb; pdb.set_trace()  # Debugging breakpoint 
+
+                    # project marker 
+                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    
+                    reprojection_error = self.image_overlap_error(img, seg_pred_np, reprojected_marker_image, reprojected_marker_mask)  
+
+                    # define solution as minimum reprojection error 
+                    if (i == 0 and j == 0) or (reprojection_error < min_reprojection_error): 
+                        min_reprojection_error = reprojection_error 
+                        rotation_sol = rotation_vector 
+                        translation_sol = translation_vector
+                        marker_corners_2d = marker_corners_2d 
+                    
+            self.datapoints[idx].LBCV_tag_pose = np.eye(4) 
+            self.datapoints[idx].LBCV_tag_pose[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix
+            self.datapoints[idx].LBCV_tag_pose[:3,3] = translation_sol.reshape(3)  # Set translation vector 
+            self.datapoints[idx].LBCV_corners = marker_corners_2d 
+
+            # print progress every 10% 
+            if len(self.datapoints) < 10 or (idx + 1) % (len(self.datapoints) // 10) == 0:
+                print(f"Processed {idx+1}/{len(self.datapoints)} datapoints for LBCV pose estimation.") 
+
+    def run_segmentation_pose_estimat(self): 
+        # given true segmentation, compute pose as a basline reference for error 
+        for idx, dp in enumerate(self.datapoints): 
+            self.datapoints[idx].SEG_tag_pose = None  
+            self.datapoints[idx].SEG_corners = None  
+
+            # read segmentation image 
+            seg_pred = cv2.imread(dp.seg_png_filepath) # NOTE: read true segmentation image instead of LBCV prediction
+            seg_pred_np = np.array(seg_pred)  
+            img = cv2.imread(dp.rgb)  
+
+            if len(seg_pred_np.shape) == 3:  # In case the image is a color image (unexpected)
+                seg_pred = cv2.cvtColor(seg_pred, cv2.COLOR_BGR2GRAY)
+                seg_pred_np = np.array(seg_pred)  
+            
+            marker_corners_2d = detect_corners(seg_pred_np)  # Detect corners in the segmentation mask
+            
+            if marker_corners_2d is None or marker_corners_2d.shape[0] != 4: 
+                continue
+
+            # FIXME: placeholder for pipeline testing 
+            if idx > 10: 
+                continue
+                
+            # TODO: output image of detected corners on the segmentation mask 
+
+            # loop through all permutations of the corners and compute the overlap error for all, return pose of lowest overlap error 
+            for i in range(2): 
+                marker_corners_2d = np.flip(marker_corners_2d, axis=0) # flip marker_corners_2d
+                for j in range(4): 
+                    # roll marker_corners_2d 
+                    marker_corners_2d = np.roll(marker_corners_2d, 1, axis=0) 
+
+                    # use PnP algorithm to determine pose of parallelogram 
+                    dist_coeffs = None 
+
+                    # Solve PnP to get the rotation and translation vectors
+                    try: 
+                        success, rotation_vector, translation_vector = cv2.solvePnP(
+                            self.marker_corners_3d,  # 3D points in world space
+                            np.array(marker_corners_2d, dtype=np.float32),  # Corresponding 2D points in image space
+                            self.camera_matrix,      # Camera matrix (intrinsics)
+                            dist_coeffs         # Distortion coefficients (can be None if no distortion)
+                        )
+                    except cv2.error as e:
+                        print(f"OpenCV error during solvePnP: {e}")
+                        import pdb; pdb.set_trace()  # Debugging breakpoint 
+
+                    # project marker 
+                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    
+                    reprojection_error = self.image_overlap_error(img, seg_pred_np, reprojected_marker_image, reprojected_marker_mask)  
+
+                    # define solution as minimum reprojection error 
+                    if (i == 0 and j == 0) or (reprojection_error < min_reprojection_error): 
+                        min_reprojection_error = reprojection_error 
+                        rotation_sol = rotation_vector 
+                        translation_sol = translation_vector
+                        marker_corners_2d = marker_corners_2d 
+                    
+            self.datapoints[idx].SEG_tag_pose = np.eye(4) 
+            self.datapoints[idx].SEG_tag_pose[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix
+            self.datapoints[idx].SEG_tag_pose[:3,3] = translation_sol.reshape(3)  # Set translation vector 
+            self.datapoints[idx].SEG_corners = marker_corners_2d 
+
+            # print progress every 10% 
+            if len(self.datapoints) < 10 or (idx + 1) % (len(self.datapoints) // 10) == 0:
+                print(f"Processed {idx+1}/{len(self.datapoints)} datapoints for LBCV pose estimation.") 
+
+    def compute_LBCV_pose_error(self): 
+        for idx, dp in enumerate(self.datapoints): 
+            if dp.LBCV_tag_pose is not None: 
+                # compute pose error between LBCV and GT tag pose 
+                tf_true = dp.tag_pose 
+                tf_LBCV = dp.LBCV_tag_pose
+                LBCV_tf_error = np.linalg.inv(tf_true) @ tf_LBCV 
+                self.datapoints[idx].LBCV_tf_error = LBCV_tf_error  
+                # compute error in translation and rotation 
+                xyz_error = LBCV_tf_error[:3,3]  # translation error 
+                abc_error = R.from_matrix(LBCV_tf_error[:3,:3]).as_euler('xyz', degrees=True)  
+                self.datapoints[idx].LBCV_pose_error = np.hstack((xyz_error, abc_error))  # concatenate translation and rotation error 
+            else: 
+                self.datapoints[idx].LBCV_pose_error = None 
+                self.datapoints[idx].LBCV_pose_error = None 
+        
+        # compute mean and std of pose error 
+        self.LBCV_pose_error_mean = np.mean([dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None], axis=0) 
+        self.LBCV_pose_error_std = np.std([dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None], axis=0) 
+        print(f"Mean pose error: {self.LBCV_pose_error_mean}") 
+        print(f"Std pose error: {self.LBCV_pose_error_std}") 
+
+        # compute covariance matrix of pose error
+        self.LBCV_pose_error_cov = np.cov(np.array([dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None]).T)  # Transpose to get correct shape
+        print(f"LBCV: Covariance matrix of pose error: {self.LBCV_pose_error_cov}")
+
+        # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c) 
+        errors = [dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None] 
+        if len(errors) == 0: 
+            print("No pose errors to plot.")
+            return 
+        errors = np.array(errors)  # Convert to a NumPy array for easier manipulation 
+        fig, axs = plt.subplots(1, 6, figsize=(20, 5))  # Create subplots for each dimension 
+        labels = ['x', 'y', 'z', 'a', 'b', 'c']  # Labels for each dimension 
+        for i in range(6):  # Iterate over each dimension 
+            axs[i].violinplot(errors[:, i], showmeans=True)  # Create a violin plot for the current dimension
+            axs[i].set_title(f'Pose Error Distribution - {labels[i]}')  # Set the title for the subplot
+            axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
+            axs[i].set_ylabel('Error')  # Set the y-label for the subplot
+            axs[i].grid(True)  # Add grid for better readability
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.savefig(os.path.join(self.out_dir, "LBCV_pose_error_distribution.png"), dpi=300)  # Save the figure as an image
+        plt.close()
+
+    def compute_segmentation_pose_error(self): 
+        for idx, dp in enumerate(self.datapoints): 
+            self.datapoints[idx].SEG_tf_error = None 
+            self.datapoints[idx].SEG_pose_error = None
+            if dp.SEG_tag_pose is not None: 
+                # compute pose error between segmentation and GT tag pose 
+                tf_true = dp.tag_pose 
+                tf_seg = dp.SEG_tag_pose
+                seg_tf_error = np.linalg.inv(tf_true) @ tf_seg 
+                self.datapoints[idx].SEG_tf_error = seg_tf_error  
+                # compute error in translation and rotation 
+                xyz_error = seg_tf_error[:3,3]
+                # translation error
+                abc_error = R.from_matrix(seg_tf_error[:3,:3]).as_euler('xyz', degrees=True)
+                # rotation error
+                self.datapoints[idx].SEG_pose_error = np.hstack((xyz_error, abc_error))  # concatenate translation and rotation error
+
+        # compute mean and std of pose error
+        self.SEG_pose_error_mean = np.mean([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None], axis=0)
+        self.SEG_pose_error_std = np.std([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None], axis=0)
+        print(f"SEG: Mean pose error: {self.SEG_pose_error_mean}")
+        print(f"SEG: Std pose error: {self.SEG_pose_error_std}")
+
+        # compute covariance matrix of pose error
+        self.SEG_pose_error_cov = np.cov(np.array([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None]).T)  # Transpose to get correct shape
+        print(f"SEG: Covariance matrix of pose error: {self.SEG_pose_error_cov}")
+
+        # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c)
+        errors = [dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None]
+        if len(errors) == 0:
+            print("No pose errors to plot.")
+            return
+        errors = np.array(errors)  # Convert to a NumPy array for easier manipulation
+        fig, axs = plt.subplots(1, 6, figsize=(20, 5))  # Create subplots for each dimension
+        labels = ['x', 'y', 'z', 'a', 'b', 'c']
+        # Labels for each dimension
+        for i in range(6):  # Iterate over each dimension
+            axs[i].violinplot(errors[:, i], showmeans=True)  # Create a violin plot for the current dimension
+            axs[i].set_title(f'Pose Error Distribution - {labels[i]}')
+            # Set the title for the subplot
+            axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
+            axs[i].set_ylabel('Error')  # Set the y-label for the subplot
+            axs[i].grid(True)  # Add grid for better readability
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.savefig(os.path.join(self.out_dir, "segmentation_pose_error_distribution.png"), dpi=300)  # Save the figure as an image
+        plt.close()  # Close the plot to free up memory
+
+    def compare_pose_estimation_methods(self): 
+        """Compare the pose estimation methods by plotting the pose error distributions.""" 
+        # create analysis directory 
+        analysis_dir = os.path.join(self.out_dir, "analysis") 
+        os.makedirs(analysis_dir, exist_ok=True)
+        
+        # create a bar chart comparing the fraction of successful detections for each method
+        detection_fractions = [self.CCV_detection_fraction, self.LBCV_detection_fraction]
+        methods = ["Classical CV", "Learning-Based CV"]  # Labels for the methods
+        plt.figure(figsize=(12, 6))
+        plt.bar(methods, detection_fractions, color=['blue', 'orange'])
+        plt.xlabel('Method')
+        plt.ylabel('Fraction of Successful Detections')
+        plt.title('Comparison of Detection Fractions')
+        plt.ylim(0, 1)  # Set y-axis limit to [0, 1]
+        plt.grid(axis='y')  # Add grid lines for better readability
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.savefig(os.path.join(analysis_dir, "detection_fraction_comparison.png"), dpi=300)  # Save the figure as an image
+        plt.close()  # Close the plot to free up memory
+        
+        # get non-None pose errors for CCV and LBCV 
+        CCV_pose_errors = [dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None] 
+        LBCV_pose_errors = [dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None] 
+        SEG_pose_errors = [dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None] 
+        if len(CCV_pose_errors) == 0 or len(LBCV_pose_errors) == 0:
+            print("No pose errors to compare.")
+            return
+        
+        # create violin plots of (x,y,z,a,b,c) prediction errors comparing CCV and LBCV side by side 
+        fig, axs = plt.subplots(1, 6, figsize=(30, 5))  # Create subplots for each dimension
+        labels = ['x', 'y', 'z', 'a', 'b', 'c']  # Labels for each dimension
+        for i in range(6):  # Iterate over each dimension
+            # Create a violin plot for the current dimension
+            axs[i].violinplot([
+                                np.array(CCV_pose_errors)[:, i], 
+                                np.array(LBCV_pose_errors)[:, i],
+                                np.array(SEG_pose_errors)[:, i] if SEG_pose_errors else []  # Add segmentation errors if available
+                            ], showmeans=True, showmedians=True)
+            axs[i].set_title(f'Pose Error Distribution - {labels[i]}')  # Set the title for the subplot
+            axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
+            axs[i].set_ylabel('Error')  # Set the y-label for the subplot
+            axs[i].set_xticks([1, 2, 3])  # Set x-ticks to match the number of methods
+            axs[i].set_xticklabels(['CCV', 'LBCV', 'SEG'])  # Set x-tick labels to method names
+            axs[i].grid(True)  # Add grid for better readability
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.savefig(os.path.join(analysis_dir, "pose_error_distribution_comparison.png"), dpi=300)  # Save the figure as an image
+        plt.close()  # Close the plot to free up memory
+
+# DATA PROCESSING AND ANALYSIS SCRIPT 
 
 if __name__ == "__main__":
     # DATA PROCESSING 
@@ -686,6 +1108,7 @@ if __name__ == "__main__":
     )
     sdp.process_folders() 
     sdp.set_camera_calibration() 
+    sdp.set_marker("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png", 0.100)
 
     ## INFERENCE 
     # run classical pose estimation 
@@ -695,17 +1118,19 @@ if __name__ == "__main__":
     # TODO: add in later, for now just read data 
     sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
 
-    # compute detection accuracy (IOU) 
-    sdp.compute_segmentation_IOU() 
-
-    # run optimization pose estimation 
-    # save data 
+    # run prediction models 
+    sdp.run_optimization_pose_estimation() 
+    sdp.run_segmentation_pose_estimat()  
 
     ## ANALYSIS 
-    # compute pose errors 
+    # compute detection accuracy (IOU) 
+    sdp.compute_segmentation_IOU() 
+    # compute pose errors and compare  
     sdp.compute_CCV_pose_error() 
+    sdp.compute_LBCV_pose_error() 
+    sdp.compute_segmentation_pose_error() 
+    sdp.compare_pose_estimation_methods()    
 
-    # bar chart comparing accuracy 
-    # violin plots comparing pose error distributions 
     # scatter plots comparing error vs variables (distance, lighting, etc.) 
     # save data 
+
