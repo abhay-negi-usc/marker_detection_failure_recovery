@@ -23,10 +23,10 @@ IMAGE_HEIGHT = 480
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
 LOAD_MODEL = False                 
-TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/train/rgb"
-TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/train/seg" 
-VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/val/rgb"
-VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250312-193704/val/seg" 
+TRAIN_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250316-113421/train/rgb"
+TRAIN_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250316-113421/train/seg" 
+VAL_IMG_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250316-113421/val/rgb"
+VAL_MASK_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250316-113421/val/seg" 
     
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
