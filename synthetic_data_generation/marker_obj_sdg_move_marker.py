@@ -1,4 +1,4 @@
-# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh synthetic_data_generation/marker_obj_sdg_move_marker.py 
+#    
 
 # DESCRIPTION: 
 # fixed camera, moving marker, plane fixed behind marker region 
@@ -55,7 +55,7 @@ tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) 
 config = {
     "launch_config": {
         "renderer": "RayTracedLighting",
-        "headless": True,
+        "headless": False,
     },
     "env_url": "",
     "working_area_size": (1,1,10),
@@ -389,14 +389,14 @@ elif config["lights"] == "distant_light":
     #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=(1,1)
     # )
     distant_light = rep.create.light(
-        light_type="distant",
-        color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
-        temperature=rep.distribution.normal(6500, 500),
-        intensity=1.0, 
-        exposure=rep.distribution.uniform(11, 16), 
-        rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
-        position=(0,0,0),
-        count=1,
+            light_type="distant",
+            color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+            temperature=rep.distribution.normal(6500, 500),
+            intensity=1.0, 
+            exposure=rep.distribution.uniform(11, 16), 
+            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
+            position=(0,0,0),
+            count=1,
     )
     distant_light_prim = distant_light.get_output_prims()["prims"][0] 
     distant_light_lighting_prim = distant_light_prim.GetChildren()[0]
