@@ -19,7 +19,14 @@ def project_point_to_image(C,T,P):
     uv = uv.reshape((2)) 
     return uv 
 
-def project_point_list_to_image(C,T,P_list): 
+def project_point_list_to_image(C,T,P_list,convert_cam_is2cv=True): 
+    if convert_cam_is2cv: 
+        T = T @ np.array([
+            [1,0,0,0],
+            [0,-1,0,0],
+            [0,0,-1,0],
+            [0,0,0,1]
+        ])  
     n = len(P_list)
     uv_list = []  
     for P in P_list: 
@@ -183,11 +190,15 @@ def compute_segmentation_IOU(segmentation_mask, ground_truth_mask):
 
 def marker_reprojection(image, pred, marker_image, marker_corners_2d, marker_corners_3d, rvec, tvec, camera_matrix, dist_coeffs, alpha):
     # Load the image and marker image 
+    if isinstance(image, str):
+        image = cv2.imread(image) 
     image = np.array(image) 
     if image.shape[2] == 4: 
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB) 
     marker_image = np.array(marker_image) 
 
+    if isinstance(pred, str):
+        pred = cv2.imread(pred)
     # if pred is a binary image convert it to rgb 
     if len(pred.shape) == 2: 
         pred = cv2.cvtColor(pred, cv2.COLOR_GRAY2RGB) 
@@ -235,9 +246,12 @@ def detect_corners(seg_mask, area_threshold=100, epsilon_factor=0.02):
     contours, _ = cv2.findContours(seg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     for contour in contours:
+        # assume one contour 
+
         # Check if the contour is large enough to be considered
         area = cv2.contourArea(contour)
         if area < area_threshold:
+            # print(f"Contour area {area} is smaller than threshold {area_threshold}. Ignoring this contour.") 
             continue
 
         # Approximate the contour to a polygon (reduce epsilon for higher accuracy)
@@ -257,6 +271,27 @@ def detect_corners(seg_mask, area_threshold=100, epsilon_factor=0.02):
     # Return None if no valid contour was found
     return None
 
+# Function to find N closest point distances
+def closest_point_distances(point_list_1, point_list_2): 
+    assert(len(point_list_1) > 0 and len(point_list_2) > 0), "Both point lists must be non-empty." 
+    if isinstance(point_list_1, np.ndarray): 
+        point_list_1 = [row for row in point_list_1] 
+    if isinstance(point_list_2, np.ndarray): 
+        point_list_2 = [row for row in point_list_2]  
+    
+    distances = []
+    # Iterate through each point in list1
+    for point1 in point_list_1: 
+        closest_distance = float('inf')  # Initialize with a large number
+        # Iterate through each point in list2 to find the closest point
+        for point2 in point_list_2:
+            distance = np.linalg.norm(np.array(point1) - np.array(point2)) 
+            if distance < closest_distance:
+                closest_distance = distance
+        # Append the closest distance for this point
+        distances.append(closest_distance) 
+    return distances
+
 # DATAPOINT CLASS DEFINITION 
 class datapoint:
     def __init__(self, metadata_filepath, pose_filepath, rgb_filepath, seg_png_filepath, seg_json_filepath):
@@ -270,6 +305,7 @@ class datapoint:
         self.read_files()
         self.read_pose_data() 
         self.compute_diffusion_reflectance() 
+        self.compute_keypoints() 
 
     def read_files(self): 
         # Read the actual data from files and store it
@@ -281,12 +317,14 @@ class datapoint:
 
     def read_pose_data(self): 
         # read pose data from pose json file 
-        self.cam_pose = np.array([
-                            [1, 0, 0, 0],
-                            [0, -1, 0, 0],
-                            [0, 0, -1, 0],
-                            [0, 0, 0, 1]
-                        ]) # NOTE: cam pose from isaac sim appears to be offset 
+        # self.cam_pose = np.array([
+        #                     [1, 0, 0, 0],
+        #                     [0, -1, 0, 0],
+        #                     [0, 0, -1, 0],
+        #                     [0, 0, 0, 1]
+        #                 ]) # NOTE: cam pose from isaac sim appears to be offset 
+        self.cam_pose = np.eye(4) # FIXME: DEBUG 
+
         self.tag_pose = np.array(self.pose["tag"]).transpose()  
         self.tag_pose *= np.array([
                             [10,10,10,1],
@@ -294,7 +332,19 @@ class datapoint:
                             [10,10,10,1],
                             [1,1,1,1]
                         ]) # rescale the tag, FIXME: avoid hardcoding tag scale value 
-        self.light_pose = self.pose["light"]
+        
+        # DEBUG 
+        # tf_correction = np.array([
+        #     [1,0,0,0],
+        #     [0,-1,0,0],
+        #     [0,0,-1,0],
+        #     [0,0,0,1]
+        # ]) 
+        # import pdb; pdb.set_trace()
+        # self.tag_pose = self.tag_pose @ tf_correction 
+        # DEBUG 
+
+        self.light_pose = self.pose["light"] 
         
     def _read_json(self, filepath):
         """Read and parse JSON files."""
@@ -326,6 +376,60 @@ class datapoint:
         self.diffuse_reflection = lambertian_reflection(I_incident, N, L)     
         self.specular_reflection = phong_reflection(I_incident, N, L, V, shininess)
 
+    def compute_keypoints(self): 
+        # FIXME: avoid hardcoding and take in as arguments 
+        # camera parameters 
+        width = 640 
+        height = 480 
+        focal_length = 24.0 
+        horiz_aperture = 20.955
+        # Pixels are square so we can do:
+        vert_aperture = height/width * horiz_aperture
+        fov = 2 * math.atan(horiz_aperture / (2 * focal_length))
+        # compute focal point and center
+        fx = width * focal_length / horiz_aperture
+        fy = height * focal_length / vert_aperture
+        cx = width / 2
+        cy = height /2 
+
+        self.C = np.array([
+            [fx,0,cx],
+            [0,fy,cy],
+            [0,0,1]
+        ])
+
+        s = 0.1 # side length of marker 
+        self.keypoints_tag_frame = compute_2D_gridpoints(N=10, s=s) 
+        self.outter_corners_tag_frame = compute_2D_gridpoints(N=1, s=s)
+        self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*0.8)
+
+        # transformations 
+        tf_w_t = self.tag_pose 
+        tf_w_c = self.cam_pose 
+        tf_c_w = np.linalg.inv(tf_w_c) 
+
+        keypoints_world_frame = [] 
+        for kp_t in self.keypoints_tag_frame: 
+            kp_t_homog = np.hstack((kp_t,np.array([1]))).reshape(4,1)
+            kp_w_homog = tf_w_t @ kp_t_homog 
+            keypoints_world_frame.append(kp_w_homog[:3].reshape(3)) 
+        
+        outter_corners_world_frame = [] 
+        for kp_t in self.outter_corners_tag_frame: 
+            kp_t_homog = np.hstack((kp_t,np.array([1]))).reshape(4,1)
+            kp_w_homog = tf_w_t @ kp_t_homog 
+            outter_corners_world_frame.append(kp_w_homog[:3].reshape(3))
+        
+        inner_corners_world_frame = [] 
+        for kp_t in self.inner_corners_tag_frame: 
+            kp_t_homog = np.hstack((kp_t,np.array([1]))).reshape(4,1)
+            kp_w_homog = tf_w_t @ kp_t_homog 
+            inner_corners_world_frame.append(kp_w_homog[:3].reshape(3))           
+
+        self.keypoints_image_space = project_point_list_to_image(self.C,tf_c_w,keypoints_world_frame) 
+        self.outter_corners_image_space = project_point_list_to_image(self.C,tf_c_w,outter_corners_world_frame) 
+        self.inner_corners_image_space = project_point_list_to_image(self.C,tf_c_w,inner_corners_world_frame) 
+
     def __repr__(self):
         """Custom representation for the datapoint object."""
         # return f"datapoint(metadata_filepath={self.metadata_filepath}, pose_filepath={self.pose_filepath}, rgb_filepath={self.rgb_filepath}, seg_png_filepath={self.seg_png_filepath}, seg_json_filepath={self.seg_json_filepath})"
@@ -347,6 +451,20 @@ class DataProcessor:
         self.datapoints = []
         self.datapoints_train = []
         self.datapoints_val = []
+
+        # TODO: find a more appropriate place for this 
+        self.tf_W_Ccv = np.array([
+            [1,0,0,0],
+            [0,-1,0,0],
+            [0,0,-1,0],
+            [0,0,0,1]
+        ])
+        self.T_Mcv_Mis = np.array([
+            [-1,0,0,0],
+            [0,1,0,0],
+            [0,0,-1,0],
+            [0,0,0,1]
+        ]) 
 
     def _get_files_in_subfolder(self, folder, file_extension=None):
         """Helper method to get files in a subfolder, with an optional file extension filter."""
@@ -605,12 +723,13 @@ class DataProcessor:
         self.marker_image = cv2.imread(marker_image_filepath)
         self.marker_side_length = marker_side_length  # Set the marker length (in meters) for pose estimation 
         marker_corners_3d = [
-            [+marker_side_length/2,0,0], 
-            [0,+marker_side_length/2,0], 
-            [-marker_side_length/2,0,0], 
-            [0,-marker_side_length/2,0]
+            [+marker_side_length/2,+marker_side_length/2,0], 
+            [-marker_side_length/2,+marker_side_length/2,0], 
+            [-marker_side_length/2,-marker_side_length/2,0], 
+            [+marker_side_length/2,-marker_side_length/2,0]
         ] 
-        self.marker_corners_3d = np.array(marker_corners_3d, dtype=np.float32)      
+        self.marker_corners_3d = np.array(marker_corners_3d, dtype=np.float32)  
+        self.marker_inner_corners_3d = self.marker_corners_3d * 0.8 
 
     def run_classical_marker_pose_estimation(self, save_pose=False, save_image=False): 
         if save_pose: 
@@ -632,17 +751,44 @@ class DataProcessor:
                 )
 
                 # compute transform 
-                tf_CCV = np.eye(4)  # Initialize as identity matrix 
+                # tf_CCV = np.eye(4)  # Initialize as identity matrix 
+                tf_Ccv_Mcv = np.eye(4)  # marker in openCV coordinates wrt openCV camera coordinates 
                 if rotation_vectors is None or translation_vectors is None:
-                    tf_CCV = None 
+                    # tf_CCV = None 
+                    tf_W_Mis = None 
+                    corners = None 
                 else: 
-                    tf_CCV[:3,:3] = cv2.Rodrigues(rotation_vectors[0])[0]  # Convert rotation vector to rotation matrix
-                    tf_CCV[:3,3] = translation_vectors[0].reshape(3)  # Set translation vector 
+                    tf_Ccv_Mcv[:3,:3] = cv2.Rodrigues(rotation_vectors[0])[0] # Convert rotation vector to rotation matrix
+                    tf_Ccv_Mcv[:3,3] = translation_vectors[0].reshape(3)  # Set translation vector 
                     
+                    # # DEBUG 
+                    # # correction 
+                    # tf_correction = np.array([
+                    #     [1,0,0,0],
+                    #     [0,-1,0,0],
+                    #     [0,0,-1,0],
+                    #     [0,0,0,1]
+                    # ])
+                    # tf_CCV = tf_correction @ tf_CCV # apply correction 
+                    # tf_correction_2 = np.array([
+                    #     [-1,0,0,0],
+                    #     [0,1,0,0],
+                    #     [0,0,-1,0],
+                    #     [0,0,0,1]
+                    # ]) 
+                    # tf_CCV = tf_CCV @ tf_correction_2 # apply correction 
+                    # # DEBUG 
+
+                    tf_W_Mis = self.tf_W_Ccv @ tf_Ccv_Mcv @ self.T_Mcv_Mis 
+
                 # Store the results in the datapoint object
                 self.datapoints[idx].CCV_marker_ids = marker_ids
-                self.datapoints[idx].CCV_tag_pose = tf_CCV 
-                self.datapoints[idx].CCV_corners = corners 
+                # self.datapoints[idx].CCV_tag_pose = tf_CCV 
+                self.datapoints[idx].CCV_tag_pose = tf_W_Mis  
+                if corners is not None:
+                    self.datapoints[idx].CCV_corners = corners[0][0] # note that these are inner (black) corners 
+                else: 
+                    self.datapoints[idx].CCV_corners = None
             else:
                 print(f"Skipping pose estimation for datapoint {dp} due to missing data.") 
             
@@ -684,47 +830,116 @@ class DataProcessor:
         print(f"CCV: Fraction of successful detections: {self.CCV_detection_fraction:.2f} ({num_success}/{num_total})")
 
     def compute_CCV_pose_error(self): 
+        print(f"\n")
         for idx, dp in enumerate(self.datapoints): 
             if dp.CCV_tag_pose is not None: 
-                # compute pose error between CCV and GT tag pose 
+                # compute pose error between CCV and true tag pose 
                 tf_true = dp.tag_pose 
                 tf_CCV = dp.CCV_tag_pose
+                                
                 CCV_tf_error = np.linalg.inv(tf_true) @ tf_CCV 
                 self.datapoints[idx].CCV_tf_error = CCV_tf_error  
                 # compute error in translation and rotation 
                 xyz_error = CCV_tf_error[:3,3]  # translation error 
                 abc_error = R.from_matrix(CCV_tf_error[:3,:3]).as_euler('xyz', degrees=True)  
                 self.datapoints[idx].CCV_pose_error = np.hstack((xyz_error, abc_error))  # concatenate translation and rotation error 
+                
+                # compute errors in corner prediction 
+                self.datapoints[idx].CCV_corner_error = closest_point_distances(dp.CCV_corners, dp.inner_corners_image_space)  
+
             else: 
                 self.datapoints[idx].CCV_tf_error = None 
                 self.datapoints[idx].CCV_pose_error = None 
+                self.datapoints[idx].CCV_corner_error = None 
         
         # compute mean and std of pose error 
-        self.CCV_pose_error_mean = np.mean([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None], axis=0) 
-        self.CCV_pose_error_std = np.std([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None], axis=0) 
-        print(f"CCV: Mean pose error: {self.CCV_pose_error_mean}") 
-        print(f"CCV: Std pose error: {self.CCV_pose_error_std}") 
+        
+        self.CCV_pose_errors = np.array([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None]) # shape: (N images,6)
+        self.CCV_corner_errors = np.array([dp.CCV_corner_error for dp in self.datapoints if dp.CCV_corner_error is not None]) # shape: (N images, 4 corners) 
+
+        self.CCV_pose_error_MAE = np.mean(np.abs(self.CCV_pose_errors), axis=0)  
+        self.CCV_pose_error_std = np.std(self.CCV_pose_errors, axis=0) 
+        print(f"CCV: Pose MAE: {self.CCV_pose_error_MAE}") 
+        print(f"CCV: Pose error Std: {self.CCV_pose_error_std}") 
+        self.CCV_MAE_position_error = np.mean(np.abs(self.CCV_pose_errors[:,:3]), axis=1) 
+        self.CCV_MAE_rotation_error = np.mean(np.abs(self.CCV_pose_errors[:,3:]), axis=1) 
 
         # compute covariance matrix of pose error
-        self.CCV_pose_error_cov = np.cov(np.array([dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None]).T)  # Transpose to get correct shape
-        print(f"CCV: Covariance matrix of pose error: {self.CCV_pose_error_cov}")
+        self.CCV_pose_error_cov = np.cov(self.CCV_pose_errors.T)  # Transpose to get correct shape
+        # print(f"CCV: Covariance matrix of pose error: {self.CCV_pose_error_cov}")
 
-        # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c) 
+        # compute mean corner error 
+        self.CCV_corner_error_MAE = np.mean(np.abs(self.CCV_corner_errors)) # shape: (1,)
+        self.CCV_MAE_corner_error = np.mean(np.abs(self.CCV_corner_errors), axis=1) # shape: (N images,)  
+        print(f"CCV: corner error MAE: {self.CCV_corner_error_MAE}") 
+
+        # save plot of mean position error vs mean corner error 
+        fig, axs = plt.subplots(1, 2, figsize=(12, 6))  
+        axs[0].scatter(self.CCV_MAE_corner_error, self.CCV_MAE_position_error) 
+        axs[0].set_title("Mean Position Error vs Mean Corner Error") 
+        axs[0].set_xlabel("Mean Corner Error") 
+        axs[0].set_ylabel("Mean Position Error") 
+        axs[0].grid(True) 
+        axs[1].scatter(self.CCV_MAE_corner_error, self.CCV_MAE_rotation_error) 
+        axs[1].set_title("Mean Rotation Error vs Mean Corner Error") 
+        axs[1].set_xlabel("Mean Corner Error") 
+        axs[1].set_ylabel("Mean Rotation Error") 
+        axs[1].grid(True) 
+
+        # save figure 
+        fig.savefig(os.path.join(self.out_dir, "CCV_pose_error_vs_corner_error.png"), dpi=300) 
+
+        # # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c) 
+        # errors = [dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None] 
+        # if len(errors) == 0: 
+        #     print("No pose errors to plot.")
+        #     return 
+        # errors = np.array(errors)  # Convert to a NumPy array for easier manipulation 
+        # fig, axs = plt.subplots(1, 6, figsize=(20, 5))  # Create subplots for each dimension 
+        # labels = ['x', 'y', 'z', 'a', 'b', 'c']  # Labels for each dimension 
+        # for i in range(6):  # Iterate over each dimension 
+        #     axs[i].violinplot(errors[:, i], showmeans=True)  # Create a violin plot for the current dimension
+        #     axs[i].set_title(f'Pose Error Distribution - {labels[i]}')  # Set the title for the subplot
+        #     axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
+        #     axs[i].set_ylabel('Error')  # Set the y-label for the subplot
+        #     axs[i].grid(True)  # Add grid for better readability
+        # plt.tight_layout()  # Adjust layout to prevent overlap
+        # plt.savefig(os.path.join(self.out_dir, "CCV_pose_error_distribution.png"), dpi=300)  # Save the figure as an image
+        # plt.close()
+
+        # Collect the pose errors for each data point, ensuring there are no None values
         errors = [dp.CCV_pose_error for dp in self.datapoints if dp.CCV_pose_error is not None] 
+        
+        # Check if there are errors to plot
         if len(errors) == 0: 
             print("No pose errors to plot.")
             return 
-        errors = np.array(errors)  # Convert to a NumPy array for easier manipulation 
-        fig, axs = plt.subplots(1, 6, figsize=(20, 5))  # Create subplots for each dimension 
+        
+        # Convert errors to a NumPy array for easier manipulation
+        errors = np.array(errors)  
+        
+        # Create subplots for each dimension (2 rows, 3 columns)
+        fig, axs = plt.subplots(2, 3, figsize=(20, 10))  # 2x3 grid for the violin plots
         labels = ['x', 'y', 'z', 'a', 'b', 'c']  # Labels for each dimension 
-        for i in range(6):  # Iterate over each dimension 
+
+        # Flatten the axes array to make it easier to iterate over
+        axs = axs.flatten()  # Now axs will be a 1D array with 6 elements
+        
+        # Iterate over each dimension (6 in total)
+        for i in range(6):
             axs[i].violinplot(errors[:, i], showmeans=True)  # Create a violin plot for the current dimension
             axs[i].set_title(f'Pose Error Distribution - {labels[i]}')  # Set the title for the subplot
             axs[i].set_xlabel(labels[i])  # Set the x-label for the subplot
             axs[i].set_ylabel('Error')  # Set the y-label for the subplot
             axs[i].grid(True)  # Add grid for better readability
-        plt.tight_layout()  # Adjust layout to prevent overlap
-        plt.savefig(os.path.join(self.out_dir, "CCV_pose_error_distribution.png"), dpi=300)  # Save the figure as an image
+        
+        # Adjust layout to prevent overlap
+        plt.tight_layout()  
+        
+        # Save the figure as an image
+        plt.savefig(os.path.join(self.out_dir, "CCV_pose_error_distribution.png"), dpi=300)  
+        
+        # Close the plot to free memory
         plt.close()
 
     def run_learning_based_segmentation(self):
@@ -738,13 +953,17 @@ class DataProcessor:
     def compute_segmentation_IOU(self): 
         # compute the segmentation accuracy for each datapoint 
         for idx, dp in enumerate(self.datapoints): 
-            if dp.seg_png is not None and dp.LBCV_seg_filepath is not None: 
+            try: 
+                dp.LBCV_seg_filepath 
+            except: 
+                import pdb; pdb.set_trace() 
+
+            if (dp.seg_png is not None) and (dp.LBCV_seg_filepath is not None): 
                 # Read the segmentation mask and ground truth mask
                 seg_mask = np.array(self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath))  # Load the segmentation mask 
                 pred_mask = cv2.imread(dp.LBCV_seg_filepath, cv2.IMREAD_GRAYSCALE)  # Load as grayscale
                 if pred_mask is None: 
                     print(f"Segmentation prediction not found for datapoint {idx}.") 
-                    import pdb; pdb.set_trace() 
                     continue
                 self.datapoints[idx].LBCV_seg_IOU = compute_segmentation_IOU(segmentation_mask=seg_mask, ground_truth_mask=pred_mask)  # Compute the IoU score 
             else: 
@@ -821,8 +1040,20 @@ class DataProcessor:
                     # error += np.sum((img_grey[i][j] - pred[i][j]) ** 2)
         return error 
 
-    def run_optimization_pose_estimation(self): 
+    def run_optimization_pose_estimation(self, save_image=True): 
+        # create directory for saving reprojected marker images 
+        dir_save_reprojected = os.path.join(self.out_dir, "reprojected_marker_images") 
+        os.makedirs(dir_save_reprojected, exist_ok=True) 
+
+        num_no_corners_detected = 0 
+        num_not_4_corners_detected = 0 
+        num_corner_on_edge = 0  
+
         for idx, dp in enumerate(self.datapoints): 
+            
+            self.datapoints[idx].LBCV_tag_pose = None  
+            self.datapoints[idx].LBCV_corners = None  
+
             # read segmentation image 
             seg_pred = cv2.imread(dp.LBCV_seg_filepath)
             seg_pred_np = np.array(seg_pred)  
@@ -834,17 +1065,22 @@ class DataProcessor:
             
             marker_corners_2d = detect_corners(seg_pred_np)  # Detect corners in the segmentation mask
             
-            if marker_corners_2d is None or marker_corners_2d.shape[0] != 4: 
-                self.datapoints[idx].LBCV_tag_pose = None  
-                self.datapoints[idx].LBCV_corners = None  
-                continue
+            if (marker_corners_2d is None): 
+                num_no_corners_detected += 1
+                continue 
 
-            # FIXME: placeholder for pipeline testing 
-            if idx > 10: 
-                self.datapoints[idx].LBCV_tag_pose = None  
-                self.datapoints[idx].LBCV_corners = None  
-                continue
-                
+            # if any marker corner is on the edge of the image, skip this datapoint 
+            edge_tol = 3 
+            if np.any(marker_corners_2d[:,0] <= edge_tol) or np.any(marker_corners_2d[:,1] <= edge_tol) or np.any(marker_corners_2d[:,0] >= img.shape[1]-edge_tol) or np.any(marker_corners_2d[:,1] >= img.shape[0]-edge_tol):
+                num_corner_on_edge += 1
+                continue 
+
+            if (marker_corners_2d.shape[0] != 4): 
+                num_not_4_corners_detected += 1 
+                import pdb; pdb.set_trace() 
+                continue 
+
+
             # TODO: output image of detected corners on the segmentation mask 
 
             # loop through all permutations of the corners and compute the overlap error for all, return pose of lowest overlap error 
@@ -867,7 +1103,6 @@ class DataProcessor:
                         )
                     except cv2.error as e:
                         print(f"OpenCV error during solvePnP: {e}")
-                        import pdb; pdb.set_trace()  # Debugging breakpoint 
 
                     # project marker 
                     reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
@@ -879,25 +1114,46 @@ class DataProcessor:
                         min_reprojection_error = reprojection_error 
                         rotation_sol = rotation_vector 
                         translation_sol = translation_vector
-                        marker_corners_2d = marker_corners_2d 
+                        marker_corners_2d_sol = marker_corners_2d 
+                        blended_image_sol = blended_image 
                     
-            self.datapoints[idx].LBCV_tag_pose = np.eye(4) 
-            self.datapoints[idx].LBCV_tag_pose[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix
-            self.datapoints[idx].LBCV_tag_pose[:3,3] = translation_sol.reshape(3)  # Set translation vector 
-            self.datapoints[idx].LBCV_corners = marker_corners_2d 
+            tf_Ccv_Mcv = np.eye(4)  # marker in openCV coordinates wrt openCV camera coordinates
+            tf_Ccv_Mcv[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix 
+            tf_Ccv_Mcv[:3,3] = translation_sol.reshape(3)  # Set translation vector 
+            tf_W_Mis = self.tf_W_Ccv @ tf_Ccv_Mcv @ self.T_Mcv_Mis 
+
+            self.datapoints[idx].LBCV_tag_pose = tf_W_Mis 
+            self.datapoints[idx].LBCV_corners = marker_corners_2d_sol 
+
+            # save blended image to dir_save_reprojected 
+            if save_image:
+                blended_image_sol = cv2.cvtColor(blended_image_sol, cv2.COLOR_BGR2RGB) 
+                # save blended image to dir_save_reprojected
+                save_path = os.path.join(dir_save_reprojected, f"reprojected_image_{idx}.png")
+                cv2.imwrite(save_path, blended_image_sol)
 
             # print progress every 10% 
             if len(self.datapoints) < 10 or (idx + 1) % (len(self.datapoints) // 10) == 0:
                 print(f"Processed {idx+1}/{len(self.datapoints)} datapoints for LBCV pose estimation.") 
 
-    def run_segmentation_pose_estimat(self): 
+        print(f"Number of datapoints with no corners detected: {num_no_corners_detected}") 
+        print(f"Number of datapoints with not 4 corners detected: {num_not_4_corners_detected}") 
+        print(f"Number of datapoints with corners on edge: {num_corner_on_edge}") 
+
+    def run_segmentation_pose_estimate(self): 
         # given true segmentation, compute pose as a basline reference for error 
-        for idx, dp in enumerate(self.datapoints): 
+        
+        num_no_corners_detected = 0 
+        num_not_4_corners_detected = 0 
+        num_corner_on_edge = 0 
+
+        for idx, dp in enumerate(self.datapoints):   
             self.datapoints[idx].SEG_tag_pose = None  
             self.datapoints[idx].SEG_corners = None  
 
             # read segmentation image 
-            seg_pred = cv2.imread(dp.seg_png_filepath) # NOTE: read true segmentation image instead of LBCV prediction
+            # seg_pred = cv2.imread(dp.seg_png_filepath) # NOTE: read true segmentation image instead of LBCV prediction
+            seg_pred = self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath)  # Load the segmentation mask
             seg_pred_np = np.array(seg_pred)  
             img = cv2.imread(dp.rgb)  
 
@@ -905,15 +1161,23 @@ class DataProcessor:
                 seg_pred = cv2.cvtColor(seg_pred, cv2.COLOR_BGR2GRAY)
                 seg_pred_np = np.array(seg_pred)  
             
-            marker_corners_2d = detect_corners(seg_pred_np)  # Detect corners in the segmentation mask
+            marker_corners_2d = detect_corners(seg_pred_np)  # Detect corners in the segmentation mask 
+
+            if (marker_corners_2d is None): 
+                num_no_corners_detected += 1 
+                continue 
             
-            if marker_corners_2d is None or marker_corners_2d.shape[0] != 4: 
+            # if any marker corner is on the edge of the image, skip this datapoint 
+            edge_tol = 10 
+            if np.any(marker_corners_2d[:,0] <= edge_tol) or np.any(marker_corners_2d[:,1] <= edge_tol) or np.any(marker_corners_2d[:,0] >= img.shape[1]-edge_tol) or np.any(marker_corners_2d[:,1] >= img.shape[0]-edge_tol):
+                num_corner_on_edge += 1 
+                continue 
+
+            if (marker_corners_2d.shape[0] != 4): 
+                num_not_4_corners_detected += 1 
                 continue
 
-            # FIXME: placeholder for pipeline testing 
-            if idx > 10: 
-                continue
-                
+
             # TODO: output image of detected corners on the segmentation mask 
 
             # loop through all permutations of the corners and compute the overlap error for all, return pose of lowest overlap error 
@@ -936,7 +1200,6 @@ class DataProcessor:
                         )
                     except cv2.error as e:
                         print(f"OpenCV error during solvePnP: {e}")
-                        import pdb; pdb.set_trace()  # Debugging breakpoint 
 
                     # project marker 
                     reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
@@ -948,18 +1211,26 @@ class DataProcessor:
                         min_reprojection_error = reprojection_error 
                         rotation_sol = rotation_vector 
                         translation_sol = translation_vector
-                        marker_corners_2d = marker_corners_2d 
-                    
-            self.datapoints[idx].SEG_tag_pose = np.eye(4) 
-            self.datapoints[idx].SEG_tag_pose[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix
-            self.datapoints[idx].SEG_tag_pose[:3,3] = translation_sol.reshape(3)  # Set translation vector 
-            self.datapoints[idx].SEG_corners = marker_corners_2d 
+                        marker_corners_2d_sol = marker_corners_2d 
+
+            # self.datapoints[idx].SEG_tag_pose = np.eye(4) 
+            # self.datapoints[idx].SEG_tag_pose[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix
+            # self.datapoints[idx].SEG_tag_pose[:3,3] = translation_sol.reshape(3)  # Set translation vector 
+            
+            tf_Ccv_Mcv = np.eye(4)  # marker in openCV coordinates wrt openCV camera coordinates
+            tf_Ccv_Mcv[:3,:3] = cv2.Rodrigues(rotation_sol)[0]  # Convert rotation vector to rotation matrix 
+            tf_Ccv_Mcv[:3,3] = translation_sol.reshape(3)  # Set translation vector 
+            tf_W_Mis = self.tf_W_Ccv @ tf_Ccv_Mcv @ self.T_Mcv_Mis 
+
+            self.datapoints[idx].SEG_tag_pose = tf_W_Mis 
+            self.datapoints[idx].SEG_corners = marker_corners_2d_sol 
 
             # print progress every 10% 
             if len(self.datapoints) < 10 or (idx + 1) % (len(self.datapoints) // 10) == 0:
                 print(f"Processed {idx+1}/{len(self.datapoints)} datapoints for LBCV pose estimation.") 
 
     def compute_LBCV_pose_error(self): 
+        print(f"\n")
         for idx, dp in enumerate(self.datapoints): 
             if dp.LBCV_tag_pose is not None: 
                 # compute pose error between LBCV and GT tag pose 
@@ -971,9 +1242,10 @@ class DataProcessor:
                 xyz_error = LBCV_tf_error[:3,3]  # translation error 
                 abc_error = R.from_matrix(LBCV_tf_error[:3,:3]).as_euler('xyz', degrees=True)  
                 self.datapoints[idx].LBCV_pose_error = np.hstack((xyz_error, abc_error))  # concatenate translation and rotation error 
+                self.datapoints[idx].LBCV_corner_error = closest_point_distances(dp.LBCV_corners, dp.outter_corners_image_space)  # compute corner error 
             else: 
                 self.datapoints[idx].LBCV_pose_error = None 
-                self.datapoints[idx].LBCV_pose_error = None 
+                self.datapoints[idx].LBCV_corner_error = None 
         
         # compute mean and std of pose error 
         self.LBCV_pose_error_mean = np.mean([dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None], axis=0) 
@@ -984,6 +1256,12 @@ class DataProcessor:
         # compute covariance matrix of pose error
         self.LBCV_pose_error_cov = np.cov(np.array([dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None]).T)  # Transpose to get correct shape
         print(f"LBCV: Covariance matrix of pose error: {self.LBCV_pose_error_cov}")
+
+        # compute corners error 
+        self.LBCV_corner_errors = np.array([dp.LBCV_corner_error for dp in self.datapoints if dp.LBCV_corner_error is not None]) # shape: (N images, 4 corners)
+        self.LBCV_corner_error_MAE = np.mean(np.abs(self.LBCV_corner_errors)) # shape: (1,) 
+        self.LBCV_MAE_corner_error = np.mean(self.LBCV_corner_errors, axis=1) # shape: (N images,) 
+        print(f"LBCV: corner error MAE: {self.LBCV_corner_error_MAE}") 
 
         # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c) 
         errors = [dp.LBCV_pose_error for dp in self.datapoints if dp.LBCV_pose_error is not None] 
@@ -1004,9 +1282,12 @@ class DataProcessor:
         plt.close()
 
     def compute_segmentation_pose_error(self): 
+        print(f"\n")
         for idx, dp in enumerate(self.datapoints): 
             self.datapoints[idx].SEG_tf_error = None 
             self.datapoints[idx].SEG_pose_error = None
+            self.datapoints[idx].SEG_corner_error = None 
+
             if dp.SEG_tag_pose is not None: 
                 # compute pose error between segmentation and GT tag pose 
                 tf_true = dp.tag_pose 
@@ -1019,19 +1300,27 @@ class DataProcessor:
                 abc_error = R.from_matrix(seg_tf_error[:3,:3]).as_euler('xyz', degrees=True)
                 # rotation error
                 self.datapoints[idx].SEG_pose_error = np.hstack((xyz_error, abc_error))  # concatenate translation and rotation error
+                self.datapoints[idx].SEG_corner_error = closest_point_distances(dp.SEG_corners, dp.outter_corners_image_space)  # compute corner error
 
         # compute mean and std of pose error
-        self.SEG_pose_error_mean = np.mean([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None], axis=0)
-        self.SEG_pose_error_std = np.std([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None], axis=0)
-        print(f"SEG: Mean pose error: {self.SEG_pose_error_mean}")
+        self.SEG_pose_errors = np.array([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None])
+        self.SEG_pose_error_MAE = np.mean(np.abs(self.SEG_pose_errors), axis=0)
+        self.SEG_pose_error_std = np.std(self.SEG_pose_errors, axis=0)
+        print(f"SEG: MAE pose error: {self.SEG_pose_error_MAE}")
         print(f"SEG: Std pose error: {self.SEG_pose_error_std}")
 
         # compute covariance matrix of pose error
-        self.SEG_pose_error_cov = np.cov(np.array([dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None]).T)  # Transpose to get correct shape
+        self.SEG_pose_error_cov = np.cov(np.array(self.SEG_pose_errors).T)  # Transpose to get correct shape
         print(f"SEG: Covariance matrix of pose error: {self.SEG_pose_error_cov}")
 
+        # compute corners error 
+        self.SEG_corner_errors = np.array([dp.SEG_corner_error for dp in self.datapoints if dp.SEG_corner_error is not None]) # shape: (N images, 4 corners)
+        self.SEG_corner_error_MAE = np.mean(np.abs(self.SEG_corner_errors)) # shape: (1,) 
+        self.SEG_MAE_corner_error = np.mean(self.SEG_corner_errors, axis=1) # shape: (N images,) 
+        print(f"SEG: MAE corner error: {self.SEG_corner_error_MAE}") 
+
         # save violin plots of pose error distributions for each dimension (x,y,z,a,b,c)
-        errors = [dp.SEG_pose_error for dp in self.datapoints if dp.SEG_pose_error is not None]
+        errors = self.SEG_pose_errors
         if len(errors) == 0:
             print("No pose errors to plot.")
             return
@@ -1098,6 +1387,92 @@ class DataProcessor:
         plt.savefig(os.path.join(analysis_dir, "pose_error_distribution_comparison.png"), dpi=300)  # Save the figure as an image
         plt.close()  # Close the plot to free up memory
 
+        # create a bar chart comparing the corner errors for CCV, LBCV, and SEG methods 
+        corner_errors = [self.CCV_corner_error_MAE, self.LBCV_corner_error_MAE, self.SEG_corner_error_MAE] 
+        plt.figure(figsize=(12, 6))
+        plt.bar(['CCV', 'LBCV', 'SEG'], corner_errors, color=['blue', 'orange', 'green'])
+        plt.xlabel('Method')
+        plt.ylabel('Corner Mean Absolute Error (MAE)') 
+        plt.grid() 
+        
+    def save_prediction_summary_images(self): 
+        # save a super image with the following images: 
+        # 1. original image 
+        # 2. ground truth segmentation mask 
+        # 3. CCV pose estimation bounding box 
+        # 4. LBCV segmentation prediction mask 
+        # 5. LBCV marker reprojection image 
+
+        # create prediction summary image directory 
+        prediction_summary_dir = os.path.join(self.out_dir, "prediction_summary")
+        os.makedirs(prediction_summary_dir, exist_ok=True) 
+
+        # loop through all datapoints and save the images
+        for idx, dp in enumerate(self.datapoints):
+            if dp.rgb is None or dp.seg_png_filepath is None or dp.LBCV_seg_filepath is None or dp.LBCV_tag_pose is None: 
+                print(f"Skipping datapoint {idx} due to missing data.")
+                continue 
+            
+            # read images 
+            rgb_image = cv2.imread(dp.rgb)
+            seg_mask = self.preprocess_seg_img(seg_img_path=dp.seg_png_filepath, seg_json_path=dp.seg_json_filepath)
+            seg_mask = np.array(seg_mask)  # Load the segmentation mask
+            # seg_mask = cv2.cvtColor(seg_mask, cv2.COLOR_BGR2GRAY)
+            if len(seg_mask.shape) == 3:  # In case the image is a color image (unexpected)
+                if seg_mask.shape[2] == 3: # Check if the image has 3 channels
+                    seg_mask = cv2.cvtColor(seg_mask, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+            seg_mask[seg_mask > 0] = 255
+            if dp.CCV_tag_pose is None: 
+                # create blank image 
+                ccv_bbox_image = np.zeros_like(rgb_image)  # Create a blank image with the same size as the original image 
+            else: 
+                ccv_bbox_image = cv2.imread(os.path.join(self.out_dir, "classical_CV_bbox", os.path.basename(dp.rgb).replace(".png","_bbox.png")))
+            lbcv_seg_pred = cv2.imread(dp.LBCV_seg_filepath)  # Load the LBCV segmentation prediction mask
+            if lbcv_seg_pred is None:
+                print(f"LBCV segmentation prediction not found for datapoint {idx}.")
+                continue 
+            lbcv_seg_pred = cv2.cvtColor(lbcv_seg_pred, cv2.COLOR_BGR2GRAY)
+            lbcv_seg_pred[lbcv_seg_pred > 0] = 255  # Threshold to create a binary mask
+            # read blended image from LBCV pose estimation
+            blended_image = cv2.imread(os.path.join(self.out_dir, "reprojected_marker_images", f"reprojected_image_{idx}.png"))
+            if blended_image is None:
+                print(f"Blended image not found for datapoint {idx}.")
+                continue 
+
+            # # combine images into a super image 
+            # # create a blank image with the same size as the original image
+            # super_image = np.zeros((rgb_image.shape[0], rgb_image.shape[1] * 5, 3), dtype=np.uint8)  # 5 columns for each image
+            # # place each image in the super image
+            # super_image[:, :rgb_image.shape[1]] = rgb_image
+            # super_image[:, rgb_image.shape[1]:rgb_image.shape[1]*2] = cv2.cvtColor(seg_mask, cv2.COLOR_GRAY2BGR)
+            # super_image[:, rgb_image.shape[1]*2:rgb_image.shape[1]*3] = ccv_bbox_image
+            # super_image[:, rgb_image.shape[1]*3:rgb_image.shape[1]*4] = cv2.cvtColor(lbcv_seg_pred, cv2.COLOR_GRAY2BGR)
+            # super_image[:, rgb_image.shape[1]*4:rgb_image.shape[1]*5] = blended_image
+
+            # Create a blank image with the size of two rows and three columns
+            # 2 rows and 3 columns, so the total width is 3 times the width of the original image
+            # and the total height is 2 times the height of the original image.
+            super_image = np.zeros((rgb_image.shape[0] * 2, rgb_image.shape[1] * 3, 3), dtype=np.uint8)
+
+            # Place each image in the super image
+            super_image[:rgb_image.shape[0], :rgb_image.shape[1]] = rgb_image
+            super_image[:rgb_image.shape[0], rgb_image.shape[1]:rgb_image.shape[1]*2] = cv2.cvtColor(seg_mask, cv2.COLOR_GRAY2BGR)
+            super_image[:rgb_image.shape[0], rgb_image.shape[1]*2:rgb_image.shape[1]*3] = ccv_bbox_image
+
+            super_image[rgb_image.shape[0]:rgb_image.shape[0]*2, :rgb_image.shape[1]] = cv2.cvtColor(lbcv_seg_pred, cv2.COLOR_GRAY2BGR)
+            super_image[rgb_image.shape[0]:rgb_image.shape[0]*2, rgb_image.shape[1]:rgb_image.shape[1]*2] = blended_image
+
+            # add text labels to each image in the super image
+            cv2.putText(super_image, "Original Image", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(super_image, "Ground Truth Segmentation", (rgb_image.shape[1] + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(super_image, "CCV Pose Estimation", (rgb_image.shape[1]*2 + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(super_image, "LBCV Segmentation Prediction", (rgb_image.shape[1]*3 + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(super_image, "LBCV Marker Reprojection", (rgb_image.shape[1]*4 + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+            # save the super image to the prediction summary directory
+            save_path = os.path.join(prediction_summary_dir, f"prediction_summary_{idx}.png")
+            cv2.imwrite(save_path, super_image)
+
 # DATA PROCESSING AND ANALYSIS SCRIPT 
 
 if __name__ == "__main__":
@@ -1113,24 +1488,24 @@ if __name__ == "__main__":
     ## INFERENCE 
     # run classical pose estimation 
     sdp.run_classical_marker_pose_estimation(save_pose=True, save_image=True) 
-
+    sdp.compute_CCV_pose_error() 
+    
     # run segmentation model 
-    # TODO: add in later, for now just read data 
-    sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
+    sdp.run_segmentation_pose_estimate()  
+    sdp.compute_segmentation_pose_error() 
 
     # run prediction models 
-    sdp.run_optimization_pose_estimation() 
-    sdp.run_segmentation_pose_estimat()  
+    # TODO: add in later, for now just read data 
+    sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
+    sdp.compute_segmentation_IOU() 
+    sdp.run_optimization_pose_estimation()  
+    sdp.compute_LBCV_pose_error() 
 
     ## ANALYSIS 
-    # compute detection accuracy (IOU) 
-    sdp.compute_segmentation_IOU() 
-    # compute pose errors and compare  
-    sdp.compute_CCV_pose_error() 
-    sdp.compute_LBCV_pose_error() 
-    sdp.compute_segmentation_pose_error() 
-    sdp.compare_pose_estimation_methods()    
+    sdp.compare_pose_estimation_methods()  
 
     # scatter plots comparing error vs variables (distance, lighting, etc.) 
     # save data 
+    sdp.save_prediction_summary_images() 
 
+    import pdb; pdb.set_trace() 
