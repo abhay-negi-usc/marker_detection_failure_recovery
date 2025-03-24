@@ -208,7 +208,7 @@ def add_colliders(prim):
             mesh_collision_api.CreateApproximationAttr().Set("convexHull")
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
-def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
+def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64, apply_blur=True):
     # For small step sizes the physics FPS needs to be temporarily increased to provide movements every syb sample
     orig_physics_fps = physx_scene.GetTimeStepsPerSecondAttr().Get()
     target_physics_fps = 1 / duration * num_samples
@@ -216,12 +216,13 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         print(f"[SDG] Changing physics FPS from {orig_physics_fps} to {target_physics_fps}")
         physx_scene.GetTimeStepsPerSecondAttr().Set(target_physics_fps)
 
-    # Enable motion blur (if not enabled)
-    is_motion_blur_enabled = carb.settings.get_settings().get("/omni/replicator/captureMotionBlur")
-    if not is_motion_blur_enabled:
-        carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", True)
-    # Number of sub samples to render for motion blur in PathTracing mode
-    carb.settings.get_settings().set("/omni/replicator/pathTracedMotionBlurSubSamples", num_samples)
+    if apply_blur: 
+        # Enable motion blur (if not enabled)
+        is_motion_blur_enabled = carb.settings.get_settings().get("/omni/replicator/captureMotionBlur")
+        if not is_motion_blur_enabled:
+            carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", True)
+        # Number of sub samples to render for motion blur in PathTracing mode
+        carb.settings.get_settings().set("/omni/replicator/pathTracedMotionBlurSubSamples", num_samples)
 
     # Set the render mode to PathTracing
     prev_render_mode = carb.settings.get_settings().get("/rtx/rendermode")
@@ -235,7 +236,7 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         timeline.play()
 
     # Capture the frame by advancing the simulation for the given duration and combining the sub samples
-    rep.orchestrator.step(delta_time=duration, pause_timeline=False)
+    rep.orchestrator.step(delta_time=duration, pause_timeline=False, rt_subframes=3)
 
     # Restore the original physics FPS
     if target_physics_fps > orig_physics_fps:
@@ -243,7 +244,8 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         physx_scene.GetTimeStepsPerSecondAttr().Set(orig_physics_fps)
 
     # Restore the previous render and motion blur  settings
-    carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", is_motion_blur_enabled)
+    if apply_blur: 
+        carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", is_motion_blur_enabled)
     print(f"[SDG] Restoring render mode from 'PathTracing' to '{prev_render_mode}'")
     carb.settings.get_settings().set("/rtx/rendermode", prev_render_mode)
 
@@ -419,7 +421,7 @@ elif config["lights"] == "distant_light":
 
     # FIXME: REVERT IF NOT REQUIRED 
     dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
-    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(10.0)
+    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(100.0)
 print("Lights set up.")
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
@@ -491,7 +493,7 @@ for obj in shadowers:
             # position = rep.distribution.uniform((10,10,1), (10,10,2.5)),
             position = rep.distribution.uniform((-5.0,-5.0,2.5), (5.0,5.0,2.5)),
             # scale = rep.distribution.uniform((0.01,0.01,0.01), (0.1,0.1,0.1)),
-            scale = rep.distribution.uniform((12.5,12.5,12.5), (12.5,12.5,12.5)),
+            scale = rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)),
             rotation = rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
             # rotation = (0,0,0),   
             name = f"shadower_plane_{i}", 
@@ -561,7 +563,7 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
         rep.modify.pose_camera_relative(
             camera=cam, #NOTE: assume single camera 
             render_product=rp_cam,
-            distance=rep.distribution.uniform(0.1, 2.5), 
+            distance=rep.distribution.uniform(0.1, 1.2), 
             horizontal_location=rep.distribution.uniform(-1.0, 1.0),
             vertical_location=rep.distribution.uniform(-1.0, 1.0),
             # distance=rep.distribution.uniform(0.010, 5.0), # NOTE: this does not work 
@@ -583,10 +585,11 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
 
     with distant_light:
         rep.modify.pose(
-            rotation=rep.distribution.uniform((-45,-45,0), (45,45,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
+            rotation=rep.distribution.uniform((-30,-30,0), (30,30,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
             # rotation=(a,b,c),  
         )
-        rep.modify.attribute("exposure", rep.distribution.uniform(8, 16)) 
+        # rep.modify.attribute("exposure", rep.distribution.uniform(8, 16)) 
+        rep.modify.attribute("exposure", rep.distribution.uniform(16, 16)) # FIXME: REVERT 
         # rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
         # rep.modify.attribute("color_temperature", rep.distribution.uniform(2500, 10000))  
 
@@ -611,9 +614,9 @@ with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):
     with shadower_plane:
         rep.modify.pose(
             # position=rep.distribution.uniform((10,10,1),(10,10,2.5)),
-            position=rep.distribution.uniform((-5.0,-5.0,2.5),(5.0,5.0,2.5)),#FIXME 
+            position=rep.distribution.uniform((-5.0,-5.0,2.5),(5.0,5.0,2.5)), #FIXME 
             rotation=rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
-            scale=rep.distribution.uniform((12.5,12.5,12.5), (12.5,12.5,12.5)), 
+            scale=rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)), 
         )
 rep.utils.send_og_event(event_name="randomize_shadower_pose")
 
@@ -652,30 +655,25 @@ print("SDG setup done.")
 # SIMULATION LOOP 
 for i in range(num_frames):
     if i % 1 == 0: 
-        # print(f"\t Randomizing camera poses")
-        # randomize_camera_poses()
-        
         print(f"\t Randomizing plane texture") 
         rep.utils.send_og_event(event_name="randomize_plane_texture") 
         
-        # print(f"\t Point camera at background plane") 
-        # rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
-
         print(f"Randomize marker pose")
-        # rep.utils.send_og_event(event_name="randomize_marker_pose") 
         rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
-
-        print(f"Randomize lighting") 
-        rep.utils.send_og_event(event_name="randomize_lighting") 
-
-        print(f"Randomize tag texture") 
-        rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
         print(f"Randomize shadower pose")
         rep.utils.send_og_event(event_name="randomize_shadower_pose") 
+    
+    if i % 5 == 0: # NOTE: reduce randomization frequency to speed up compute 
+        print(f"Randomize lighting") 
+        rep.utils.send_og_event(event_name="randomize_lighting") 
 
-        # update the app to apply the randomization 
-        rep.orchestrator.step(delta_time=0.0, rt_subframes=5, pause_timeline=False)
+    if i % 7 == 0: # NOTE: reduce randomization frequency to speed up compute 
+        print(f"Randomize tag texture") 
+        rep.utils.send_og_event(event_name="randomize_tag_texture") 
+
+    # update the app to apply the randomization 
+    # rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
@@ -685,7 +683,8 @@ for i in range(num_frames):
     print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
     if i % 1 == 0:
         # capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
-        capture_with_motion_blur_and_pathtracing(duration=0.25, num_samples=8, spp=128)
+        capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=128, apply_blur=False) 
+        # rep.orchestrator.step(delta_time=0.0, rt_subframes=1, pause_timeline=False)
     else:
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
 
