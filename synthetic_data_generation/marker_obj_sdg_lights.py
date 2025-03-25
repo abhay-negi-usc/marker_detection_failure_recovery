@@ -265,7 +265,7 @@ def get_world_transform_xform_as_np_tf(prim: Usd.Prim):
     time = Usd.TimeCode.Default() # The time at which we compute the bounding box
     world_transform: Gf.Matrix4d = xform.ComputeLocalToWorldTransform(time)
 
-    return np.array(world_transform)
+    return np.array(world_transform).transpose()
 
 # Util function to save rgb annotator data
 def write_rgb_data(rgb_data, file_path):
@@ -312,9 +312,6 @@ def run_simulation_loop(duration):
     print(
         f"[SDG] Simulation loop finished in {elapsed_time:.2f} seconds at {timeline.get_current_time():.2f} with {app_updates_counter} app updates."
     )
-
-def rand_position_in_frustrum():  
-    return (0,0,-1.0) 
 
 def quatf_to_eul(quatf): 
     qw = quatf.real 
@@ -410,7 +407,7 @@ elif config["lights"] == "distant_light":
         color=(1, 1, 1),
         # temperature=rep.distribution.normal(6500, 500),
         intensity=1.0, 
-        exposure=rep.distribution.uniform(8, 16), 
+        exposure=rep.distribution.uniform(10, 16), 
         rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
         position=(0,0,3),
         count=1,
@@ -453,7 +450,7 @@ for obj in labeled_assets_and_properties:
         )
         tag_prim = tag.get_output_prims()["prims"][0] 
         # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
-        add_colliders(tag_prim)
+        # add_colliders(tag_prim)
         # add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
@@ -548,16 +545,6 @@ with rep.trigger.on_custom_event(event_name="randomize_plane_texture"):
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_plane_texture") 
 
-# with rep.trigger.on_custom_event(event_name="randomize_marker_pose"):
-#     with tag:
-#         rep.modify.pose(
-#             position=rand_position_in_frustrum(), 
-#             # position=rep.distribution.uniform(working_area_min, working_area_max),
-#             rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
-#         )
-# rep.utils.send_og_event(event_name="randomize_marker_pose") 
-
-
 with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
     with tag: 
         rep.modify.pose_camera_relative(
@@ -588,8 +575,7 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
             rotation=rep.distribution.uniform((-30,-30,0), (30,30,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
             # rotation=(a,b,c),  
         )
-        # rep.modify.attribute("exposure", rep.distribution.uniform(8, 16)) 
-        rep.modify.attribute("exposure", rep.distribution.uniform(16, 16)) # FIXME: REVERT 
+        rep.modify.attribute("exposure", rep.distribution.uniform(10, 16)) 
         # rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
         # rep.modify.attribute("color_temperature", rep.distribution.uniform(2500, 10000))  
 
@@ -610,13 +596,13 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
-with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):
+with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):   
     with shadower_plane:
         rep.modify.pose(
             # position=rep.distribution.uniform((10,10,1),(10,10,2.5)),
-            position=rep.distribution.uniform((-5.0,-5.0,2.5),(5.0,5.0,2.5)), #FIXME 
+            position=rep.distribution.uniform((-10.0,-10.0,2.5),(10.0,10.0,2.5)), 
             rotation=rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
-            scale=rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)), 
+            scale=rep.distribution.uniform((5.0,5.0,5.0), (10.0,10.0,10.0)), 
         )
 rep.utils.send_og_event(event_name="randomize_shadower_pose")
 
@@ -654,6 +640,11 @@ print("SDG setup done.")
 
 # SIMULATION LOOP 
 for i in range(num_frames):
+
+    if i % 5 == 0: # NOTE: reduce randomization frequency to speed up compute 
+        print(f"Randomize lighting") 
+        rep.utils.send_og_event(event_name="randomize_lighting") 
+
     if i % 1 == 0: 
         print(f"\t Randomizing plane texture") 
         rep.utils.send_og_event(event_name="randomize_plane_texture") 
@@ -663,12 +654,8 @@ for i in range(num_frames):
 
         print(f"Randomize shadower pose")
         rep.utils.send_og_event(event_name="randomize_shadower_pose") 
-    
-    if i % 5 == 0: # NOTE: reduce randomization frequency to speed up compute 
-        print(f"Randomize lighting") 
-        rep.utils.send_og_event(event_name="randomize_lighting") 
 
-    if i % 7 == 0: # NOTE: reduce randomization frequency to speed up compute 
+    if i % 17 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize tag texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
@@ -692,6 +679,7 @@ for i in range(num_frames):
     tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
     plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
     light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
+    shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
 
     pose_data = {
         "cam": cam_tf.tolist(), 
