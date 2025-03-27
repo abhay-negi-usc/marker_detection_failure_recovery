@@ -403,6 +403,8 @@ class datapoint:
         self.outter_corners_tag_frame = compute_2D_gridpoints(N=1, s=s)
         # self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*0.8)
         self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*1.0)
+        # self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*0.8)
+        self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*1.0)
 
         # transformations 
         tf_w_t = self.tag_pose 

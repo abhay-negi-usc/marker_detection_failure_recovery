@@ -5,8 +5,10 @@ synthetic_data_generation/output
 synthetic_data_generation/assets/background_images
 segmentation_model/sim_data 
 segmentation_model/data 
+segmentation_model/Test Images
 *.pth 
 *.pyc
 *.tar 
 saved_images 
 segmentation_model/Test Images
+segmentation_model/test_images_real 
