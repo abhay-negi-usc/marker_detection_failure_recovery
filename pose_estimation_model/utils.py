@@ -401,7 +401,8 @@ class datapoint:
         s = 0.1 # side length of marker 
         self.keypoints_tag_frame = compute_2D_gridpoints(N=10, s=s) 
         self.outter_corners_tag_frame = compute_2D_gridpoints(N=1, s=s)
-        self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*0.8)
+        # self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*0.8)
+        self.inner_corners_tag_frame = compute_2D_gridpoints(N=1, s=s*1.0)
 
         # transformations 
         tf_w_t = self.tag_pose 
@@ -729,7 +730,8 @@ class DataProcessor:
             [+marker_side_length/2,-marker_side_length/2,0]
         ] 
         self.marker_corners_3d = np.array(marker_corners_3d, dtype=np.float32)  
-        self.marker_inner_corners_3d = self.marker_corners_3d * 0.8 
+        # self.marker_inner_corners_3d = self.marker_corners_3d * 0.8 
+        self.marker_inner_corners_3d = self.marker_corners_3d * 1.0 
 
     def run_classical_marker_pose_estimation(self, save_pose=False, save_image=False): 
         if save_pose: 
@@ -746,7 +748,8 @@ class DataProcessor:
                     image=cv2.imread(dp.rgb_filepath), 
                     camera_matrix=self.camera_matrix, 
                     dist_coeffs=self.distortion_coefficients, 
-                    aruco_dict=cv2.aruco.DICT_APRILTAG_36h11,
+                    # aruco_dict=cv2.aruco.DICT_APRILTAG_36h11, 
+                    aruco_dict=cv2.aruco.DICT_4X4_50    ,
                     marker_length=0.080,  # 80 mm for black edges, 100 mm for white edges 
                 )
 
@@ -1105,7 +1108,8 @@ class DataProcessor:
                         print(f"OpenCV error during solvePnP: {e}")
 
                     # project marker 
-                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    # reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 1.0)
                     
                     reprojection_error = self.image_overlap_error(img, seg_pred_np, reprojected_marker_image, reprojected_marker_mask)  
 
@@ -1202,7 +1206,8 @@ class DataProcessor:
                         print(f"OpenCV error during solvePnP: {e}")
 
                     # project marker 
-                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    # reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 0.8)
+                    reprojected_marker_image, reprojected_marker_mask, blended_image = marker_reprojection(img, seg_pred_np, self.marker_image, marker_corners_2d, self.marker_corners_3d, rotation_vector, translation_vector, self.camera_matrix, dist_coeffs, 1.0)
                     
                     reprojection_error = self.image_overlap_error(img, seg_pred_np, reprojected_marker_image, reprojected_marker_mask)  
 
@@ -1478,25 +1483,34 @@ class DataProcessor:
 if __name__ == "__main__":
     # DATA PROCESSING 
     sdp = DataProcessor(
-        data_folders = ["C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037"], 
-        out_dir = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/outputs"
+        # data_folders = ["C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037"], 
+        # out_dir = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/outputs"
+    
+        data_folders = ["/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250324-183440/"],   
+        out_dir = "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250324-183440/outputs"
+    
     )
     sdp.process_folders() 
     sdp.set_camera_calibration() 
-    sdp.set_marker("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png", 0.100)
+    # sdp.set_marker("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png", 0.100)
+    sdp.set_marker("/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/4x4_1000-31.png", 0.100)
 
     ## INFERENCE 
     # run classical pose estimation 
+    print("Running classical marker detection")
     sdp.run_classical_marker_pose_estimation(save_pose=True, save_image=True) 
     sdp.compute_CCV_pose_error() 
     
     # run segmentation model 
+    print("Running segmentation pose estimation")
     sdp.run_segmentation_pose_estimate()  
     sdp.compute_segmentation_pose_error() 
 
     # run prediction models 
     # TODO: add in later, for now just read data 
-    sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
+    # sdp.read_segmentation_predictions("C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/segmentation_model/sim_data/markers_20250314-181037/rgb/predictions_20250315-162709/predictions") 
+    print("Reading segmentation predictions")
+    sdp.read_segmentation_predictions("/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/Test Images/sdg_markers_20250325-132238/predictions/") 
     sdp.compute_segmentation_IOU() 
     sdp.run_optimization_pose_estimation()  
     sdp.compute_LBCV_pose_error() 
