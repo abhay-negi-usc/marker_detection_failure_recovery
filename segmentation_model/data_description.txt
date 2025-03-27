@@ -2,3 +2,11 @@
 markers_20250305-165003, 33K, isaac 
 markers_20250310-005350, 72K, isaac, increased range to [-60,60]
 markers_20250314-181037, 1K, isaac, small dataset for model testing 
+
+
+aruco tag 31 
+sdg_markers_20250323-032914, 10K, isaac 
+sdg_markers_20250323-033133, 2K, CAM 
+sdg_markers_20250324-181901, 6K, isaac 
+sdg_markers_20250324-183440, 41K, isaac 
+sdg_markers_20250326-143252, 17K, isaac 
