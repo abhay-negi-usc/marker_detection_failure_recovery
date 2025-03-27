@@ -473,37 +473,37 @@ print("Markers set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SHADOWERS  
-shadowers = config.get("shadowers", [])
-for obj in shadowers:
-    obj_url = obj.get("url", "")
-    label = obj.get("label", "unknown")
-    count = obj.get("count", 1)
-    floating = obj.get("floating", False)
-    scale_min_max = obj.get("scale_min_max", (1, 1))
-    for i in range(count):
-        # Create a prim and add the asset reference
-        # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
-        #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
-        # )
+# shadowers = config.get("shadowers", [])
+# for obj in shadowers:
+#     obj_url = obj.get("url", "")
+#     label = obj.get("label", "unknown")
+#     count = obj.get("count", 1)
+#     floating = obj.get("floating", False)
+#     scale_min_max = obj.get("scale_min_max", (1, 1))
+#     for i in range(count):
+#         # Create a prim and add the asset reference
+#         # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+#         #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
+#         # )
 
-        shadower_plane = rep.create.plane(
-            # position = rep.distribution.uniform((10,10,1), (10,10,2.5)),
-            position = rep.distribution.uniform((-5.0,-5.0,2.5), (5.0,5.0,2.5)),
-            # scale = rep.distribution.uniform((0.01,0.01,0.01), (0.1,0.1,0.1)),
-            scale = rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)),
-            rotation = rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
-            # rotation = (0,0,0),   
-            name = f"shadower_plane_{i}", 
-            semantics=[("class", label)],
-        )
-        shadower_plane_prim = shadower_plane.get_output_prims()["prims"][0] 
-        # set_transform_attributes(shadower_plane_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+#         shadower_plane = rep.create.plane(
+#             # position = rep.distribution.uniform((10,10,1), (10,10,2.5)),
+#             position = rep.distribution.uniform((-5.0,-5.0,2.5), (5.0,5.0,2.5)),
+#             # scale = rep.distribution.uniform((0.01,0.01,0.01), (0.1,0.1,0.1)),
+#             scale = rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)),
+#             rotation = rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
+#             # rotation = (0,0,0),   
+#             name = f"shadower_plane_{i}", 
+#             semantics=[("class", label)],
+#         )
+#         shadower_plane_prim = shadower_plane.get_output_prims()["prims"][0] 
+#         # set_transform_attributes(shadower_plane_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
 
-        if floating:
-            floating_labeled_prims.append(shadower_plane_prim)
-        else:
-            falling_labeled_prims.append(shadower_plane_prim)
-print("Shadowers set up.")
+#         if floating:
+#             floating_labeled_prims.append(shadower_plane_prim)
+#         else:
+#             falling_labeled_prims.append(shadower_plane_prim)
+# print("Shadowers set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # ADD BACKGROUND PLANE 
@@ -596,15 +596,15 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
-with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):   
-    with shadower_plane:
-        rep.modify.pose(
-            # position=rep.distribution.uniform((10,10,1),(10,10,2.5)),
-            position=rep.distribution.uniform((-10.0,-10.0,2.5),(10.0,10.0,2.5)), 
-            rotation=rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
-            scale=rep.distribution.uniform((5.0,5.0,5.0), (10.0,10.0,10.0)), 
-        )
-rep.utils.send_og_event(event_name="randomize_shadower_pose")
+# with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):   
+#     with shadower_plane:
+#         rep.modify.pose(
+#             # position=rep.distribution.uniform((10,10,1),(10,10,2.5)),
+#             position=rep.distribution.uniform((-10.0,-10.0,2.5),(10.0,10.0,2.5)), 
+#             rotation=rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
+#             scale=rep.distribution.uniform((5.0,5.0,5.0), (10.0,10.0,10.0)), 
+#         )
+# rep.utils.send_og_event(event_name="randomize_shadower_pose")
 
 print("Randomizer events set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
@@ -652,8 +652,8 @@ for i in range(num_frames):
         print(f"Randomize marker pose")
         rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
 
-        print(f"Randomize shadower pose")
-        rep.utils.send_og_event(event_name="randomize_shadower_pose") 
+        # print(f"Randomize shadower pose")
+        # rep.utils.send_og_event(event_name="randomize_shadower_pose") 
 
     if i % 17 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize tag texture") 
@@ -679,7 +679,7 @@ for i in range(num_frames):
     tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
     plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
     light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
-    shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
+    # shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
 
     pose_data = {
         "cam": cam_tf.tolist(), 
