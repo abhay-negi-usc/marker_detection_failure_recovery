@@ -11,3 +11,4 @@ segmentation_model/Test Images
 *.tar 
 saved_images 
 segmentation_model/Test Images
+segmentation_model/test_images_real 
