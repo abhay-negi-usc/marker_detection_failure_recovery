@@ -1,7 +1,9 @@
-#    
+# ~/isaacsim/python.sh synthetic_data_generation/marker_obj_sdg_lights.py 
+# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh synthetic_data_generation/marker_obj_sdg_lights.py 
+
 
 # DESCRIPTION: 
-# fixed camera, moving marker, plane fixed behind marker region 
+# randomize: marker pose, background plane image, lighting direction
 
 # IMPORTS 
 import argparse
@@ -31,15 +33,14 @@ import sys
 timestr = time.strftime("%Y%m%d-%H%M%S") 
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
-    # OUT_DIR = os.path.join("/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
-    OUT_DIR = os.path.join("/home/anegi/abhay_ws/marker_detection_failure_recovery/output","markers_"+timestr)
-    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags" 
+    OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
+    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     dir_backgrounds = "/home/anegi/Downloads/test2017" 
 else: # CAM machine 
-    OUT_DIR = os.path.join("/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/data/marker_obj_sdg/","markers_"+timestr) 
-    dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags"
+    OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
+    dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag"
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
 
@@ -49,13 +50,14 @@ os.makedirs(os.path.join(OUT_DIR,"seg"), exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"pose"), exist_ok=True) 
 os.makedirs(os.path.join(OUT_DIR,"metadata"), exist_ok=True) 
 tag_textures = [os.path.join(dir_textures, f) for f in os.listdir(dir_textures) if os.path.isfile(os.path.join(dir_textures, f))] 
+print("Set up directories. OUT_DIR: ", OUT_DIR)
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # CONFIG 
 config = {
     "launch_config": {
-        "renderer": "RayTracedLighting",
-        "headless": False,
+        "renderer": "RayTracedLighting", # RayTracedLighting, PathTracing
+        "headless": True,
     },
     "env_url": "",
     "working_area_size": (1,1,10),
@@ -64,7 +66,7 @@ config = {
     "num_cameras": 1,
     "camera_collider_radius": 0.5,
     "disable_render_products_between_captures": False,
-    "simulation_duration_between_captures": 0.05,
+    "simulation_duration_between_captures": 1.0,
     "resolution": (640, 480),
     "camera_properties_kwargs": {
         "focalLength": 24.0,
@@ -106,8 +108,18 @@ config = {
             "count": 1, 
             "floating": True, 
             "scale_min_max": (0.1, 0.1), # default plane is 100cm x 100cm, 0.1 scale makes this 10cm x 10cm 
-        }
+        }, 
     ],
+    "shadowers": [
+            # plane object 
+            {
+                "url": "omniverse://localhost/NVIDIA/Assets/Isaac/4.2/Isaac/Props/Shapes/plane.usd", # FIXME: update to 4.5.0 
+                "label": "shadower_plane",
+                "count": 1, 
+                "floating": True, 
+                "scale_min_max": (0.01, 0.1),  
+            },
+        ], 
     "shape_distractors_types": ["capsule", "cone", "cylinder", "sphere", "cube"],
     "shape_distractors_scale_min_max": (0.015, 0.15),
     "shape_distractors_num": 0,
@@ -127,6 +139,7 @@ config = {
 stage = None
 launch_config = config.get("launch_config", {})
 simulation_app = SimulationApp(launch_config=launch_config)
+print("Simulation app started.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SYS DEPENDENT IMPORTS 
@@ -195,7 +208,7 @@ def add_colliders(prim):
             mesh_collision_api.CreateApproximationAttr().Set("convexHull")
 
 # Capture motion blur by combining the number of pathtraced subframes samples simulated for the given duration
-def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64):
+def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=64, apply_blur=True):
     # For small step sizes the physics FPS needs to be temporarily increased to provide movements every syb sample
     orig_physics_fps = physx_scene.GetTimeStepsPerSecondAttr().Get()
     target_physics_fps = 1 / duration * num_samples
@@ -203,12 +216,13 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         print(f"[SDG] Changing physics FPS from {orig_physics_fps} to {target_physics_fps}")
         physx_scene.GetTimeStepsPerSecondAttr().Set(target_physics_fps)
 
-    # Enable motion blur (if not enabled)
-    is_motion_blur_enabled = carb.settings.get_settings().get("/omni/replicator/captureMotionBlur")
-    if not is_motion_blur_enabled:
-        carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", True)
-    # Number of sub samples to render for motion blur in PathTracing mode
-    carb.settings.get_settings().set("/omni/replicator/pathTracedMotionBlurSubSamples", num_samples)
+    if apply_blur: 
+        # Enable motion blur (if not enabled)
+        is_motion_blur_enabled = carb.settings.get_settings().get("/omni/replicator/captureMotionBlur")
+        if not is_motion_blur_enabled:
+            carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", True)
+        # Number of sub samples to render for motion blur in PathTracing mode
+        carb.settings.get_settings().set("/omni/replicator/pathTracedMotionBlurSubSamples", num_samples)
 
     # Set the render mode to PathTracing
     prev_render_mode = carb.settings.get_settings().get("/rtx/rendermode")
@@ -222,7 +236,7 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         timeline.play()
 
     # Capture the frame by advancing the simulation for the given duration and combining the sub samples
-    rep.orchestrator.step(delta_time=duration, pause_timeline=False)
+    rep.orchestrator.step(delta_time=duration, pause_timeline=False, rt_subframes=3)
 
     # Restore the original physics FPS
     if target_physics_fps > orig_physics_fps:
@@ -230,7 +244,8 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         physx_scene.GetTimeStepsPerSecondAttr().Set(orig_physics_fps)
 
     # Restore the previous render and motion blur  settings
-    carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", is_motion_blur_enabled)
+    if apply_blur: 
+        carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", is_motion_blur_enabled)
     print(f"[SDG] Restoring render mode from 'PathTracing' to '{prev_render_mode}'")
     carb.settings.get_settings().set("/rtx/rendermode", prev_render_mode)
 
@@ -250,7 +265,7 @@ def get_world_transform_xform_as_np_tf(prim: Usd.Prim):
     time = Usd.TimeCode.Default() # The time at which we compute the bounding box
     world_transform: Gf.Matrix4d = xform.ComputeLocalToWorldTransform(time)
 
-    return np.array(world_transform)
+    return np.array(world_transform).transpose()
 
 # Util function to save rgb annotator data
 def write_rgb_data(rgb_data, file_path):
@@ -297,9 +312,6 @@ def run_simulation_loop(duration):
     print(
         f"[SDG] Simulation loop finished in {elapsed_time:.2f} seconds at {timeline.get_current_time():.2f} with {app_updates_counter} app updates."
     )
-
-def rand_position_in_frustrum():  
-    return (0,0,-1.0) 
 
 def quatf_to_eul(quatf): 
     qw = quatf.real 
@@ -361,6 +373,7 @@ else:
     physx_scene = PhysxSchema.PhysxSceneAPI.Apply(stage.GetPrimAtPath("/PhysicsScene"))
 physx_scene.GetTimeStepsPerSecondAttr().Set(60)
 rep.orchestrator.set_capture_on_play(False)
+print("Environment set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # CAMERA 
@@ -375,7 +388,7 @@ render_products = [rp_cam]
 num_cameras = config["num_cameras"] # NOTE: placeholder for now because only using 1 cam 
 cam_cam_prim = cam_prim.GetChildren()[0] 
 cam_cam_prim.GetAttribute("clippingRange").Set((0.0001, 1000000)) 
-
+print("Camera set up.")
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
@@ -389,18 +402,25 @@ elif config["lights"] == "distant_light":
     #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=(1,1)
     # )
     distant_light = rep.create.light(
-            light_type="distant",
-            color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
-            temperature=rep.distribution.normal(6500, 500),
-            intensity=1.0, 
-            exposure=rep.distribution.uniform(11, 16), 
-            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
-            position=(0,0,0),
-            count=1,
+        light_type="distant",
+        # color=rep.distribution.uniform((0, 0, 0), (1, 1, 1)),
+        color=(1, 1, 1),
+        # temperature=rep.distribution.normal(6500, 500),
+        intensity=1.0, 
+        exposure=rep.distribution.uniform(10, 16), 
+        rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)),
+        position=(0,0,3),
+        count=1,
+        # color_temperature=rep.distribution.uniform(2500, 10000),
     )
     distant_light_prim = distant_light.get_output_prims()["prims"][0] 
     distant_light_lighting_prim = distant_light_prim.GetChildren()[0]
-    
+
+    # FIXME: REVERT IF NOT REQUIRED 
+    dome_light = stage.DefinePrim("/World/Lights/DomeLight", "DomeLight") 
+    dome_light.CreateAttribute("inputs:intensity", Sdf.ValueTypeNames.Float).Set(100.0)
+print("Lights set up.")
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # MARKERS 
@@ -429,8 +449,8 @@ for obj in labeled_assets_and_properties:
             semantics=[("class", label)],
         )
         tag_prim = tag.get_output_prims()["prims"][0] 
-        set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
-        add_colliders(tag_prim)
+        # set_transform_attributes(tag_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+        # add_colliders(tag_prim)
         # add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
@@ -441,12 +461,49 @@ for obj in labeled_assets_and_properties:
                 # metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_intensity=rep.distribution.uniform(0, 1000),
+                emissive_texture=tag_textures[0],
+                emissive_intensity=40.0, 
             )    
             rep.modify.material(mat) 
         if floating:
             floating_labeled_prims.append(tag_prim)
         else:
             falling_labeled_prims.append(tag_prim)
+print("Markers set up.")
+#------------------------------------------------------------------------------------------------------------------------------------------------------#
+
+# SHADOWERS  
+shadowers = config.get("shadowers", [])
+for obj in shadowers:
+    obj_url = obj.get("url", "")
+    label = obj.get("label", "unknown")
+    count = obj.get("count", 1)
+    floating = obj.get("floating", False)
+    scale_min_max = obj.get("scale_min_max", (1, 1))
+    for i in range(count):
+        # Create a prim and add the asset reference
+        # rand_loc, rand_rot, rand_scale = object_based_sdg_utils.get_random_transform_values(
+        #     loc_min=working_area_min, loc_max=working_area_max, scale_min_max=scale_min_max
+        # )
+
+        shadower_plane = rep.create.plane(
+            # position = rep.distribution.uniform((10,10,1), (10,10,2.5)),
+            position = rep.distribution.uniform((-5.0,-5.0,2.5), (5.0,5.0,2.5)),
+            # scale = rep.distribution.uniform((0.01,0.01,0.01), (0.1,0.1,0.1)),
+            scale = rep.distribution.uniform((10.0,10.0,10.0), (10.0,10.0,10.0)),
+            rotation = rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
+            # rotation = (0,0,0),   
+            name = f"shadower_plane_{i}", 
+            semantics=[("class", label)],
+        )
+        shadower_plane_prim = shadower_plane.get_output_prims()["prims"][0] 
+        # set_transform_attributes(shadower_plane_prim, location=rand_loc, rotation=rand_rot, scale=rand_scale) 
+
+        if floating:
+            floating_labeled_prims.append(shadower_plane_prim)
+        else:
+            falling_labeled_prims.append(shadower_plane_prim)
+print("Shadowers set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # ADD BACKGROUND PLANE 
@@ -459,6 +516,7 @@ background_plane = rep.create.plane(
 )
 background_plane_prim = background_plane.get_output_prims()["prims"][0] 
 labeled_prims = floating_labeled_prims + falling_labeled_prims
+print("Background plane set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # ADD DISTRACTOR OBJECTS 
@@ -470,6 +528,7 @@ simulation_app.update()
 disable_render_products_between_captures = config.get("disable_render_products_between_captures", True)
 if disable_render_products_between_captures:
     object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
+print("Environment update step done.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # RANDOMIZER EVENTS 
@@ -481,27 +540,17 @@ with rep.trigger.on_custom_event(event_name="randomize_plane_texture"):
             roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
             metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
             emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-            emissive_intensity=rep.distribution.uniform(0, 1000),
+            emissive_intensity=0.0, 
         )    
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_plane_texture") 
-
-with rep.trigger.on_custom_event(event_name="randomize_marker_pose"):
-    with tag:
-        rep.modify.pose(
-            position=rand_position_in_frustrum(), 
-            # position=rep.distribution.uniform(working_area_min, working_area_max),
-            rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
-        )
-rep.utils.send_og_event(event_name="randomize_marker_pose") 
-
 
 with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
     with tag: 
         rep.modify.pose_camera_relative(
             camera=cam, #NOTE: assume single camera 
             render_product=rp_cam,
-            distance=rep.distribution.uniform(0.1, 2.5), 
+            distance=rep.distribution.uniform(0.1, 1.2), 
             horizontal_location=rep.distribution.uniform(-1.0, 1.0),
             vertical_location=rep.distribution.uniform(-1.0, 1.0),
             # distance=rep.distribution.uniform(0.010, 5.0), # NOTE: this does not work 
@@ -523,12 +572,13 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
 
     with distant_light:
         rep.modify.pose(
-            rotation=rep.distribution.uniform((-45,-45,0), (45,45,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
+            rotation=rep.distribution.uniform((-30,-30,0), (30,30,0)), # NOTE: believe that this is not perfect but workable, reduced angular range 
             # rotation=(a,b,c),  
         )
-        rep.modify.attribute("exposure", rep.distribution.uniform(8, 18)) 
-        # rep.modify.attribute("exposure", rep.distribution.uniform(12,12))  
-        rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
+        rep.modify.attribute("exposure", rep.distribution.uniform(10, 16)) 
+        # rep.modify.attribute("color", rep.distribution.uniform((0, 0, 0), (1, 1, 1)))  
+        # rep.modify.attribute("color_temperature", rep.distribution.uniform(2500, 10000))  
+
 rep.utils.send_og_event(event_name="randomize_lighting") 
 
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
@@ -540,10 +590,23 @@ with rep.trigger.on_custom_event(event_name="randomize_tag_texture"):
             # metallic_texture=rep.distribution.choice(rep.example.TEXTURES), # NOTE: turning this off because believe it is causing very dark markers about 5% of the time 
             # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
             # emissive_intensity=rep.distribution.uniform(0, 1000),
+            emissive_texture=tag_textures[0],
+            emissive_intensity=40.0
         )    
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
+with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):   
+    with shadower_plane:
+        rep.modify.pose(
+            # position=rep.distribution.uniform((10,10,1),(10,10,2.5)),
+            position=rep.distribution.uniform((-10.0,-10.0,2.5),(10.0,10.0,2.5)), 
+            rotation=rep.distribution.uniform((-0,-0,-180), (0,0,180)), 
+            scale=rep.distribution.uniform((5.0,5.0,5.0), (10.0,10.0,10.0)), 
+        )
+rep.utils.send_og_event(event_name="randomize_shadower_pose")
+
+print("Randomizer events set up.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SDG SETUP 
@@ -572,32 +635,32 @@ rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
 rgb_annot.attach(rp_cam)
 sem_annot = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": True})
 sem_annot.attach(rp_cam)
+print("SDG setup done.")
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SIMULATION LOOP 
 for i in range(num_frames):
-    if i % 1 == 0: 
-        # print(f"\t Randomizing camera poses")
-        # randomize_camera_poses()
-        
-        print(f"\t Randomizing plane texture") 
-        rep.utils.send_og_event(event_name="randomize_plane_texture") 
-        
-        # print(f"\t Point camera at background plane") 
-        # rep.utils.send_og_event(event_name="point_camera_at_background_plane") 
 
-        print(f"Randomize marker pose")
-        # rep.utils.send_og_event(event_name="randomize_marker_pose") 
-        rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
-
+    if i % 5 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize lighting") 
         rep.utils.send_og_event(event_name="randomize_lighting") 
 
+    if i % 1 == 0: 
+        print(f"\t Randomizing plane texture") 
+        rep.utils.send_og_event(event_name="randomize_plane_texture") 
+        
+        print(f"Randomize marker pose")
+        rep.utils.send_og_event(event_name="randomize_marker_pose_cam_space") 
+
+        print(f"Randomize shadower pose")
+        rep.utils.send_og_event(event_name="randomize_shadower_pose") 
+
+    if i % 17 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize tag texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
-        # update the app to apply the randomization 
-        rep.orchestrator.step(delta_time=0.0, rt_subframes=5, pause_timeline=False)
+    # update the app to apply the randomization 
+    # rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
@@ -606,7 +669,9 @@ for i in range(num_frames):
     # Capture the current frame
     print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
     if i % 1 == 0:
-        capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
+        # capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
+        capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=128, apply_blur=False) 
+        # rep.orchestrator.step(delta_time=0.0, rt_subframes=1, pause_timeline=False)
     else:
         rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
 
@@ -614,6 +679,7 @@ for i in range(num_frames):
     tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
     plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
     light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
+    shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
 
     pose_data = {
         "cam": cam_tf.tolist(), 
