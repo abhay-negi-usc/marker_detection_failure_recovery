@@ -5,6 +5,7 @@ import numpy as np
 from torchvision import transforms
 from os.path import splitext, isfile, join
 import torch
+import json 
 
 convert_tensor = transforms.ToTensor()
 
@@ -42,13 +43,14 @@ class MarkersDataset(Dataset):
         # Load image and convert to numpy array
         image = np.array(Image.open(img_path).convert("RGB"))
         
-        # Load keypoints from json as np array 
+        # Load keypoints from json as np array
+        # TODO: preprocess json's as npy files  
         with open(keypoints_path, 'r') as f:
             keypoints_data = json.load(f) 
         keypoints_list = [] 
         for key in keypoints_data.keys():
             keypoints_list.append(np.array(keypoints_data[key])) 
-        keypoints = np.array(keypoints_list)  
+        keypoints = np.array(keypoints_list).flatten() 
 
         return image, keypoints
 

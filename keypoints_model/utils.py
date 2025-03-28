@@ -2,6 +2,7 @@ import torch
 import torchvision
 from dataset import MarkersDataset
 from torch.utils.data import DataLoader
+import torch.nn as nn 
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -13,9 +14,9 @@ def load_checkpoint(checkpoint, model):
 
 def get_loaders(
     train_dir,
-    train_maskdir,
+    train_keypointsdir,
     val_dir,
-    val_maskdir,
+    val_keypointsdir,
     batch_size,
     train_transform,
     val_transform,
@@ -24,7 +25,7 @@ def get_loaders(
 ):
     train_ds = MarkersDataset(
         image_dir=train_dir,
-        mask_dir=train_maskdir,
+        keypoints_dir=train_keypointsdir,
         transform=train_transform,
     )
 
@@ -38,7 +39,7 @@ def get_loaders(
 
     val_ds = MarkersDataset(
         image_dir=val_dir,
-        mask_dir=val_maskdir,
+        keypoints_dir=val_keypointsdir,
         transform=val_transform,
     )
 
@@ -52,31 +53,20 @@ def get_loaders(
 
     return train_loader, val_loader
 
-def check_accuracy(loader, model, device="cuda"):
-    num_correct = 0
-    num_pixels = 0
-    dice_score = 0
-    model.eval()
+def evaluate_mse_loss(loader, model, device): 
+    model.eval() 
+    total_mse_loss = 0.0 
+    with torch.no_grad(): 
+        for data, targets in loader: 
+            data, targets = data.to(device), targets.to(device) 
+            data = data.to(torch.float32).permute(0,3,1,2) 
+            outputs = model(data) 
 
-    with torch.no_grad():
-        for x, y in loader:
-            x = x.to(device)
-            y = y.to(device).unsqueeze(1)
-            preds = torch.sigmoid(model(x))
-            preds = (preds > 0.5).float()
-            num_correct += (preds == y).sum()
-            num_pixels += torch.numel(preds)
-            dice_score += (2 * (preds * y).sum()) / (
-                (preds + y).sum() + 1e-8
-            )
-
-    accuracy = num_correct/num_pixels 
-    print(
-        f"Got {num_correct}/{num_pixels} with acc {accuracy*100:.2f}"
-    )
-    print(f"Dice score: {dice_score/len(loader)}")
-    model.train()
-    return accuracy 
+            # compute MSE loss 
+            mse_loss = nn.MSELoss()(outputs, targets) 
+            total_mse_loss += mse_loss.item() 
+        avg_mse_loss = total_mse_loss / len(loader) 
+        return avg_mse_loss
 
 def save_predictions_as_imgs(
     loader, model, folder="saved_images/", device="cuda"

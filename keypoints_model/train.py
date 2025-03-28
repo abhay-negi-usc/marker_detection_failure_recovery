@@ -9,22 +9,21 @@ from utils import (
     load_checkpoint, 
     save_checkpoint, 
     get_loaders, 
-    check_accuracy,
-    save_predictions_as_imgs,
+    evaluate_mse_loss,
 )
 import os 
 
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-4    
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 1  
+BATCH_SIZE = 16   
 NUM_EPOCHS = 1000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = False                         
-MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
+LOAD_MODEL = True                            
+MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
 VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
@@ -34,8 +33,8 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
     loop = tqdm(loader) # progress bar 
 
     for batch_idx, (data, targets) in enumerate(loop): 
-        data = data.to(device=DEVICE) 
-        targets = targets.float().unsqueeze(1).to(device=DEVICE) 
+        data = data.to(device=DEVICE).to(torch.float32).permute(0,3,1,2) 
+        targets = targets.float().to(device=DEVICE) 
 
         # forward 
         with torch.amp.autocast(device_type=DEVICE): 
@@ -54,40 +53,31 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 def main(): 
     train_transform = A.Compose(
         [
-            # A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
-            # A.Rotate(limit=35, p=1.0),
-            # A.HorizontalFlip(p=0.5),
-            # A.VerticalFlip(p=0.1),
+            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
             A.Normalize(
-                # mean=[0.0, 0.0, 0.0],
-                # std=[1.0, 1.0, 1.0],
-                # max_pixel_value=255.0,
-                max_pixel_value=1.0,
+                mean=[0.485, 0.456, 0.406],  # ImageNet mean values
+                std=[0.229, 0.224, 0.225],   # ImageNet std values
+                max_pixel_value=255.0,
             ),
-            ToTensorV2(), 
+            ToTensorV2(),
         ]
     )
 
     val_transform = A.Compose(
         [
-            # A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
-            # A.Rotate(limit=35, p=1.0),
-            # A.HorizontalFlip(p=0.5),
-            # A.VerticalFlip(p=0.1),
+            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
             A.Normalize(
-                # mean=[0.0, 0.0, 0.0],
-                # std=[1.0, 1.0, 1.0],
-                # max_pixel_value=255.0,
-                max_pixel_value=1.0,
+                mean=[0.485, 0.456, 0.406],  # ImageNet mean values
+                std=[0.229, 0.224, 0.225],   # ImageNet std values
+                max_pixel_value=255.0,
             ),
-            ToTensorV2(), 
+            ToTensorV2(),
         ]
     )
 
-    # model = UNET(in_channels=3, out_channels=1).to(DEVICE)
     model = RegressorMobileNetV3().to(DEVICE) 
     
-    loss_fn = nn.L2Loss()  
+    loss_fn = nn.MSELoss()  
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(
@@ -104,12 +94,6 @@ def main():
 
     if LOAD_MODEL: 
         load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint.pth.tar"), model)
-        # load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
-        accuracy = 0.96
-    else: 
-        accuracy = 0.0 
-
-    # check_accuracy(val_loader, model, device=DEVICE) 
 
     scaler = torch.amp.GradScaler()
     for epoch in range(NUM_EPOCHS): 
@@ -121,14 +105,15 @@ def main():
             "optimizer": optimizer.state_dict(), 
         }
 
-        # check accuracy 
-        new_accuracy = check_accuracy(val_loader, model, device=DEVICE) # FIXME: update to output dice score 
+        new_mse_loss = evaluate_mse_loss(val_loader, model, device=DEVICE) 
+
+        print(f"EPOCH: {epoch}. MSE: {new_mse_loss:.2f}") 
 
         if epoch == 0: 
-            accuracy = new_accuracy
+            best_mse_loss = new_mse_loss
 
-        if new_accuracy > accuracy and epoch > num_epoch_dont_save: 
-            accuracy = new_accuracy 
+        if new_mse_loss < best_mse_loss and epoch > num_epoch_dont_save: 
+            best_mse_loss = new_mse_loss  
             save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
             # # print some examples to folder 
