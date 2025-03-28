@@ -4,7 +4,7 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm 
 import torch.nn as nn 
 import torch.optim as optim 
-from model import UNET, UNETWithDropout
+from model import RegressorMobileNetV3 
 from utils import (
     load_checkpoint, 
     save_checkpoint, 
@@ -24,10 +24,11 @@ IMAGE_HEIGHT = 480
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
 LOAD_MODEL = False                         
-TRAIN_IMG_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/rgb"
-TRAIN_MASK_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/seg" 
-VAL_IMG_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/rgb"
-VAL_MASK_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/seg" 
+MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
+TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
+TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
+VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
+VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
     
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
@@ -84,16 +85,16 @@ def main():
     )
 
     # model = UNET(in_channels=3, out_channels=1).to(DEVICE)
-    model = UNETWithDropout(in_channels=3, out_channels=1).to(DEVICE) 
+    model = RegressorMobileNetV3().to(DEVICE) 
     
-    loss_fn = nn.BCEWithLogitsLoss() 
+    loss_fn = nn.L2Loss()  
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(
         TRAIN_IMG_DIR, 
-        TRAIN_MASK_DIR,
+        TRAIN_KEYPOINTS_DIR,
         VAL_IMG_DIR, 
-        VAL_MASK_DIR,
+        VAL_KEYPOINTS_DIR,
         BATCH_SIZE,
         train_transform,
         val_transform,
@@ -102,7 +103,7 @@ def main():
     )
 
     if LOAD_MODEL: 
-        load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint.pth.tar"), model)
+        load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint.pth.tar"), model)
         # load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
         accuracy = 0.96
     else: 
@@ -128,7 +129,7 @@ def main():
 
         if new_accuracy > accuracy and epoch > num_epoch_dont_save: 
             accuracy = new_accuracy 
-            save_checkpoint(checkpoint, "./segmentation_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
+            save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
             # # print some examples to folder 
             # saved_images_dir = "saved_images/"

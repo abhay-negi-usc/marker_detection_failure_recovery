@@ -13,10 +13,34 @@ from utils import (
     save_predictions_as_imgs,
 )
 import os 
+import wandb
+
+# Initialize wandb
+wandb.init(
+    # project="contact_classification", 
+    # entity="abhay-negi-usc", 
+    config={
+        # "wandb_key":"9336a0a286df1f392970fb1192519ef0191ba865",
+        "wandb_project": "contact_classification", 
+        "wandb_entity": "abhay-negi-usc", 
+        "wandb_key": "af3eeeb1c9d72d3a76a00b58af7e341d8540ed1b",
+        "learning_rate": 1e-4,
+        "batch_size": 8,
+        "epochs": 1000,
+        "image_height": 480,
+        "image_width": 640,
+        "num_workers": 8,
+        "pin_memory": True,
+        "train_img_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/rgb",
+        "train_mask_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/seg",
+        "val_img_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/rgb",
+        "val_mask_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/seg",
+    }
+)
 
 LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 1  
+BATCH_SIZE = 8 
 NUM_EPOCHS = 1000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 8
@@ -24,13 +48,10 @@ IMAGE_HEIGHT = 480
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
 LOAD_MODEL = False                         
-TRAIN_IMG_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/rgb"
-TRAIN_MASK_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/seg" 
-VAL_IMG_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/rgb"
-VAL_MASK_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/seg" 
-    
-def train_fn(loader, model, optimizer, loss_fn, scaler): 
+
+def train_fn(loader, model, optimizer, loss_fn, scaler, epoch): 
     loop = tqdm(loader) # progress bar 
+    epoch_loss = 0
 
     for batch_idx, (data, targets) in enumerate(loop): 
         data = data.to(device=DEVICE) 
@@ -47,8 +68,15 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
         scaler.step(optimizer)
         scaler.update() 
 
+        # accumulate loss
+        epoch_loss += loss.item()
+
         # update tqdm loop 
         loop.set_postfix(loss=loss.item())         
+
+    # Log training loss to wandb
+    avg_loss = epoch_loss / len(loader)
+    wandb.log({"train_loss": avg_loss, "epoch": epoch})
 
 def main(): 
     train_transform = A.Compose(
@@ -58,9 +86,6 @@ def main():
             # A.HorizontalFlip(p=0.5),
             # A.VerticalFlip(p=0.1),
             A.Normalize(
-                # mean=[0.0, 0.0, 0.0],
-                # std=[1.0, 1.0, 1.0],
-                # max_pixel_value=255.0,
                 max_pixel_value=1.0,
             ),
             ToTensorV2(), 
@@ -74,16 +99,12 @@ def main():
             # A.HorizontalFlip(p=0.5),
             # A.VerticalFlip(p=0.1),
             A.Normalize(
-                # mean=[0.0, 0.0, 0.0],
-                # std=[1.0, 1.0, 1.0],
-                # max_pixel_value=255.0,
                 max_pixel_value=1.0,
             ),
             ToTensorV2(), 
         ]
     )
 
-    # model = UNET(in_channels=3, out_channels=1).to(DEVICE)
     model = UNETWithDropout(in_channels=3, out_channels=1).to(DEVICE) 
     
     loss_fn = nn.BCEWithLogitsLoss() 
@@ -103,7 +124,6 @@ def main():
 
     if LOAD_MODEL: 
         load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint.pth.tar"), model)
-        # load_checkpoint(torch.load("./my_checkpoint.pth.tar"), model)
         accuracy = 0.96
     else: 
         accuracy = 0.0 
@@ -112,25 +132,25 @@ def main():
 
     scaler = torch.amp.GradScaler()
     for epoch in range(NUM_EPOCHS): 
-        train_fn(train_loader, model, optimizer, loss_fn, scaler)
-
-        # save model 
-        checkpoint = {
-            "state_dict": model.state_dict(),
-            "optimizer": optimizer.state_dict(), 
-        }
+        train_fn(train_loader, model, optimizer, loss_fn, scaler, epoch)
 
         # check accuracy 
-        new_accuracy = check_accuracy(val_loader, model, device=DEVICE) # FIXME: update to output dice score 
+        new_accuracy = check_accuracy(val_loader, model, device=DEVICE)  # FIXME: update to output dice score
+
+        # Log accuracy to wandb
+        wandb.log({"val_accuracy": new_accuracy, "epoch": epoch})
 
         if epoch == 0: 
             accuracy = new_accuracy
 
         if new_accuracy > accuracy and epoch > num_epoch_dont_save: 
             accuracy = new_accuracy 
-            save_checkpoint(checkpoint, "./segmentation_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
+            save_checkpoint({
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }, f"./segmentation_model/models/my_checkpoint_epoch_{epoch}_dice_{new_accuracy:.4f}.pth.tar")  # Save with epoch and accuracy
 
-            # # print some examples to folder 
+            # Optionally save some predictions
             # saved_images_dir = "saved_images/"
             # os.makedirs(saved_images_dir, exist_ok=True)
             # save_predictions_as_imgs(
@@ -138,4 +158,4 @@ def main():
             # )
 
 if __name__ == "__main__": 
-    main() 
+    main()

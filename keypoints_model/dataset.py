@@ -19,9 +19,9 @@ def load_image(filename):
         return Image.open(filename)
 
 class MarkersDataset(Dataset):
-    def __init__(self, image_dir, mask_dir, transform=None):
+    def __init__(self, image_dir, keypoints_dir, transform=None):
         self.image_dir = image_dir
-        self.mask_dir = mask_dir
+        self.keypoints_dir = keypoints_dir
         self.transform = transform
         self.images = os.listdir(image_dir)
 
@@ -32,31 +32,24 @@ class MarkersDataset(Dataset):
         img_path = os.path.join(self.image_dir, self.images[index])
         img_filename = os.path.basename(img_path) 
         # replace all characters after last underscore with '.png' 
-        mask_filename = img_filename[:img_filename.rfind('_')] + '.png' 
-        mask_filename = mask_filename.replace('img', 'seg')  
-        mask_path = os.path.join(
-            self.mask_dir, 
-            mask_filename
+        keypoints_filename = img_filename[:img_filename.rfind('_')] + '.json' 
+        keypoints_filename = keypoints_filename.replace('img', 'keypoints')  
+        keypoints_path = os.path.join(
+            self.keypoints_dir, 
+            keypoints_filename
         )
 
         # Load image and convert to numpy array
         image = np.array(Image.open(img_path).convert("RGB"))
         
-        # Load mask and convert to binary
-        mask = np.array(
-            Image.open(mask_path).convert("L"), 
-            dtype=np.float32
-        )
-        
-        # Convert mask to binary (0 and 1)
-        mask = np.where(mask >= 100.0, 1.0, 0.0)
+        # Load keypoints from json as np array 
+        with open(keypoints_path, 'r') as f:
+            keypoints_data = json.load(f) 
+        keypoints_list = [] 
+        for key in keypoints_data.keys():
+            keypoints_list.append(np.array(keypoints_data[key])) 
+        keypoints = np.array(keypoints_list)  
 
-        # Apply transforms if specified
-        if self.transform is not None:
-            augmentations = self.transform(image=image, mask=mask)
-            image = augmentations["image"]
-            mask = augmentations["mask"]
-
-        return image, mask
+        return image, keypoints
 
 
