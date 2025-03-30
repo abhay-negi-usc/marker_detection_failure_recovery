@@ -10,6 +10,7 @@ from utils import (
     save_checkpoint, 
     get_loaders, 
     evaluate_mse_loss,
+    evaluate_l1_loss, 
     overlay_points_on_image,
 )
 import os 
@@ -21,10 +22,10 @@ import matplotlib
 matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 
-LEARNING_RATE = 1e-6 * 4 
+LEARNING_RATE = 1e-8 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 1024       
-NUM_EPOCHS = 1000 
+BATCH_SIZE = 8        
+NUM_EPOCHS = 10000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 30 
 IMAGE_HEIGHT = 480 
@@ -32,7 +33,7 @@ IMAGE_WIDTH = 640
 SAVE_FREQUENCY = 10 
 PIN_MEMORY = True 
 LOAD_MODEL = True  
-MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
+MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb") 
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
 VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb")  
@@ -120,7 +121,8 @@ def main():
 
     model = RegressorMobileNetV3().to(DEVICE) 
     
-    loss_fn = nn.MSELoss()  
+    # loss_fn = nn.MSELoss()  
+    loss_fn = nn.L1Loss() 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(
@@ -150,15 +152,20 @@ def main():
             "optimizer": optimizer.state_dict(), 
         }
 
-        new_mse_loss = evaluate_mse_loss(val_loader, model, device=DEVICE) 
+        # new_mse_loss = evaluate_mse_loss(val_loader, model, device=DEVICE) 
+        # print(f"EPOCH: {epoch}. MSE: {new_mse_loss:.2f}") 
 
-        print(f"EPOCH: {epoch}. MSE: {new_mse_loss:.2f}") 
+        new_mae_loss = evaluate_l1_loss(val_loader, model, device=DEVICE)
+        print(f"EPOCH: {epoch}. MAE: {new_mae_loss:.2f}") 
 
         if epoch == 0: 
-            best_mse_loss = new_mse_loss
+            # best_mse_loss = new_mse_loss
+            best_mae_loss = new_mae_loss 
 
-        if new_mse_loss < best_mse_loss and epoch > num_epoch_dont_save: 
-            best_mse_loss = new_mse_loss  
+        # if new_mse_loss < best_mse_loss and epoch > num_epoch_dont_save: 
+            # best_mse_loss = new_mse_loss 
+        if new_mae_loss < best_mae_loss and epoch > num_epoch_dont_save: 
+            best_mae_loss = new_mae_loss 
             save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
             if save_count > SAVE_FREQUENCY: 

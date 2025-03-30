@@ -1,6 +1,7 @@
 import torch
 import torchvision
-from dataset import MarkersDataset
+from .dataset import MarkersDataset 
+# from marker_detection_failure_recovery.keypoints_model.dataset import MarkersDataset # FIXME 
 from torch.utils.data import DataLoader
 import torch.nn as nn 
 import numpy as np 
@@ -70,6 +71,21 @@ def evaluate_mse_loss(loader, model, device):
             total_mse_loss += mse_loss.item() 
         avg_mse_loss = total_mse_loss / len(loader) 
         return avg_mse_loss
+
+def evaluate_l1_loss(loader, model, device):
+    model.eval()
+    total_l1_loss = 0.0
+    with torch.no_grad():   
+        for data, targets in loader:
+            data, targets = data.to(device), targets.to(device)
+            data = data.to(torch.float32).permute(0,3,1,2)
+            outputs = model(data)
+
+            # compute L1 loss
+            l1_loss = nn.L1Loss()(outputs, targets)
+            total_l1_loss += l1_loss.item()
+        avg_l1_loss = total_l1_loss / len(loader)
+        return avg_l1_loss
 
 def save_predictions_as_imgs(
     loader, model, folder="saved_images/", device="cuda"

@@ -1,6 +1,6 @@
 import torch
 import torchvision
-from dataset import MarkersDataset
+from .dataset import MarkersDataset
 from torch.utils.data import DataLoader
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
