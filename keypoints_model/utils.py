@@ -3,6 +3,9 @@ import torchvision
 from dataset import MarkersDataset
 from torch.utils.data import DataLoader
 import torch.nn as nn 
+import numpy as np 
+from scipy.spatial.transform import Rotation as R 
+import cv2 
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -84,3 +87,64 @@ def save_predictions_as_imgs(
         torchvision.utils.save_image(y.unsqueeze(1), f"{folder}/seg_{idx}.png", normalize=True)
 
     model.train()
+
+def xyzabc_to_rvectvec(xyzabc): 
+    tvec = xyzabc[:3] 
+    rot = R.from_euler("xyz",xyzabc[3:],degrees=True).as_matrix()
+    rvec = cv2.Rodrigues(rot)[0] 
+    return rvec, tvec 
+
+def rvectvec_to_xyzabc(rvec, tvec): 
+    rot = cv2.Rodrigues(rvec)[0] 
+    tvec = tvec.reshape(3)
+    xyzabc = np.concatenate((tvec, R.from_matrix(rot).as_euler("xyz",degrees=True))) 
+    return xyzabc 
+
+def xyzabc_to_tf(xyzabc): 
+    tvec = xyzabc[:3] 
+    rot = R.from_euler("xyz",xyzabc[3:],degrees=True).as_matrix()
+    tf = np.eye(4) 
+    tf[:3,:3] = rot 
+    tf[:3,3] = tvec 
+    return tf
+
+def tf_to_xyzabc(tf): 
+    rot = tf[:3,:3] 
+    tvec = tf[:3,3] 
+    xyzabc = np.concatenate((tvec, R.from_matrix(rot).as_euler("xyz",degrees=True))) 
+    return xyzabc 
+
+def compute_2D_gridpoints(N=10,s=0.1): 
+    # N = num squares, s = side length  
+    u = np.linspace(-s/2, +s/2, N+1) 
+    v = np.linspace(-s/2, +s/2, N+1) 
+    gridpoints = [] 
+    for uu in u:
+        for vv in v: 
+            gridpoints.append(np.array([uu,vv,0])) 
+    return gridpoints 
+
+def overlay_points_on_image(image, pixel_points, radius=5, color=(0, 0, 255), thickness=-1):
+    """
+    Overlays a list of pixel points on the input image.
+
+    Parameters:
+    - image: The input image (a NumPy array).
+    - pixel_points: A list of 2D pixel coordinates [(x1, y1), (x2, y2), ...].
+    - radius: The radius of the circle to draw around each point. Default is 5.
+    - color: The color of the circle (BGR format). Default is red (0, 0, 255).
+    - thickness: The thickness of the circle. Default is -1 to fill the circle.
+
+    Returns:
+    - The image with points overlaid.
+    """
+    # Iterate over each pixel point and overlay it on the image
+    for point in pixel_points:
+        if point is not None:  # Only overlay valid points
+            x, y = int(point[0]), int(point[1])
+            # check if the point is within the image bounds
+            if x < 0 or x >= image.shape[1] or y < 0 or y >= image.shape[0]:
+                continue
+            # Draw a filled circle at the pixel coordinates
+            cv2.circle(image, (x, y), radius, color, thickness)
+    return image

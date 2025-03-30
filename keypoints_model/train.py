@@ -10,20 +10,28 @@ from utils import (
     save_checkpoint, 
     get_loaders, 
     evaluate_mse_loss,
+    overlay_points_on_image,
 )
 import os 
+from PIL import Image
+import matplotlib.pyplot as plt 
+import numpy as np 
+from torchvision.transforms import ToPILImage
+import matplotlib
+matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
-LEARNING_RATE = 1e-4    
+
+LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 16   
+BATCH_SIZE = 32      
 NUM_EPOCHS = 1000 
 num_epoch_dont_save = 0 
-NUM_WORKERS = 8
+NUM_WORKERS = 22 
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = True                            
-MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
+LOAD_MODEL = True                                  
+MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
 VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
@@ -49,6 +57,40 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 
         # update tqdm loop 
         loop.set_postfix(loss=loss.item())         
+
+def save_predictions_as_imgs(
+    loader, model, folder="saved_images/", device="cuda"
+):
+    model.eval()
+    to_pil = ToPILImage()
+    for idx, (x, y) in enumerate(loader):
+        x = x.to(device=device).to(torch.float32).permute(0,3,1,2) 
+        with torch.no_grad():
+            preds = model(x)
+
+    for j in range(len(preds)): 
+        pred = preds[j]
+
+        # prediction is a tensor, so convert it to a numpy array 
+        pred = pred.cpu().numpy()  # Move the prediction to the CPU and convert to a numpy array 
+        # pred = pred.squeeze(0)  # Remove the batch dimension
+
+        # reshape the prediction and true keypoints to (num_keypoints, 2)
+        pred = pred.reshape(-1, 2)
+
+        img_rgb = to_pil(x[j])  # Convert the j-th image in the batch to a PIL image
+        keypoints_image = overlay_points_on_image(image=np.array(img_rgb), pixel_points=pred, radius=1)
+        plt.imshow(keypoints_image)
+        plt.axis('off')  # Hide axes
+        plt.title(f'Keypoints Image {idx}') 
+        plt.savefig(os.path.join(folder, f"pred_{idx}.png")) 
+        plt.close() 
+        
+        # torchvision.utils.save_image(
+        #     preds, f"{folder}/pred_{idx}.png"
+        # )
+        # torchvision.utils.save_image(x, f"{folder}/rgb_{idx}.png", normalize=True)  
+        
 
 def main(): 
     train_transform = A.Compose(
@@ -116,12 +158,12 @@ def main():
             best_mse_loss = new_mse_loss  
             save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
-            # # print some examples to folder 
-            # saved_images_dir = "saved_images/"
-            # os.makedirs(saved_images_dir, exist_ok=True)
-            # save_predictions_as_imgs(
-            #     val_loader, model, folder=saved_images_dir, device=DEVICE
-            # )
+            # print some examples to folder 
+            saved_images_dir = "saved_images/"
+            os.makedirs(saved_images_dir, exist_ok=True)
+            save_predictions_as_imgs(
+                val_loader, model, folder=saved_images_dir, device=DEVICE
+            )
 
 if __name__ == "__main__": 
     main() 

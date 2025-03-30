@@ -15,8 +15,14 @@ class RegressorMobileNetV3(nn.Module):
         self.fc1 = nn.Linear(576, 512)  # 1024 is the output size of the MobileNetV3 backbone
         self.prelu1 = nn.PReLU()
 
-        self.fc2 = nn.Linear(512, 256)
+        self.fc2 = nn.Linear(512, 512)
         self.prelu2 = nn.PReLU()
+
+        self.fc3 = nn.Linear(512, 512)
+        self.prelu3 = nn.PReLU()
+
+        self.fc4 = nn.Linear(512, 256)
+        self.prelu4 = nn.PReLU()
 
         self.output_layer = nn.Linear(256, 2*(11**2))
 
@@ -31,6 +37,12 @@ class RegressorMobileNetV3(nn.Module):
 
         x = self.fc2(x)
         x = self.prelu2(x)
+
+        x = self.fc3(x)
+        x = self.prelu3(x)
+
+        x = self.fc4(x)
+        x = self.prelu4(x)
 
         # Output layer
         x = self.output_layer(x) 
