@@ -21,21 +21,22 @@ import matplotlib
 matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-6 * 4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 32      
+BATCH_SIZE = 1024       
 NUM_EPOCHS = 1000 
 num_epoch_dont_save = 0 
-NUM_WORKERS = 22 
+NUM_WORKERS = 30 
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
+SAVE_FREQUENCY = 10 
 PIN_MEMORY = True 
-LOAD_MODEL = True                                  
-MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/" 
-TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
-TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
-VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
-VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
+LOAD_MODEL = True  
+MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
+TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb") 
+TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
+VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb")  
+VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "roi_keypoints")
     
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
@@ -82,8 +83,8 @@ def save_predictions_as_imgs(
         keypoints_image = overlay_points_on_image(image=np.array(img_rgb), pixel_points=pred, radius=1)
         plt.imshow(keypoints_image)
         plt.axis('off')  # Hide axes
-        plt.title(f'Keypoints Image {idx}') 
-        plt.savefig(os.path.join(folder, f"pred_{idx}.png")) 
+        plt.title(f'Keypoints Image {j}') 
+        plt.savefig(os.path.join(folder, f"pred_{j}.png")) 
         plt.close() 
         
         # torchvision.utils.save_image(
@@ -137,6 +138,8 @@ def main():
     if LOAD_MODEL: 
         load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint.pth.tar"), model)
 
+    save_count = 0 
+
     scaler = torch.amp.GradScaler()
     for epoch in range(NUM_EPOCHS): 
         train_fn(train_loader, model, optimizer, loss_fn, scaler)
@@ -158,12 +161,16 @@ def main():
             best_mse_loss = new_mse_loss  
             save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
-            # print some examples to folder 
-            saved_images_dir = "saved_images/"
-            os.makedirs(saved_images_dir, exist_ok=True)
-            save_predictions_as_imgs(
-                val_loader, model, folder=saved_images_dir, device=DEVICE
-            )
+            if save_count > SAVE_FREQUENCY: 
+                # print some examples to folder 
+                saved_images_dir = "saved_images/"
+                os.makedirs(saved_images_dir, exist_ok=True)
+                save_predictions_as_imgs(
+                    val_loader, model, folder=saved_images_dir, device=DEVICE
+                )
+                save_count = 0 
+        
+        save_count += 1 
 
 if __name__ == "__main__": 
     main() 

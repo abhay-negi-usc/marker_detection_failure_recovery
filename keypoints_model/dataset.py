@@ -33,8 +33,8 @@ class MarkersDataset(Dataset):
         img_path = os.path.join(self.image_dir, self.images[index])
         img_filename = os.path.basename(img_path) 
         # replace all characters after last underscore with '.png' 
-        keypoints_filename = img_filename[:img_filename.rfind('_')] + '.json' 
-        keypoints_filename = keypoints_filename.replace('img', 'keypoints')  
+        keypoints_filename = img_filename.replace("_","_keypoints_").replace(".png",".json") 
+        # keypoints_filename = keypoints_filename.replace('img', 'keypoints')  
         keypoints_path = os.path.join(
             self.keypoints_dir, 
             keypoints_filename
