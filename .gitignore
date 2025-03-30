@@ -12,3 +12,4 @@ segmentation_model/test_images_real
 keypoints_model/models
 *.pth 
 *.pyc
+test_data 
