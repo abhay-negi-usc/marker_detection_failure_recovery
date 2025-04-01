@@ -1,7 +1,9 @@
 import torch
 import torchvision
-from .dataset import MarkersDataset 
-# from marker_detection_failure_recovery.keypoints_model.dataset import MarkersDataset # FIXME 
+# from .dataset import MarkersDataset
+import sys 
+sys.path.append("/home/anegi/abhay_ws/marker_detection_failure_recovery") 
+from keypoints_model.dataset import MarkersDataset # FIXME 
 from torch.utils.data import DataLoader
 import torch.nn as nn 
 import numpy as np 

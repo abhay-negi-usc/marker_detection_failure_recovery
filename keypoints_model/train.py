@@ -22,18 +22,18 @@ import matplotlib
 matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 
-LEARNING_RATE = 1e-8 
+LEARNING_RATE = 1e-7 * 4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 8        
+BATCH_SIZE = 1         
 NUM_EPOCHS = 10000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 30 
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
-SAVE_FREQUENCY = 10 
+TEST_FREQUENCY = 10 
 PIN_MEMORY = True 
 LOAD_MODEL = True  
-MAIN_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
+MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb") 
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
 VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb")  
@@ -168,7 +168,7 @@ def main():
             best_mae_loss = new_mae_loss 
             save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
 
-            if save_count > SAVE_FREQUENCY: 
+            if save_count > TEST_FREQUENCY: 
                 # print some examples to folder 
                 saved_images_dir = "saved_images/"
                 os.makedirs(saved_images_dir, exist_ok=True)
