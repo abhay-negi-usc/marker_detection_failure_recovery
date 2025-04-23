@@ -158,7 +158,10 @@ class optitrack_realsense_data_processor():
             # TODO: filter based on matching of marker_ids 
 
             if rotation_vectors is None or translation_vectors is None:
-                continue 
+                timestamps = None 
+                tf_Ccv_Mcv = None 
+                tf_w_m_i = None 
+                tf_mo_mi_i = None 
 
             timestamps.append(self.RLSN_time[idx])  # Store the timestamp for this frame 
             tf_Ccv_Mcv = np.eye(4)  # marker in openCV coordinates wrt openCV camera coordinates 
@@ -179,14 +182,78 @@ class optitrack_realsense_data_processor():
             tf_w_m.append(tf_w_m_i) 
             tf_mo_mi.append(tf_mo_mi_i) 
 
-        self.CCV_time = np.array(timestamps) 
-        self.CCV_tf_c_m = np.array(tf_c_m)  
-        self.CCV_tf_w_m = np.array(tf_w_m) 
-        self.CCV_tf_mo_mi = np.array(tf_mo_mi) 
+        # self.CCV_time = np.array(timestamps) 
+        # self.CCV_tf_c_m = np.array(tf_c_m)  
+        # self.CCV_tf_w_m = np.array(tf_w_m) 
+        # self.CCV_tf_mo_mi = np.array(tf_mo_mi) 
+        self.CCV_time = timestamps 
+        self.CCV_tf_c_m = tf_c_m 
+        self.CCV_tf_w_m = tf_w_m 
+        self.CCV_tf_mo_mi = tf_mo_mi 
 
         print(f"Clasical CV detection rate: {len(self.CCV_time)}/{len(self.RLSN_time)}") 
 
         return self.CCV_time, self.CCV_tf_c_m, self.CCV_tf_w_m, self.CCV_tf_mo_mi 
+    
+    def reproject_opencv_pose_estimates(self, save_dir=None, show=False):
+        if not hasattr(self, "CCV_tf_c_m") or len(self.CCV_tf_c_m) == 0:
+            print("Error: No OpenCV pose data found. Run run_opencv_fiducial_marker_detection() first.")
+            return
+        
+        # Define marker corners in marker frame (centered at 0,0,0)
+        half_len = self.marker_length / 2.0
+        marker_corners_3d = np.array([
+            [-half_len,  half_len, 0],
+            [ half_len,  half_len, 0],
+            [ half_len, -half_len, 0],
+            [-half_len, -half_len, 0]
+        ], dtype=np.float32)
+
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        for i, (frame_path, tf_c_m) in enumerate(zip(self.realsense_frames_paths, self.CCV_tf_c_m)):
+            frame = cv2.imread(frame_path)
+            if frame is None:
+                print(f"Warning: Couldn't read image at {frame_path}")
+                continue
+            
+            if tf_c_m is not None: 
+                # Extract rotation and translation from 4x4 pose
+                R = tf_c_m[:3, :3]
+                t = tf_c_m[:3, 3]
+
+                # Convert rotation matrix to Rodrigues vector
+                rvec, _ = cv2.Rodrigues(R)
+                tvec = t.reshape(3, 1)
+
+                # Project 3D marker corners to 2D image
+                image_points, _ = cv2.projectPoints(
+                    marker_corners_3d, rvec, tvec,
+                    self.camera_matrix, self.dist_coeffs
+                )
+
+                image_points = image_points.astype(int).reshape(-1, 2)
+
+                # Draw reprojected marker outline
+                for j in range(4):
+                    pt1 = tuple(image_points[j])
+                    pt2 = tuple(image_points[(j + 1) % 4])
+                    cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
+
+            if save_dir:
+                out_path = os.path.join(save_dir, f"reprojected_{i:05d}.png")
+                cv2.imwrite(out_path, frame)
+
+            if show:
+                cv2.imshow("Reprojected Pose", frame)
+                cv2.waitKey(1)
+
+        if show:
+            cv2.destroyAllWindows()
+
+    print("Finished reprojecting OpenCV pose estimates onto images.")
+
     
     def align_timestamps(self): 
         # TODO : Implement timestamp alignment between Optitrack and OpenCV data 
@@ -233,15 +300,17 @@ class optitrack_realsense_data_processor():
         plt.show()
 
         return 
-    
 
 # MAIN SCRIPT 
 def main(): 
     trial_idx = 4 
-    # fx, fy, cx, cy = 388.505, 388.505, 317.534, 237.229 # from realsense camera 
-    # dist_coeffs = np.zeros(5) 
-    fx, fy, cx, cy = 722, 698, 310, 272 # from charuco board calibration 
-    dist_coeffs = np.array([-1.24113729e-01, 1.64488988e+00, -9.82401198e-03, -5.07274595e-04, -8.23426373e+00]) # from charuco board calibration 
+    # from realsense camera - seems to be more accurate but not fully correct 
+    fx, fy, cx, cy = 388.505, 388.505, 317.534, 237.229  
+    dist_coeffs = np.zeros(5) 
+    
+    # # from charuco board calibration 
+    # fx, fy, cx, cy = 722, 698, 310, 272 
+    # dist_coeffs = np.array([-1.24113729e-01, 1.64488988e+00, -9.82401198e-03, -5.07274595e-04, -8.23426373e+00]) # from charuco board calibration 
     
     tf_w_CS200 = np.eye(4)
     tf_CS200_mount = np.array([
@@ -282,11 +351,10 @@ def main():
     ) 
     ORDP.process_optitrack_data() 
     ORDP.run_opencv_fiducial_marker_detection(save_results=True) 
+    ORDP.reproject_opencv_pose_estimates(save_dir="./real_data_processing/reprojected_images", show=False) 
     ORDP.compare_marker_poses() 
-
-    import pdb; pdb.set_trace()  # Set a breakpoint for debugging 
 
     return True 
 
 if __name__ == "__main__": 
-    main()  
+    main()
