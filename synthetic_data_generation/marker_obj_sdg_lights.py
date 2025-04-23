@@ -34,7 +34,8 @@ timestr = time.strftime("%Y%m%d-%H%M%S")
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
-    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
+    # dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
+    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     dir_backgrounds = "/home/anegi/Downloads/test2017" 
@@ -454,14 +455,19 @@ for obj in labeled_assets_and_properties:
         # add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
+            tag_texture = rep.random.choice(tag_textures)
             mat = rep.create.material_omnipbr(
                 # diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png",
-                diffuse_texture=tag_textures[0],
+                # diffuse_texture=tag_textures[0], 
+                # diffuse_texture = rep.random.choice(tag_textures), 
+                diffuse_texture = tag_texture, 
                 # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_intensity=rep.distribution.uniform(0, 1000),
-                emissive_texture=tag_textures[0],
+                # emissive_texture=tag_textures[0], 
+                # emissive_texture=rep.random.choice(tag_textures),
+                emissive_texture= tag_texture,  
                 emissive_intensity=40.0, 
             )    
             rep.modify.material(mat) 
@@ -581,19 +587,29 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
 
 rep.utils.send_og_event(event_name="randomize_lighting") 
 
+@rep.annotator
+def tag_texture_annotator(): 
+    return rep.AnnotatorRegistry.get("semantic_segmentation").get_data() # dummy return 
+
+tag_texture_annotator._metadata["texture_path"] = None 
+
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
-    with tag:       
+    tag_texture = rep.distribution.choice(tag_textures)
+    with tag:
         mat = rep.create.material_omnipbr(
-            # diffuse_texture=rep.distribution.choice(tag_textures), 
-            diffuse_texture=tag_textures[0],  
-            # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-            # metallic_texture=rep.distribution.choice(rep.example.TEXTURES), # NOTE: turning this off because believe it is causing very dark markers about 5% of the time 
-            # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-            # emissive_intensity=rep.distribution.uniform(0, 1000),
-            emissive_texture=tag_textures[0],
-            emissive_intensity=40.0
+            diffuse_texture=tag_texture,
+        #     # diffuse_texture=rep.distribution.choice(tag_textures), 
+        #     # diffuse_texture=tag_texture,  
+        #     # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+        #     # metallic_texture=rep.distribution.choice(rep.example.TEXTURES), # NOTE: turning this off because believe it is causing very dark markers about 5% of the time 
+        #     # emissive_intensity=rep.distribution.uniform(0, 1000),
+            emissive_texture=tag_texture, 
+        #     emissive_intensity=40.0
         )    
-        rep.modify.material(mat) 
+        # rep.modify.material(mat)
+        # rep.random.texture(textures=tag_textures) 
+        rep.modify.material(mat)
+    tag_texture_annotator._metadata["texture_path"] = tag_texture.values 
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
 # with rep.trigger.on_custom_event(event_name="randomize_shadower_pose"):   
@@ -607,6 +623,14 @@ rep.utils.send_og_event(event_name="randomize_tag_texture")
 # rep.utils.send_og_event(event_name="randomize_shadower_pose")
 
 print("Randomizer events set up.")
+
+# set up writer 
+writer = rep.WriterRegistry.get("BasicWriter")
+writer.initialize(
+    output_dir="_output",
+)
+writer.attach([tag_texture_annotator]) 
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SDG SETUP 
@@ -655,12 +679,12 @@ for i in range(num_frames):
         # print(f"Randomize shadower pose")
         # rep.utils.send_og_event(event_name="randomize_shadower_pose") 
 
-    if i % 17 == 0: # NOTE: reduce randomization frequency to speed up compute 
+    if i % 1 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize tag texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
     # update the app to apply the randomization 
-    # rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
+    rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
@@ -690,6 +714,9 @@ for i in range(num_frames):
     write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
+
+    import pdb; pdb.set_trace() 
+    # TODO: save aruco id 
 
     metadata = {
         "light": {

@@ -1,0 +1,1 @@
+, isaac, aruco 6x6 dictionary    
