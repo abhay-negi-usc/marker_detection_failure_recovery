@@ -36,9 +36,16 @@ class optitrack_realsense_data_processor():
             print(f"Error: Optitrack CSV file {optitrack_csv_file} not found.")
             return []
 
-        df = pd.read_csv(optitrack_csv_file, skiprows=6)
-        df.rename(columns={"Time (Seconds)":"TIME", "X":"QX", "Y":"QY", "Z":"QZ", "W":"QW", 
-                            "X.1":"X", "Y.1":"Y", "Z.1":"Z"}, inplace=True)  # Remove any leading/trailing whitespace in column names
+        # realsense 435 
+        # df = pd.read_csv(optitrack_csv_file, skiprows=6)
+        # df.rename(columns={"Time (Seconds)":"TIME", "X":"QX", "Y":"QY", "Z":"QZ", "W":"QW", 
+        #                     "X.1":"X", "Y.1":"Y", "Z.1":"Z"}, inplace=True)  # Remove any leading/trailing whitespace in column names
+        
+        # realsense 415 
+        df = pd.read_csv(optitrack_csv_file)
+        df.rename(columns={"Time (Seconds)":"TIME", "QX":"QX", "QY":"QY", "QZ":"QZ", "QW":"QW", 
+                    "X":"X", "Y":"Y", "Z":"Z"}, inplace=True)  # Remove any leading/trailing whitespace in column names
+        
         optitrack_raw_df = df[["TIME", "X", "Y", "Z", "QW", "QX", "QY", "QZ"]].dropna() 
         optitrack_raw_data = optitrack_raw_df.to_numpy()  # Convert to numpy array for easier processing  
         
@@ -237,12 +244,19 @@ class optitrack_realsense_data_processor():
 
 # MAIN SCRIPT 
 def main(): 
-    trial_idx = 4 
-    # fx, fy, cx, cy = 388.505, 388.505, 317.534, 237.229 # from realsense camera 
-    # dist_coeffs = np.zeros(5) 
-    fx, fy, cx, cy = 722, 698, 310, 272 # from charuco board calibration 
-    dist_coeffs = np.array([-1.24113729e-01, 1.64488988e+00, -9.82401198e-03, -5.07274595e-04, -8.23426373e+00]) # from charuco board calibration 
-    
+    trial_idx = 5 
+    calibration = "realsense_415" # "realsense_435", "charuco", "realsense_415" 
+
+    if calibration == "realsense_435": 
+        fx, fy, cx, cy = 388.505, 388.505, 317.534, 237.229 # from realsense 435 camera 
+        dist_coeffs = np.zeros(5) 
+    elif calibration == "charuco": 
+        fx, fy, cx, cy = 722, 698, 310, 272 # from charuco board calibration 
+        dist_coeffs = np.array([-1.24113729e-01, 1.64488988e+00, -9.82401198e-03, -5.07274595e-04, -8.23426373e+00]) # from charuco board calibration 
+    elif calibration == "realsense_415": 
+        fx, fy, cx, cy = 614.35675049, 613.11346435, 317.04339600, 240.43833923 # from realsense 415 camera 
+        dist_coeffs = np.zeros(5)
+
     tf_w_CS200 = np.eye(4)
     tf_CS200_mount = np.array([
         [1/np.sqrt(2), 0, -1/np.sqrt(2), 10e-3],
@@ -250,12 +264,20 @@ def main():
         [-1/np.sqrt(2), 0, -1/np.sqrt(2), 110e-3],  
         [0,0,0,1]
     ])
-    tf_mount_camera = np.array([
-        [1,0,0,-32.5e-3],
-        [0,1,0,-12.5e-3],
-        [0,0,1,+14.8e-3],
-        [0,0,0,1] 
-    ])
+    if calibration == "realsense_435":  
+        tf_mount_camera = np.array([
+            [1,0,0,-32.5e-3],
+            [0,1,0,-12.5e-3],
+            [0,0,1,+14.8e-3],
+            [0,0,0,1] 
+        ])
+    elif calibration == "realsense_415":
+        tf_mount_camera = np.array([
+            [1,0,0,-35e-3],
+            [0,1,0,-12.5e-3],
+            [0,0,1,+10.025e-3],
+            [0,0,0,1] 
+        ])
     tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera 
 
     config = {
