@@ -40,7 +40,7 @@ if len(images) > max_images:
 print(f"Number of images used for calibration: {len(images)} out of {original_num_images} total images") 
 
 # Process each image
-for image_file in images:
+for idx, image_file in enumerate(images):
     # Read the image
     img = cv2.imread(image_file)
 
@@ -109,6 +109,12 @@ else:
 
 cv2.destroyAllWindows()
 
+        # Save visualized image
+        image_name = os.path.basename(image_file)
+        output_path = os.path.join(output_dir, f"charuco_{idx:03d}_{image_name}")
+        cv2.imwrite(output_path, img_marked)
+
+
 # Perform the camera calibration
 cameraMatrixInit = np.array([[1400.0,0.0,950.0],[0.0,1400.0,530.0],[0,0,1]], dtype=np.float32) 
 distCoeffsInit = np.zeros((5, 1), dtype=np.float32)  # Assuming no initial distortion coefficients
@@ -127,13 +133,15 @@ time_taken = time_end - time_start
 print(f"Time taken for calibration: {len(images)} images in  {time_taken:.2f} seconds")  
 # Output the results
 print("Calibration was successful: ", ret)
-print("Camera matrix: \n", mtx)
+print("Camera matrix: \n", mtx) 
 print("Distortion coefficients: \n", dist)
+# print("Rotation vectors: \n", rvecs)
+# print("Translation vectors: \n", tvecs)
 # print("Rotation vectors: \n", rvecs)
 # print("Translation vectors: \n", tvecs)
 
 # Save the calibration parameters
-np.savez("camera_calibration.npz", camera_matrix=mtx, distortion_coeffs=dist)
+np.savez("./real_data_processing/raw_data/camera_calibration.npz", camera_matrix=mtx, distortion_coeffs=dist)
 
 # Close all OpenCV windows
 cv2.destroyAllWindows()

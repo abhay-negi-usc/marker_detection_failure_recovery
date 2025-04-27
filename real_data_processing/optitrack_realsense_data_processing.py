@@ -13,6 +13,8 @@ import cv2
 sys.path.append(os.curdir) 
 from real_data_processing.utils import * 
 
+from scipy.spatial.transform import Rotation as R, Slerp
+
 # CLASS DEFINITIONS
 class optitrack_realsense_datapoint(): 
     def __init__(self, timestamp, image, tf_cam_marker):  
@@ -99,6 +101,25 @@ class optitrack_realsense_data_processor():
         self.OPTK_tf_mo_mi = np.array(tf_mo_mi) 
         self.OPTK_tf_c_m = np.array(tf_c_m) 
 
+        # filter data to exclude None values 
+        self.OPTK_time_filtered = []
+        self.OPTK_tf_w_o_filtered = []
+        self.OPTK_tf_w_m_filtered = []
+        self.OPTK_tf_mo_mi_filtered = []
+        self.OPTK_tf_c_m_filtered = []
+        for i in range(len(self.OPTK_time)):
+            if self.OPTK_time[i] is not None: 
+                self.OPTK_time_filtered.append(self.OPTK_time[i]) 
+                self.OPTK_tf_w_o_filtered.append(self.OPTK_tf_w_o[i]) 
+                self.OPTK_tf_w_m_filtered.append(self.OPTK_tf_w_m[i]) 
+                self.OPTK_tf_mo_mi_filtered.append(self.OPTK_tf_mo_mi[i])
+                self.OPTK_tf_c_m_filtered.append(self.OPTK_tf_c_m[i])
+        self.OPTK_time_filtered = np.array(self.OPTK_time_filtered)
+        self.OPTK_tf_w_o_filtered = np.array(self.OPTK_tf_w_o_filtered)
+        self.OPTK_tf_w_m_filtered = np.array(self.OPTK_tf_w_m_filtered)
+        self.OPTK_tf_mo_mi_filtered = np.array(self.OPTK_tf_mo_mi_filtered)
+        self.OPTK_tf_c_m_filtered = np.array(self.OPTK_tf_c_m_filtered)
+
         print(f"Optitrack detection rate: {len(self.OPTK_time)}/{len(self.optitrack_raw_data)}") 
 
         return self.OPTK_time, self.OPTK_tf_w_o, self.OPTK_tf_w_m, self.OPTK_tf_mo_mi
@@ -166,6 +187,10 @@ class optitrack_realsense_data_processor():
             # TODO: filter based on matching of marker_ids 
 
             if rotation_vectors is None or translation_vectors is None:
+                timestamps.append(None) 
+                tf_c_m.append(None) 
+                tf_w_m.append(None) 
+                tf_mo_mi.append(None) 
                 continue 
 
             timestamps.append(self.RLSN_time[idx])  # Store the timestamp for this frame 
@@ -193,6 +218,153 @@ class optitrack_realsense_data_processor():
 
         return self.CCV_time, self.CCV_tf_c_m, self.CCV_tf_w_m, self.CCV_tf_mo_mi 
     
+    def reproject_opencv_pose_estimates(self, save_dir=None, show=False):
+        if not hasattr(self, "CCV_tf_c_m") or len(self.CCV_tf_c_m) == 0:
+            print("Error: No OpenCV pose data found. Run run_opencv_fiducial_marker_detection() first.")
+            return
+        
+        # Define marker corners in marker frame (centered at 0,0,0)
+        half_len = self.marker_length / 2.0
+        marker_corners_3d = np.array([
+            [-half_len,  half_len, 0],
+            [ half_len,  half_len, 0],
+            [ half_len, -half_len, 0],
+            [-half_len, -half_len, 0]
+        ], dtype=np.float32)
+
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        for i, (frame_path, tf_c_m) in enumerate(zip(self.realsense_frames_paths, self.CCV_tf_c_m)):
+            frame = cv2.imread(frame_path)
+            if frame is None:
+                print(f"Warning: Couldn't read image at {frame_path}")
+                continue
+            
+            if tf_c_m is not None: 
+                # Extract rotation and translation from 4x4 pose
+                R = tf_c_m[:3, :3]
+                t = tf_c_m[:3, 3]
+
+                # Convert rotation matrix to Rodrigues vector
+                rvec, _ = cv2.Rodrigues(R)
+                tvec = t.reshape(3, 1)
+
+                # Project 3D marker corners to 2D image
+                image_points, _ = cv2.projectPoints(
+                    marker_corners_3d, rvec, tvec,
+                    self.camera_matrix, self.dist_coeffs
+                )
+
+                image_points = image_points.astype(int).reshape(-1, 2)
+
+                # Draw reprojected marker outline
+                for j in range(4):
+                    pt1 = tuple(image_points[j])
+                    pt2 = tuple(image_points[(j + 1) % 4])
+                    cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
+
+            if save_dir:
+                out_path = os.path.join(save_dir, f"reprojected_{i:05d}.png")
+                cv2.imwrite(out_path, frame)
+
+            if show:
+                cv2.imshow("Reprojected Pose", frame)
+                cv2.waitKey(1)
+
+        if show:
+            cv2.destroyAllWindows()
+
+    print("Finished reprojecting OpenCV pose estimates onto images.")
+
+    def reproject_optitrack_pose_estimates(self, save_dir=None, show=False):
+        if not hasattr(self, "OPTK_tf_c_m") or len(self.OPTK_tf_c_m) == 0:
+            print("Error: No OptiTrack pose data found. Run process_optitrack_data() first.")
+            return
+
+        if not hasattr(self, "CCV_time") or len(self.CCV_time) == 0:
+            print("Error: No CCV timestamps found. Run run_opencv_fiducial_marker_detection() first.")
+            return
+
+        half_len = self.marker_length / 2.0
+        marker_corners_3d = np.array([
+            [-half_len,  half_len, 0],
+            [ half_len,  half_len, 0],
+            [ half_len, -half_len, 0],
+            [-half_len, -half_len, 0]
+        ], dtype=np.float32)
+
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        for i, (frame_path, RLSN_time) in enumerate(zip(self.realsense_frames_paths, self.RLSN_time)):
+            frame = cv2.imread(frame_path)
+            if frame is None:
+                print(f"Skipping frame {i}: invalid frame.")
+                continue
+
+            # Interpolate OPTK_tf_c_m to current CCV timestamp
+            try:
+                idx_after = np.searchsorted(self.OPTK_time, RLSN_time)
+                idx_before = idx_after - 1
+
+                if idx_before < 0 or idx_after >= len(self.OPTK_time):
+                    print(f"Skipping frame {i}: timestamp out of OPTK bounds.")
+                    continue
+
+                t0 = self.OPTK_time[idx_before]
+                t1 = self.OPTK_time[idx_after]
+                alpha = (RLSN_time - t0) / (t1 - t0)
+
+                tf0 = self.OPTK_tf_c_m[idx_before]
+                tf1 = self.OPTK_tf_c_m[idx_after]
+
+                R0 = tf0[:3, :3]
+                R1 = tf1[:3, :3]
+                tvec0 = tf0[:3, 3]
+                tvec1 = tf1[:3, 3]
+
+                # SLERP for rotation
+                key_times = [0, 1]
+                rotations = R.from_matrix([R0, R1])
+                slerp = Slerp(key_times, rotations)
+                R_interp = slerp([alpha])[0].as_matrix()
+
+                # LERP for translation
+                t_interp = (1 - alpha) * tvec0 + alpha * tvec1
+
+                # Project marker corners using interpolated transform
+                rvec, _ = cv2.Rodrigues(R_interp)
+                tvec = t_interp.reshape(3, 1)
+
+                image_points, _ = cv2.projectPoints(
+                    marker_corners_3d, rvec, tvec,
+                    self.camera_matrix, self.dist_coeffs
+                )
+                image_points = image_points.astype(int).reshape(-1, 2)
+
+                for j in range(4):
+                    pt1 = tuple(image_points[j])
+                    pt2 = tuple(image_points[(j + 1) % 4])
+                    cv2.line(frame, pt1, pt2, (255, 0, 0), 2)  # Blue for OptiTrack reprojection
+
+            except Exception as e:
+                print(f"Interpolation or projection failed at frame {i}: {e}")
+                continue
+
+            if save_dir:
+                out_path = os.path.join(save_dir, f"reprojected_optitrack_{i:05d}.png")
+                cv2.imwrite(out_path, frame)
+
+            if show:
+                cv2.imshow("Reprojected OptiTrack Pose", frame)
+                cv2.waitKey(1)
+
+        if show:
+            cv2.destroyAllWindows()
+        print("Finished reprojecting OptiTrack pose estimates onto images.")
+
+
     def align_timestamps(self): 
         # TODO : Implement automatic timestamp alignment between Optitrack and OpenCV data 
         pass 
@@ -243,7 +415,6 @@ class optitrack_realsense_data_processor():
         plt.show() 
 
         return 
-    
 
 # MAIN SCRIPT 
 def main(): 
@@ -332,9 +503,7 @@ def main():
     ORDP.run_opencv_fiducial_marker_detection(save_results=False) 
     ORDP.compare_marker_poses() 
 
-    import pdb; pdb.set_trace()  # Set a breakpoint for debugging 
-
     return True 
 
 if __name__ == "__main__": 
-    main()  
+    main()

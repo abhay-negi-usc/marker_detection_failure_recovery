@@ -26,6 +26,7 @@ import random
 from itertools import chain
 
 import sys  
+import re 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
@@ -34,15 +35,18 @@ timestr = time.strftime("%Y%m%d-%H%M%S")
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
-    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
+    # dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
+    # dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     dir_backgrounds = "/home/anegi/Downloads/test2017" 
 else: # CAM machine 
-    OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
-    dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag"
+    OUT_DIR = os.path.join("/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/", "output", "sdg_markers_" + timestr)
+    # dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag"
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    dir_backgrounds = "/media/rp/Elements/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+    dir_backgrounds = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
+
+dir_textures = "./synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
@@ -454,14 +458,24 @@ for obj in labeled_assets_and_properties:
         # add_rigid_body_dynamics(tag_prim, disable_gravity=floating)
 
         with tag:       
+            # tag_texture = rep.distribution.choice(tag_textures)
+            selected_texture_path = random.choice(tag_textures)  # This is the actual file path (a string)
+            texture_path = selected_texture_path
+            tag_texture = rep.distribution.sequence([selected_texture_path])
             mat = rep.create.material_omnipbr(
                 # diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png",
-                diffuse_texture=tag_textures[0],
+                # diffuse_texture=tag_textures[0], 
+                # diffuse_texture = rep.random.choice(tag_textures), 
+                # diffuse_texture = tag_texture, 
+                diffuse_texture=rep.distribution.sequence([selected_texture_path]),
                 # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
                 # emissive_intensity=rep.distribution.uniform(0, 1000),
-                emissive_texture=tag_textures[0],
+                # emissive_texture=tag_textures[0], 
+                # emissive_texture=rep.random.choice(tag_textures),
+                # emissive_texture= tag_texture,  
+                emissive_texture=rep.distribution.sequence([selected_texture_path]),
                 emissive_intensity=40.0, 
             )    
             rep.modify.material(mat) 
@@ -581,18 +595,27 @@ with rep.trigger.on_custom_event(event_name="randomize_lighting"):
 
 rep.utils.send_og_event(event_name="randomize_lighting") 
 
+tag_textures_sequence = random.choices(tag_textures, k=config.get("num_frames", 1_000_000)) 
 with rep.trigger.on_custom_event(event_name="randomize_tag_texture"): 
-    with tag:       
-        mat = rep.create.material_omnipbr(
-            # diffuse_texture=rep.distribution.choice(tag_textures), 
-            diffuse_texture=tag_textures[0],  
-            # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
-            # metallic_texture=rep.distribution.choice(rep.example.TEXTURES), # NOTE: turning this off because believe it is causing very dark markers about 5% of the time 
-            # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
-            # emissive_intensity=rep.distribution.uniform(0, 1000),
-            emissive_texture=tag_textures[0],
-            emissive_intensity=40.0
-        )    
+    mat = rep.create.material_omnipbr(
+        # diffuse_texture="/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/tag36h11_0.png",
+        # diffuse_texture=tag_textures[0], 
+        # diffuse_texture = rep.random.choice(tag_textures), 
+        # diffuse_texture = tag_texture, 
+        diffuse_texture=rep.distribution.sequence(tag_textures_sequence),
+        # diffuse_texture=selected_texture_path,
+        # roughness_texture=rep.distribution.choice(rep.example.TEXTURES),
+        # metallic_texture=rep.distribution.choice(rep.example.TEXTURES),
+        # emissive_texture=rep.distribution.choice(rep.example.TEXTURES),
+        # emissive_intensity=rep.distribution.uniform(0, 1000),
+        # emissive_texture=tag_textures[0], 
+        # emissive_texture=rep.random.choice(tag_textures),
+        # emissive_texture= tag_texture,  
+        emissive_texture=rep.distribution.sequence(tag_textures_sequence),
+        # emissive_texture=selected_texture_path,
+        emissive_intensity=40.0, 
+    )    
+    with tag: 
         rep.modify.material(mat) 
 rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
@@ -607,6 +630,14 @@ rep.utils.send_og_event(event_name="randomize_tag_texture")
 # rep.utils.send_og_event(event_name="randomize_shadower_pose")
 
 print("Randomizer events set up.")
+
+# set up writer 
+writer = rep.WriterRegistry.get("BasicWriter")
+writer.initialize(output_dir="./output_test", rgb=True, semantic_segmentation=True)
+# Attach the actual render product(s)
+writer.attach([rp_cam])
+
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # SDG SETUP 
@@ -655,12 +686,12 @@ for i in range(num_frames):
         # print(f"Randomize shadower pose")
         # rep.utils.send_og_event(event_name="randomize_shadower_pose") 
 
-    if i % 17 == 0: # NOTE: reduce randomization frequency to speed up compute 
+    if i % 1 == 0: # NOTE: reduce randomization frequency to speed up compute 
         print(f"Randomize tag texture") 
         rep.utils.send_og_event(event_name="randomize_tag_texture") 
 
     # update the app to apply the randomization 
-    # rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
+    rep.orchestrator.step(delta_time=0.0, rt_subframes=3, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
 
     # Enable render products only at capture time
     if disable_render_products_between_captures:
@@ -691,11 +722,17 @@ for i in range(num_frames):
     write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
     write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
 
+    # parse number from the path 
+    match = re.search(r"-(\d+)\.png$", tag_textures_sequence[i+1]) # off by one because randomizer runs once at initialization 
+    if match:
+        tag_id = int(match.group(1))
+
     metadata = {
         "light": {
             "exposure": distant_light_lighting_prim.GetAttribute("inputs:exposure").Get(), 
             "color": serialize_vec3f(distant_light_lighting_prim.GetAttribute("inputs:color").Get()), 
-        }
+        },
+        "tag_id": tag_id
     } 
 
     write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")

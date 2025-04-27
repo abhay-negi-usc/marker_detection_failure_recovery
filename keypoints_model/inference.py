@@ -28,7 +28,7 @@ IMAGE_WIDTH = 640
 
 model = RegressorMobileNetV3().to(DEVICE) 
 model.eval()    
-load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint_20250330.pth.tar", map_location=torch.device(DEVICE)), model) 
+load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar", map_location=torch.device(DEVICE)), model) 
 
 transform = A.Compose(
     [
