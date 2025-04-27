@@ -49,6 +49,6 @@ def split_video_to_frames(video_path, output_folder, get_timestamps=False):
         # Return the list of timestamps if requested
         return np.array(timestamps) 
     
-video_path = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense/realsense_5.mp4"
-output_folder = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense/realsense_5_frames"  # Folder to save the PNGs
+video_path = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration.mp4"
+output_folder = "C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration_frames"  # Folder to save the PNGs
 split_video_to_frames(video_path, output_folder, get_timestamps=False)

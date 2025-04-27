@@ -89,66 +89,58 @@ def split_video_to_frames(video_path, output_folder, get_timestamps=False):
         return np.array(timestamps) 
 
     # print("Video processing completed.")
-def classical_marker_pose_estimation(image, camera_matrix, dist_coeffs, aruco_dict=cv2.aruco.DICT_APRILTAG_36h11, marker_length=0.1, show=False):
+
+def marker_pose_estimation_estimatePoseSingleMarkers(
+    image,
+    camera_matrix,
+    dist_coeffs,
+    aruco_dict=cv2.aruco.DICT_APRILTAG_36h11,
+    marker_length=0.1,
+    show=False
+):
     """
-    Detect ArUco markers in the input image and compute their poses.
+    Detect ArUco markers in an image and estimate their poses using estimatePoseSingleMarkers.
     
     Args:
-        image: The input image (numpy array) containing the ArUco marker(s).
+        image: Input image (numpy array).
         camera_matrix: Camera intrinsic matrix (numpy array).
         dist_coeffs: Camera distortion coefficients (numpy array).
-        aruco_dict: The ArUco dictionary to use (default is DICT_6X6_250).
-        marker_length: The length of the ArUco marker's side (in meters).
+        aruco_dict: ArUco dictionary to use (default: DICT_APRILTAG_36h11).
+        marker_length: Side length of the marker in meters.
+        show: If True, draw markers and pose axes on the image.
 
     Returns:
-        marker_ids: List of detected ArUco marker IDs.
-        rotation_vectors: List of rotation vectors of the markers.
-        translation_vectors: List of translation vectors of the markers.
+        marker_ids: Detected marker IDs (flattened array).
+        rotation_vectors: List of rotation vectors.
+        translation_vectors: List of translation vectors.
+        corners: List of detected marker corners.
     """
-    # Convert the image to grayscale (necessary for ArUco marker detection)
+    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Load the dictionary
+    dictionary = cv2.aruco.getPredefinedDictionary(aruco_dict)
     
-    # Load the ArUco dictionary
-    aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict)
-    
-    # Detect ArUco markers in the image
-    corners, ids, rejected_img_points = cv2.aruco.detectMarkers(gray, aruco_dict)
-    
-    # If no markers detected, return None's for all outputs 
+    # Detect markers
+    corners, ids, rejected_img_points = cv2.aruco.detectMarkers(gray, dictionary)
+
     if ids is None:
-        return None, None, None, None 
-    
-    # Estimate pose of each marker
-    rotation_vectors = []
-    translation_vectors = []
-    marker_frame_corners = np.array([[[-marker_length/2, -marker_length/2, 0], [marker_length/2, -marker_length/2, 0], [marker_length/2, marker_length/2, 0], [-marker_length/2, marker_length/2, 0]]])  # Define the marker frame corners
+        return None, None, None, None
 
-    # Iterate over all detected markers
-    for i in range(len(ids)):
-        # Compute the pose (rotation and translation vectors)
-        ret = cv2.solvePnP(marker_frame_corners, corners[i], camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)  # Use the marker frame corners as object points 
-        
-        # Unpack the results (rotation and translation vectors)
-        # rotation_vector, translation_vector = ret[0][0], ret[1][0]
-        rotation_vector, translation_vector = ret[1], ret[2] 
-        
-        rotation_vectors.append(rotation_vector)
-        translation_vectors.append(translation_vector)
-        
-        if show: 
-            # Optionally: Draw the marker and its pose on the image
-            cv2.aruco.drawDetectedMarkers(image, corners)
-            
-            # Manually draw the axes using projectPoints
-            axis_points = np.float32([[marker_length, 0, 0], [0, marker_length, 0], [0, 0, marker_length]]).reshape(-1, 3)
-            img_points, _ = cv2.projectPoints(axis_points, rotation_vector, translation_vector, camera_matrix, dist_coeffs)
-            
-            # Draw the 3D axis on the image
-            corner = corners[i].reshape(-1, 2)
-            for j in range(3):
-                # Ensure the points are formatted as tuples of integers
-                pt1 = tuple(corner[0].astype(int))
-                pt2 = tuple(img_points[j].ravel().astype(int))
-                cv2.line(image, pt1, pt2, (0, 255, 0), 5)
+    # Pose estimation
+    rotation_vectors, translation_vectors, _ = cv2.aruco.estimatePoseSingleMarkers(
+        corners,
+        marker_length,
+        camera_matrix,
+        dist_coeffs
+    )
 
-    return ids.flatten(), rotation_vectors, translation_vectors, corners 
+    if show:
+        # Draw detected markers
+        cv2.aruco.drawDetectedMarkers(image, corners, ids)
+
+        # Draw axes for each marker
+        for rvec, tvec in zip(rotation_vectors, translation_vectors):
+            cv2.aruco.drawAxis(image, camera_matrix, dist_coeffs, rvec, tvec, marker_length * 0.5)
+
+    return ids.flatten(), rotation_vectors, translation_vectors, corners
