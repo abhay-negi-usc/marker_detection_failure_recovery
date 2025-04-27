@@ -1,7 +1,7 @@
 # transformations 
 
 import numpy as np 
-from scipy.spatial.transform import Rotation as R 
+from scipy.spatial.transform import Rotation as R, Slerp 
 import cv2 
 import os 
 

@@ -1,147 +1,184 @@
 import cv2
 import numpy as np
 import glob
-import time 
+import time
+import os
 
-# Parameters for the ChArUco board
-chessboard_size = (5, 7)  # (number of internal corners in chessboard grid)
-square_length = 0.0730  # Length of the square in meters (adjust accordingly)
-marker_length = 0.0365  # Length of the marker in meters (adjust accordingly)
-max_images = 100 # Maximum number of images to use for calibration 
 
-# Prepare the ChArUco board
-# Define the dictionary for the ArUco markers
-aruco_dict = cv2.aruco.Dictionary(cv2.aruco.DICT_6X6_250, 6)  # Specify marker size
+def load_images(image_dir, max_images):
+    images = glob.glob(os.path.join(image_dir, '*.png'))
+    original_num_images = len(images)
 
-# Create a ChArUco board using the correct method (CharucoBoard_create)
-charuco_board = cv2.aruco.CharucoBoard(chessboard_size,square_length, marker_length, aruco_dict)
+    if original_num_images > max_images:
+        step = original_num_images // max_images
+        images = images[::step]
 
-# Set up termination criteria for the calibration (e.g., 30 iterations or 0.1 precision)
-criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1)
+    print(f"Number of images used for calibration: {len(images)} out of {original_num_images}")
+    return images
 
-# Prepare object points (3D points in the world coordinate system)
-object_points = []  # 3D points in the real world
-all_charuco_corners = []   # 2D points in the image plane
-charuco_ids_list = [] 
 
-# Detector setup
-parameters = cv2.aruco.DetectorParameters()
-detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+def detect_charuco_corners(images, board, detector):
+    all_corners = []
+    all_ids = []
 
-# Find all the calibration images (ensure you have a set of images with the ChArUco board in them)
-# images = glob.glob('C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/charuco_calibration_frames/*.png')  # Adjust the path to your images
-images = glob.glob('C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration_frames/*.png')  # Adjust the path to your images
+    for idx, img_path in enumerate(images):
+        img = cv2.imread(img_path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-# uniformly downsample the images to max_images 
-original_num_images = len(images)
-if len(images) > max_images:
-    step = len(images) // max_images
-    images = images[::step] # Downsample the list to max_images 
-print(f"Number of images used for calibration: {len(images)} out of {original_num_images} total images") 
+        corners, ids, _ = detector.detectMarkers(gray)
 
-# Process each image
-for idx, image_file in enumerate(images):
-    # Read the image
-    img = cv2.imread(image_file)
+        if len(corners) > 0:
+            retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, gray, board)
 
-    # Convert the image to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if retval and charuco_corners is not None and charuco_ids is not None and len(charuco_ids) >= 4:
+                corners_np = np.array(charuco_corners, dtype=np.float32).reshape(-1, 2)
+                ids_np = np.array(charuco_ids, dtype=np.float32)
 
-    # Detect markers and interpolate the ChArUco corners
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
-    parameters =  cv2.aruco.DetectorParameters()
-    detector = cv2.aruco.ArucoDetector(dictionary, parameters)
-    corners, ids, rejected_img_points = detector.detectMarkers(gray)
-    
-    if len(corners) > 0:
-        # Interpolate the ChArUco corners
-        retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, gray, charuco_board)
+                if np.any(np.isnan(corners_np)) or np.any(np.isnan(ids_np)):
+                    print(f"Skipping {img_path}: contains NaNs.")
+                    continue
 
-        if retval and charuco_corners is not None and charuco_ids is not None and len(charuco_ids) >= 4:
-            # Convert to NumPy for safety checks
-            corners_np = np.array(charuco_corners, dtype=np.float32).reshape(-1, 2)
-            ids_np = np.array(charuco_ids, dtype=np.float32)
+                if cv2.contourArea(corners_np) < 1e-3:
+                    print(f"Skipping {img_path}: low area (possible degeneracy).")
+                    continue
 
-            # Skip NaNs
-            if np.any(np.isnan(corners_np)) or np.any(np.isnan(ids_np)):
-                print(f"Skipping {image_file}: contains NaNs.")
-                continue
+                all_corners.append(charuco_corners)
+                all_ids.append(charuco_ids)
 
-            # Reject degenerate cases (low area = almost collinear points)
-            if cv2.contourArea(corners_np) < 1e-3:
-                print(f"Skipping {image_file}: low area (possible degeneracy).")
-                continue
+    print(f"Number of valid frames: {len(all_corners)}")
+    return all_corners, all_ids, gray.shape[::-1]
 
-            all_charuco_corners.append(charuco_corners)
-            charuco_ids_list.append(charuco_ids)
 
-print(f"Num valid frames: {len(all_charuco_corners)}")
-if len(all_charuco_corners) > 0:
-    print(f"First frame corners: {all_charuco_corners[0].shape}")
-    print(f"First frame ids: {charuco_ids_list[0].shape}")
-else:
-    print("No valid frames collected. Exiting.")
-    exit()
+def detect_checkerboard_corners(images, pattern_size):
+    objp = np.zeros((pattern_size[0]*pattern_size[1], 3), np.float32)
+    objp[:, :2] = np.mgrid[0:pattern_size[0], 0:pattern_size[1]].T.reshape(-1, 2)
 
-# Only calibrate if enough valid views
-if len(all_charuco_corners) >= 10:
-    # Initial guess for intrinsics (optional)
-    cameraMatrixInit = np.array([[600, 0, 320], [0, 600, 240], [0, 0, 1]], dtype=np.float32)
-    distCoeffsInit = np.zeros((5, 1), dtype=np.float32)
+    objpoints = []
+    imgpoints = []
 
+    flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE
+    for idx, img_path in enumerate(images):
+        img = cv2.imread(img_path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        ret, corners = cv2.findChessboardCorners(gray, pattern_size, flags=flags)
+
+        if ret:
+            objpoints.append(objp)
+            imgpoints.append(corners)
+
+    print(f"Number of valid frames: {len(objpoints)}")
+    return objpoints, imgpoints, gray.shape[::-1]
+
+
+def calibrate_camera_charuco(all_corners, all_ids, board, image_size, camera_matrix_init=None, dist_coeffs_init=None, use_intrinsic_guess=False):
+    if len(all_corners) < 10:
+        print("Not enough valid detections for calibration (need at least 10).")
+        return None
+
+    flags = cv2.CALIB_USE_INTRINSIC_GUESS if use_intrinsic_guess else 0
+
+    print("Starting ChArUco calibration...")
+    time_start = time.time()
     ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
-        charucoCorners=all_charuco_corners,
-        charucoIds=charuco_ids_list,
-        board=charuco_board,
-        imageSize=gray.shape[::-1],
-        cameraMatrix=cameraMatrixInit,
-        distCoeffs=distCoeffsInit,
-        flags=cv2.CALIB_USE_INTRINSIC_GUESS)
+        charucoCorners=all_corners,
+        charucoIds=all_ids,
+        board=board,
+        imageSize=image_size,
+        cameraMatrix=camera_matrix_init,
+        distCoeffs=dist_coeffs_init,
+        flags=flags
+    )
+    time_end = time.time()
 
-    print("✅ Calibration successful")
+    print(f"Calibration completed in {time_end - time_start:.2f} seconds.")
+    print("Calibration RMS error:", ret)
     print("Camera matrix:\n", mtx)
     print("Distortion coefficients:\n", dist)
 
-    # Save to file
-    np.savez("camera_calibration.npz", camera_matrix=mtx, distortion_coeffs=dist)
-else:
-    print("❌ Not enough valid detections for calibration (need at least 10).")
-
-cv2.destroyAllWindows()
-
-        # Save visualized image
-        image_name = os.path.basename(image_file)
-        output_path = os.path.join(output_dir, f"charuco_{idx:03d}_{image_name}")
-        cv2.imwrite(output_path, img_marked)
+    return mtx, dist
 
 
-# Perform the camera calibration
-cameraMatrixInit = np.array([[1400.0,0.0,950.0],[0.0,1400.0,530.0],[0,0,1]], dtype=np.float32) 
-distCoeffsInit = np.zeros((5, 1), dtype=np.float32)  # Assuming no initial distortion coefficients
-rvecs_empty = None # np.zeros((len(image_points), 3), dtype=np.float32)  # Initialize rotation vectors
-tvecs_empty = None # np.zeros((len(image_points), 3), dtype=np.float32)  # Initialize translation vectors
-# import pdb; pdb.set_trace() 
-# ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
-#     all_charuco_corners, charuco_ids_list, charuco_board, gray.shape[::-1], 
-#     None, None) 
-time_start = time.time()    
-ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
-    all_charuco_corners, charuco_ids_list, charuco_board, gray.shape[::-1], 
-    cameraMatrixInit, distCoeffsInit)
-time_end = time.time() 
-time_taken = time_end - time_start  
-print(f"Time taken for calibration: {len(images)} images in  {time_taken:.2f} seconds")  
-# Output the results
-print("Calibration was successful: ", ret)
-print("Camera matrix: \n", mtx) 
-print("Distortion coefficients: \n", dist)
-# print("Rotation vectors: \n", rvecs)
-# print("Translation vectors: \n", tvecs)
-# print("Rotation vectors: \n", rvecs)
-# print("Translation vectors: \n", tvecs)
+def calibrate_camera_checkerboard(objpoints, imgpoints, image_size):
+    print("Starting checkerboard calibration...")
+    time_start = time.time()
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objpoints,
+        imgpoints,
+        image_size,
+        None,
+        None
+    )
+    time_end = time.time()
 
-# Save the calibration parameters
-np.savez("./real_data_processing/raw_data/camera_calibration.npz", camera_matrix=mtx, distortion_coeffs=dist)
+    print(f"Calibration completed in {time_end - time_start:.2f} seconds.")
+    print("Calibration RMS error:", ret)
+    print("Camera matrix:\n", mtx)
+    print("Distortion coefficients:\n", dist)
 
-# Close all OpenCV windows
-cv2.destroyAllWindows()
+    return mtx, dist
+
+
+def save_calibration(file_path, camera_matrix, distortion_coeffs):
+    np.savez(file_path, camera_matrix=camera_matrix, distortion_coeffs=distortion_coeffs)
+    print(f"Calibration saved to {file_path}")
+
+
+def main():
+    # Parameters
+    image_dir = 'C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration_frames_v2'
+    output_file = './real_data_processing/raw_data/camera_calibration.npz'
+    chessboard_size = (5, 7) 
+    pattern_size = (4, 6) # Number of inner corners (not squares)
+    square_length = 0.07750 
+    marker_length = 0.03875
+    max_images = 250
+    use_charuco = False  # Set to False to use checkerboard calibration
+
+    images = load_images(image_dir, max_images)
+
+    if use_charuco:
+        aruco_dict = cv2.aruco.Dictionary(cv2.aruco.DICT_5X5_250, 5)  # Specify marker size
+        board = cv2.aruco.CharucoBoard(chessboard_size, square_length, marker_length, aruco_dict)
+        detector_params = cv2.aruco.DetectorParameters()
+        detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
+
+        all_corners, all_ids, image_size = detect_charuco_corners(images, board, detector)
+
+        if len(all_corners) < 10:
+            print("Calibration aborted: not enough valid frames.")
+            return
+
+        camera_matrix_init = np.array([[1400.0, 0.0, 950.0], [0.0, 1400.0, 530.0], [0, 0, 1]], dtype=np.float32)
+        dist_coeffs_init = np.zeros((5, 1), dtype=np.float32)
+
+        mtx, dist = calibrate_camera_charuco(
+            all_corners,
+            all_ids,
+            board,
+            image_size,
+            camera_matrix_init,
+            dist_coeffs_init,
+            use_intrinsic_guess=True
+        )
+
+    else:
+        objpoints, imgpoints, image_size = detect_checkerboard_corners(images, pattern_size) 
+        if len(objpoints) < 10:
+            print("Calibration aborted: not enough valid frames.")
+            return
+
+        mtx, dist = calibrate_camera_checkerboard(
+            objpoints,
+            imgpoints,
+            image_size
+        )
+
+    if mtx is not None:
+        save_calibration(output_file, mtx, dist)
+
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

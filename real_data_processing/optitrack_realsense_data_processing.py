@@ -1,509 +1,331 @@
-# optitrack data, realsense data --> images (from realsense) with camera frame pose labels (from optitrack) 
-
-# IMPORTS 
-import numpy as np 
-import pandas as pd 
-import os 
-import sys 
-import matplotlib.pyplot as plt 
-from PIL import Image 
+import numpy as np
+import pandas as pd
+import os
+import sys
+import matplotlib.pyplot as plt
 import cv2
+from pathlib import Path
 
-# MODULE IMPORTS 
-sys.path.append(os.curdir) 
-from real_data_processing.utils import * 
-
-from scipy.spatial.transform import Rotation as R, Slerp
+# MODULE IMPORTS
+sys.path.append(os.curdir)
+from real_data_processing.utils import *
 
 # CLASS DEFINITIONS
-class optitrack_realsense_datapoint(): 
-    def __init__(self, timestamp, image, tf_cam_marker):  
-        self.timestamp = timestamp
-        self.image = image 
-        self.tf_cam_marker = tf_cam_marker  # transformation of marker wrt camera 
 
-class optitrack_realsense_data_processor(): 
-    def __init__(self, optitrack_csv_file: str=None, realsense_video_file: str=None, t_offset_optk_ccv: float=0.0): 
-        self.optitrack_csv_file = optitrack_csv_file
-        self.realsense_video_file = realsense_video_file 
-        self.optitrack_raw_df, self.optitrack_raw_data  = self.parse_optitrack_csv(self.optitrack_csv_file) 
-        self.realsense_raw_data = self.parse_realsense_video(self.realsense_video_file) 
-        self.t_offset_optk_ccv = t_offset_optk_ccv  # offset between optitrack and classical cv timestamps
+class OptitrackRealsenseDataProcessor:
+    def __init__(self, config):
+        self.config = config
+        self._load_parameters()
+        self._load_optitrack_data()
+        self._load_realsense_data()
 
-    def parse_optitrack_csv(self, optitrack_csv_file: str):
-        """
-        Process the optitrack CSV file to extract timestamps and camera poses.
-        Returns a list of tuples (timestamp, tf_cam_marker).
-        """
-        if not os.path.isfile(optitrack_csv_file):
-            print(f"Error: Optitrack CSV file {optitrack_csv_file} not found.")
-            return []
+    def _load_parameters(self):
+        self.optitrack_csv_file = self.config["optitrack_csv_file"]
+        self.realsense_video_file = self.config["realsense_video_file"]
+        self.t_offset_optk_ccv = self.config["t_offset_optk_ccv"]
+        self.tf_trackmark_fidumark = self.config["tf_trackmark_fidumark"]
+        self.camera_matrix = self.config["camera_intrinsic_matrix"]
+        self.dist_coeffs = self.config["camera_dist_coeffs"]
+        self.aruco_dict = self.config["aruco_dict"]
+        self.marker_length = self.config["marker_length"]
+        self.tf_w_c = self.config["camera_extrinsic_matrix"]
+        self.tf_c_w = np.linalg.inv(self.tf_w_c)
 
-        # realsense 435 
-        # df = pd.read_csv(optitrack_csv_file, skiprows=6)
-        # df.rename(columns={"Time (Seconds)":"TIME", "X":"QX", "Y":"QY", "Z":"QZ", "W":"QW", 
-        #                     "X.1":"X", "Y.1":"Y", "Z.1":"Z"}, inplace=True)  # Remove any leading/trailing whitespace in column names
-        
-        # realsense 415 
-        df = pd.read_csv(optitrack_csv_file)
-        df.rename(columns={"Time (Seconds)":"TIME", "QX":"QX", "QY":"QY", "QZ":"QZ", "QW":"QW", 
-                    "X":"X", "Y":"Y", "Z":"Z"}, inplace=True)  # Remove any leading/trailing whitespace in column names
-        
-        optitrack_raw_df = df[["TIME", "X", "Y", "Z", "QW", "QX", "QY", "QZ"]].dropna() 
-        optitrack_raw_data = optitrack_raw_df.to_numpy()  # Convert to numpy array for easier processing  
-        
-        return optitrack_raw_df, optitrack_raw_data 
-    
-    
-    def set_tf_trackmark_fidumark(self, tf_trackmark_fidumark): 
-        """
-        Set the transformation of fiducial marker frame with respect to the optitrack marker frame 
-        """
-        self.tf_o_m = tf_trackmark_fidumark 
+    def _load_optitrack_data(self):
+        if not os.path.isfile(self.optitrack_csv_file):
+            raise FileNotFoundError(f"Optitrack CSV file {self.optitrack_csv_file} not found.")
+        df = pd.read_csv(self.optitrack_csv_file)
+        df.rename(columns={"Time (Seconds)": "TIME", "QX": "QX", "QY": "QY", "QZ": "QZ", "QW": "QW", "X": "X", "Y": "Y", "Z": "Z"}, inplace=True)
+        df = df[["TIME", "X", "Y", "Z", "QW", "QX", "QY", "QZ"]].dropna()
+        self.optitrack_data = df.to_numpy()
 
-    def process_optitrack_data(self): 
-        if not hasattr(self, 'tf_o_m'):
-            print("Error: Transformation of fiducial marker frame not set. Please set it using set_tf_trackmark_fidumark().")
-            return None, None, None, None 
-        
-        tf_w_o = [] 
-        tf_w_m = [] 
-        tf_mo_mi = [] 
-        timestamps = [] 
-        tf_mo_w = None 
-        tf_c_m = [] 
+    def _load_realsense_data(self):
+        frames_dir = Path(self.realsense_video_file.replace('.mp4', '_frames'))
+        if not frames_dir.exists() or not any(frames_dir.glob('*.png')):
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            self.RLSN_time = split_video_to_frames(self.realsense_video_file, str(frames_dir), get_timestamps=True)
+        else:
+            cap = cv2.VideoCapture(self.realsense_video_file)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.RLSN_time = np.linspace(0, total_frames / fps, total_frames, endpoint=False)
+            cap.release()
 
-        for idx, row in enumerate(self.optitrack_raw_data):
+        self.realsense_frames_paths = sorted(frames_dir.glob('*.png'))
+        max_frames = self.config.get("max_frames", None)
+        if max_frames and len(self.realsense_frames_paths) > max_frames:
+            step = len(self.realsense_frames_paths) // max_frames
+            self.realsense_frames_paths = self.realsense_frames_paths[::step]
+            self.RLSN_time = self.RLSN_time[::step]
+
+    def process_optitrack_data(self):
+        tf_w_o, tf_w_m, tf_mo_mi, timestamps, tf_c_m = [], [], [], [], []
+        tf_mo_w = None
+
+        for row in self.optitrack_data:
             if np.any(np.isnan(row)) or len(row) < 8:
-                continue 
+                continue
             timestamp = row[0]
-            timestamps.append(timestamp)  
-            xyzquat = row[1:8]  # Extract x, y, z, qw, qx, qy, qz 
-            tf_w_o_i = xyzquat_to_tf(xyzquat, input_qw_first=True) # transform of optitrack marker wrt optitrack world frame 
-            tf_w_o.append(tf_w_o_i) 
-            tf_w_m_i = tf_w_o_i @ self.tf_o_m 
-            tf_w_m.append(tf_w_m_i) 
+            timestamps.append(timestamp)
+            xyzquat = row[1:8]
+            tf_w_o_i = xyzquat_to_tf(xyzquat, input_qw_first=True)
+            tf_w_o.append(tf_w_o_i)
+            tf_w_m_i = tf_w_o_i @ self.tf_trackmark_fidumark
+            tf_w_m.append(tf_w_m_i)
 
-            if tf_mo_w is None: 
-                tf_mo_w = np.linalg.inv(tf_w_m_i) 
+            if tf_mo_w is None:
+                tf_mo_w = np.linalg.inv(tf_w_m_i)
                 tf_mo_mi_i = np.eye(4)
-            else: 
-                tf_mo_mi_i = tf_mo_w @ tf_w_m_i  
-
-            tf_mo_mi.append(tf_mo_mi_i) 
-
-            tf_c_m_i = self.tf_c_w @ tf_w_m_i 
-            tf_c_m.append(tf_c_m_i) 
-
-        self.OPTK_time = np.array(timestamps) - timestamps[0] + self.t_offset_optk_ccv  # Align timestamps with OpenCV data 
-        self.OPTK_tf_w_o = np.array(tf_w_o) 
-        self.OPTK_tf_w_m = np.array(tf_w_m)
-        self.OPTK_tf_mo_mi = np.array(tf_mo_mi) 
-        self.OPTK_tf_c_m = np.array(tf_c_m) 
-
-        # filter data to exclude None values 
-        self.OPTK_time_filtered = []
-        self.OPTK_tf_w_o_filtered = []
-        self.OPTK_tf_w_m_filtered = []
-        self.OPTK_tf_mo_mi_filtered = []
-        self.OPTK_tf_c_m_filtered = []
-        for i in range(len(self.OPTK_time)):
-            if self.OPTK_time[i] is not None: 
-                self.OPTK_time_filtered.append(self.OPTK_time[i]) 
-                self.OPTK_tf_w_o_filtered.append(self.OPTK_tf_w_o[i]) 
-                self.OPTK_tf_w_m_filtered.append(self.OPTK_tf_w_m[i]) 
-                self.OPTK_tf_mo_mi_filtered.append(self.OPTK_tf_mo_mi[i])
-                self.OPTK_tf_c_m_filtered.append(self.OPTK_tf_c_m[i])
-        self.OPTK_time_filtered = np.array(self.OPTK_time_filtered)
-        self.OPTK_tf_w_o_filtered = np.array(self.OPTK_tf_w_o_filtered)
-        self.OPTK_tf_w_m_filtered = np.array(self.OPTK_tf_w_m_filtered)
-        self.OPTK_tf_mo_mi_filtered = np.array(self.OPTK_tf_mo_mi_filtered)
-        self.OPTK_tf_c_m_filtered = np.array(self.OPTK_tf_c_m_filtered)
-
-        print(f"Optitrack detection rate: {len(self.OPTK_time)}/{len(self.optitrack_raw_data)}") 
-
-        return self.OPTK_time, self.OPTK_tf_w_o, self.OPTK_tf_w_m, self.OPTK_tf_mo_mi
-
-    def parse_realsense_video(self, realsense_video_file: str): 
-        # save images from the video and extract timestamps 
-        self.realsense_frames_dir = self.realsense_video_file.replace('.mp4', '_frames')
-
-        # check if the frames directory already exists and contains images
-        already_split = os.path.exists(self.realsense_frames_dir) and len(os.listdir(self.realsense_frames_dir)) > 0
-
-        if not already_split: 
-            os.makedirs(self.realsense_frames_dir, exist_ok=True)  # Create directory for frames if it doesn't exist
-            self.RLSN_time = split_video_to_frames(realsense_video_file, self.realsense_frames_dir, get_timestamps=True)         
-        else:     
-            cap = cv2.VideoCapture(realsense_video_file)
-            fps = cap.get(cv2.CAP_PROP_FPS)  # Frames per second
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # Total frames
-            timestamps = np.linspace(0, total_frames / fps, total_frames, endpoint=False)
-            self.RLSN_time = timestamps  # Store the timestamps for each frame
-            cap.release() 
-
-        # get list of frame image paths 
-        self.realsense_frames_paths = sorted([
-            os.path.join(self.realsense_frames_dir, f) 
-            for f in os.listdir(self.realsense_frames_dir) 
-            if f.endswith('.png')
-        ]) 
-        return 
-
-    def set_fiducial_marker_detector(self, camera_matrix, dist_coeffs, aruco_dict, marker_length, tf_optitrack_camera): 
-        self.camera_matrix = camera_matrix
-        self.dist_coeffs = dist_coeffs
-        self.aruco_dict = aruco_dict
-        self.marker_length = marker_length 
-        self.tf_w_c = tf_optitrack_camera  # Transformation of camera wrt optitrack world frame 
-        self.tf_c_w = np.linalg.inv(self.tf_w_c) 
-
-    def run_opencv_fiducial_marker_detection(self, save_results=False): 
-        # check if frame_path and 
-        if len(self.RLSN_time) != len(self.realsense_frames_paths):
-            print("Error: Number of frames in video does not match number of timestamps. Please check the video file.")
-            return None, None, None, None 
-        
-        if save_results: 
-            output_dir = self.realsense_frames_dir + "_CCV_processed"
-            os.makedirs(output_dir, exist_ok=True)
-
-        timestamps = [] 
-        tf_c_m = [] 
-        tf_w_m = [] 
-        tf_mo_mi = [] 
-        tf_mo_w = None 
-
-        for idx, frame_path in enumerate(self.realsense_frames_paths): 
-            frame = cv2.imread(frame_path) 
-            marker_ids, rotation_vectors, translation_vectors, corners = marker_pose_estimation_estimatePoseSingleMarkers(frame, self.camera_matrix, self.dist_coeffs, self.aruco_dict, self.marker_length, show=False)             
-
-            if save_results: 
-                # Draw detected markers on the frame
-                frame_markers = cv2.aruco.drawDetectedMarkers(frame.copy(), corners, marker_ids)
-                output_frame_path = os.path.join(output_dir, f"CCV_frame_{idx:05d}.png")
-                cv2.imwrite(output_frame_path, frame_markers) 
-
-            # TODO: filter based on matching of marker_ids 
-
-            if rotation_vectors is None or translation_vectors is None:
-                timestamps.append(None) 
-                tf_c_m.append(None) 
-                tf_w_m.append(None) 
-                tf_mo_mi.append(None) 
-                continue 
-
-            timestamps.append(self.RLSN_time[idx])  # Store the timestamp for this frame 
-            tf_Ccv_Mcv = np.eye(4)  # marker in openCV coordinates wrt openCV camera coordinates 
-            tf_Ccv_Mcv[:3,:3] = cv2.Rodrigues(rotation_vectors[0])[0] # Convert rotation vector to rotation matrix
-            tf_Ccv_Mcv[:3,3] = translation_vectors[0].reshape(3)  # Set translation vector  
-            tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv 
-            
-            if tf_mo_w is None:  # First frame case 
-                tf_mo_mi_i = np.eye(4) 
-                tf_mo_w = np.linalg.inv(tf_w_m_i) 
             else:
-                tf_mo_mi_i = tf_mo_w @ tf_w_m_i 
+                tf_mo_mi_i = tf_mo_w @ tf_w_m_i
 
-            tf_c_m.append(tf_Ccv_Mcv) # use opencv convention 
-            tf_w_m.append(tf_w_m_i) 
-            tf_mo_mi.append(tf_mo_mi_i) 
+            tf_mo_mi.append(tf_mo_mi_i)
+            tf_c_m_i = self.tf_c_w @ tf_w_m_i
+            tf_c_m.append(tf_c_m_i)
 
-        self.CCV_time = np.array(timestamps) - timestamps[0] 
-        self.CCV_tf_c_m = np.array(tf_c_m)  
-        self.CCV_tf_w_m = np.array(tf_w_m) 
-        self.CCV_tf_mo_mi = np.array(tf_mo_mi) 
+        self.OPTK_time = np.array(timestamps) - timestamps[0] + self.t_offset_optk_ccv
+        self.OPTK_tf_w_o = np.array(tf_w_o)
+        self.OPTK_tf_w_m = np.array(tf_w_m)
+        self.OPTK_tf_mo_mi = np.array(tf_mo_mi)
+        self.OPTK_tf_c_m = np.array(tf_c_m)
 
-        print(f"Clasical CV detection rate: {len(self.CCV_time)}/{len(self.RLSN_time)}") 
+        print(f"Optitrack detection rate: {len(self.OPTK_time)}/{len(self.optitrack_data)}")
 
-        return self.CCV_time, self.CCV_tf_c_m, self.CCV_tf_w_m, self.CCV_tf_mo_mi 
-    
+    def set_marker_detector(self):
+        self.detector = cv2.aruco.getPredefinedDictionary(self.aruco_dict)
+
+    def run_opencv_fiducial_marker_detection(self, save_results=False):
+        timestamps, tf_c_m, tf_w_m, tf_mo_mi = [], [], [], []
+        tf_mo_w = None
+        output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_CCV'))
+        if save_results:
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        for idx, frame_path in enumerate(self.realsense_frames_paths):
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                continue
+
+            marker_ids, rvecs, tvecs, corners = marker_pose_estimation_estimatePoseSingleMarkers(
+                frame, self.camera_matrix, self.dist_coeffs, self.aruco_dict, self.marker_length, show=False
+            )
+
+            if rvecs is None or tvecs is None:
+                continue
+
+            timestamps.append(self.RLSN_time[idx])
+            tf_Ccv_Mcv = np.eye(4)
+            tf_Ccv_Mcv[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
+            tf_Ccv_Mcv[:3, 3] = tvecs[0].reshape(3)
+
+            tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv
+            tf_c_m.append(tf_Ccv_Mcv)
+            tf_w_m.append(tf_w_m_i)
+
+            if tf_mo_w is None:
+                tf_mo_w = np.linalg.inv(tf_w_m_i)
+                tf_mo_mi_i = np.eye(4)
+            else:
+                tf_mo_mi_i = tf_mo_w @ tf_w_m_i
+            tf_mo_mi.append(tf_mo_mi_i)
+
+            if save_results and corners:
+                frame_markers = cv2.aruco.drawDetectedMarkers(frame.copy(), corners, marker_ids)
+                cv2.imwrite(str(output_dir / f"CCV_frame_{idx:05d}.png"), frame_markers)
+
+        self.CCV_time = np.array(timestamps) - timestamps[0]
+        self.CCV_tf_c_m = np.array(tf_c_m)
+        self.CCV_tf_w_m = np.array(tf_w_m)
+        self.CCV_tf_mo_mi = np.array(tf_mo_mi)
+
+    def compare_marker_poses(self, show=False):
+        self.CCV_xyzabc_c_m = np.array([tf_to_xyzabc(tf) for tf in self.CCV_tf_c_m])
+        self.OPTK_xyzabc_c_m = np.array([tf_to_xyzabc(tf) for tf in self.OPTK_tf_c_m])
+
+        self.tf_m_OPTK_m_CCV = []
+        self.xyzabc_m_OPTK_m_CCV = []
+
+        for i, tf_c in enumerate(self.CCV_tf_c_m):
+            idx_closest = np.argmin(np.abs(self.CCV_time[i] - self.OPTK_time))
+            tf_m_OPT = self.OPTK_tf_c_m[idx_closest]
+            tf_err = np.linalg.inv(tf_m_OPT) @ tf_c
+            self.tf_m_OPTK_m_CCV.append(tf_err)
+            self.xyzabc_m_OPTK_m_CCV.append(tf_to_xyzabc(tf_err))
+
+        self.tf_m_OPTK_m_CCV = np.array(self.tf_m_OPTK_m_CCV)
+        self.xyzabc_m_OPTK_m_CCV = np.array(self.xyzabc_m_OPTK_m_CCV)
+
+        if show:
+            plot_labels = ["x", "y", "z", "alpha", "beta", "gamma"]
+            unit_labels = ["m", "m", "m", "deg", "deg", "deg"]
+
+            fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+            for i in range(6):
+                axs[i//3, i%3].scatter(self.OPTK_time, self.OPTK_xyzabc_c_m[:, i], label='Optitrack', color='blue', s=5)
+                axs[i//3, i%3].scatter(self.CCV_time, self.CCV_xyzabc_c_m[:, i], label='OpenCV', color='red', s=5)
+                axs[i//3, i%3].set_title(f"{plot_labels[i]} ({unit_labels[i]})")
+                axs[i//3, i%3].legend()
+                axs[i//3, i%3].grid()
+            plt.tight_layout()
+            plt.show()
+
+            fig2, axs2 = plt.subplots(2, 3, figsize=(15, 10))
+            for i in range(6):
+                axs2[i//3, i%3].scatter(self.CCV_time, self.xyzabc_m_OPTK_m_CCV[:, i], color='green', s=5)
+                axs2[i//3, i%3].set_title(f"Error {plot_labels[i]} ({unit_labels[i]})")
+                axs2[i//3, i%3].grid()
+            plt.tight_layout()
+            plt.show()
+
     def reproject_opencv_pose_estimates(self, save_dir=None, show=False):
-        if not hasattr(self, "CCV_tf_c_m") or len(self.CCV_tf_c_m) == 0:
-            print("Error: No OpenCV pose data found. Run run_opencv_fiducial_marker_detection() first.")
+        if not hasattr(self, "CCV_tf_c_m"):
             return
-        
-        # Define marker corners in marker frame (centered at 0,0,0)
-        half_len = self.marker_length / 2.0
-        marker_corners_3d = np.array([
-            [-half_len,  half_len, 0],
-            [ half_len,  half_len, 0],
-            [ half_len, -half_len, 0],
-            [-half_len, -half_len, 0]
+
+        marker_half = self.marker_length / 2
+        marker_pts = np.array([
+            [-marker_half, marker_half, 0],
+            [marker_half, marker_half, 0],
+            [marker_half, -marker_half, 0],
+            [-marker_half, -marker_half, 0]
         ], dtype=np.float32)
 
         if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
+            Path(save_dir).mkdir(parents=True, exist_ok=True)
 
-        for i, (frame_path, tf_c_m) in enumerate(zip(self.realsense_frames_paths, self.CCV_tf_c_m)):
-            frame = cv2.imread(frame_path)
-            if frame is None:
-                print(f"Warning: Couldn't read image at {frame_path}")
-                continue
-            
-            if tf_c_m is not None: 
-                # Extract rotation and translation from 4x4 pose
-                R = tf_c_m[:3, :3]
-                t = tf_c_m[:3, 3]
+        for i, (img_path, tf) in enumerate(zip(self.realsense_frames_paths, self.CCV_tf_c_m)):
+            frame = cv2.imread(str(img_path))
+            rvec, _ = cv2.Rodrigues(tf[:3, :3])
+            tvec = tf[:3, 3]
+            img_pts, _ = cv2.projectPoints(marker_pts, rvec, tvec, self.camera_matrix, self.dist_coeffs)
+            img_pts = img_pts.reshape(-1, 2).astype(int)
 
-                # Convert rotation matrix to Rodrigues vector
-                rvec, _ = cv2.Rodrigues(R)
-                tvec = t.reshape(3, 1)
-
-                # Project 3D marker corners to 2D image
-                image_points, _ = cv2.projectPoints(
-                    marker_corners_3d, rvec, tvec,
-                    self.camera_matrix, self.dist_coeffs
-                )
-
-                image_points = image_points.astype(int).reshape(-1, 2)
-
-                # Draw reprojected marker outline
-                for j in range(4):
-                    pt1 = tuple(image_points[j])
-                    pt2 = tuple(image_points[(j + 1) % 4])
-                    cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
+            for j in range(4):
+                pt1, pt2 = tuple(img_pts[j]), tuple(img_pts[(j+1)%4])
+                cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
 
             if save_dir:
-                out_path = os.path.join(save_dir, f"reprojected_{i:05d}.png")
-                cv2.imwrite(out_path, frame)
-
+                cv2.imwrite(str(Path(save_dir) / f"CCV_proj_{i:05d}.png"), frame)
             if show:
-                cv2.imshow("Reprojected Pose", frame)
+                cv2.imshow("CCV Reproject", frame)
                 cv2.waitKey(1)
 
         if show:
             cv2.destroyAllWindows()
-
-    print("Finished reprojecting OpenCV pose estimates onto images.")
 
     def reproject_optitrack_pose_estimates(self, save_dir=None, show=False):
-        if not hasattr(self, "OPTK_tf_c_m") or len(self.OPTK_tf_c_m) == 0:
-            print("Error: No OptiTrack pose data found. Run process_optitrack_data() first.")
+        if not hasattr(self, "OPTK_tf_c_m"):
             return
 
-        if not hasattr(self, "CCV_time") or len(self.CCV_time) == 0:
-            print("Error: No CCV timestamps found. Run run_opencv_fiducial_marker_detection() first.")
-            return
-
-        half_len = self.marker_length / 2.0
-        marker_corners_3d = np.array([
-            [-half_len,  half_len, 0],
-            [ half_len,  half_len, 0],
-            [ half_len, -half_len, 0],
-            [-half_len, -half_len, 0]
+        marker_half = self.marker_length / 2
+        marker_pts = np.array([
+            [-marker_half, marker_half, 0],
+            [marker_half, marker_half, 0],
+            [marker_half, -marker_half, 0],
+            [-marker_half, -marker_half, 0]
         ], dtype=np.float32)
 
         if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
+            Path(save_dir).mkdir(parents=True, exist_ok=True)
 
-        for i, (frame_path, RLSN_time) in enumerate(zip(self.realsense_frames_paths, self.RLSN_time)):
-            frame = cv2.imread(frame_path)
-            if frame is None:
-                print(f"Skipping frame {i}: invalid frame.")
+        for i, (img_path, time) in enumerate(zip(self.realsense_frames_paths, self.RLSN_time)):
+            frame = cv2.imread(str(img_path))
+            idx = np.searchsorted(self.OPTK_time, time)
+            idx0, idx1 = idx-1, idx
+
+            if idx0 < 0 or idx1 >= len(self.OPTK_time):
                 continue
 
-            # Interpolate OPTK_tf_c_m to current CCV timestamp
-            try:
-                idx_after = np.searchsorted(self.OPTK_time, RLSN_time)
-                idx_before = idx_after - 1
+            t0, t1 = self.OPTK_time[idx0], self.OPTK_time[idx1]
+            tf0, tf1 = self.OPTK_tf_c_m[idx0], self.OPTK_tf_c_m[idx1]
 
-                if idx_before < 0 or idx_after >= len(self.OPTK_time):
-                    print(f"Skipping frame {i}: timestamp out of OPTK bounds.")
-                    continue
+            alpha = (time - t0) / (t1 - t0)
 
-                t0 = self.OPTK_time[idx_before]
-                t1 = self.OPTK_time[idx_after]
-                alpha = (RLSN_time - t0) / (t1 - t0)
+            rot_interp = Slerp([0, 1], R.from_matrix([tf0[:3, :3], tf1[:3, :3]]))([alpha])[0].as_matrix()
+            trans_interp = (1 - alpha) * tf0[:3, 3] + alpha * tf1[:3, 3]
 
-                tf0 = self.OPTK_tf_c_m[idx_before]
-                tf1 = self.OPTK_tf_c_m[idx_after]
+            rvec, _ = cv2.Rodrigues(rot_interp)
+            tvec = trans_interp.reshape(3, 1)
+            img_pts, _ = cv2.projectPoints(marker_pts, rvec, tvec, self.camera_matrix, self.dist_coeffs)
+            img_pts = img_pts.reshape(-1, 2).astype(int)
 
-                R0 = tf0[:3, :3]
-                R1 = tf1[:3, :3]
-                tvec0 = tf0[:3, 3]
-                tvec1 = tf1[:3, 3]
-
-                # SLERP for rotation
-                key_times = [0, 1]
-                rotations = R.from_matrix([R0, R1])
-                slerp = Slerp(key_times, rotations)
-                R_interp = slerp([alpha])[0].as_matrix()
-
-                # LERP for translation
-                t_interp = (1 - alpha) * tvec0 + alpha * tvec1
-
-                # Project marker corners using interpolated transform
-                rvec, _ = cv2.Rodrigues(R_interp)
-                tvec = t_interp.reshape(3, 1)
-
-                image_points, _ = cv2.projectPoints(
-                    marker_corners_3d, rvec, tvec,
-                    self.camera_matrix, self.dist_coeffs
-                )
-                image_points = image_points.astype(int).reshape(-1, 2)
-
-                for j in range(4):
-                    pt1 = tuple(image_points[j])
-                    pt2 = tuple(image_points[(j + 1) % 4])
-                    cv2.line(frame, pt1, pt2, (255, 0, 0), 2)  # Blue for OptiTrack reprojection
-
-            except Exception as e:
-                print(f"Interpolation or projection failed at frame {i}: {e}")
-                continue
+            for j in range(4):
+                pt1, pt2 = tuple(img_pts[j]), tuple(img_pts[(j+1)%4])
+                cv2.line(frame, pt1, pt2, (255, 0, 0), 2)
 
             if save_dir:
-                out_path = os.path.join(save_dir, f"reprojected_optitrack_{i:05d}.png")
-                cv2.imwrite(out_path, frame)
-
+                cv2.imwrite(str(Path(save_dir) / f"OPTK_proj_{i:05d}.png"), frame)
             if show:
-                cv2.imshow("Reprojected OptiTrack Pose", frame)
+                cv2.imshow("OptiTrack Reproject", frame)
                 cv2.waitKey(1)
 
         if show:
             cv2.destroyAllWindows()
-        print("Finished reprojecting OptiTrack pose estimates onto images.")
 
+# MAIN SCRIPT
 
-    def align_timestamps(self): 
-        # TODO : Implement automatic timestamp alignment between Optitrack and OpenCV data 
-        pass 
-    
-    def compare_marker_poses(self): 
+def main():
+    trial_idx = 5
+    calibration = "charuco_415"
 
-        self.CCV_xyzabc_c_m = np.zeros((len(self.CCV_tf_c_m), 6))  
-        self.OPTK_xyzabc_c_m = np.zeros((len(self.OPTK_tf_c_m), 6))  
-        self.tf_m_OPTK_m_CCV = np.zeros((len(self.CCV_tf_c_m), 4, 4)) 
-        for i, tf in enumerate(self.CCV_tf_c_m): 
-            self.CCV_xyzabc_c_m[i,:] = tf_to_xyzabc(self.CCV_tf_c_m[i])  
-            # find closest timestamp in optitrack data 
-            closest_idx = np.argmin(np.abs(self.CCV_time[i] - self.OPTK_time)) 
-            # compute error transform 
-            self.tf_m_OPTK_m_CCV[i,:,:] = np.linalg.inv(self.OPTK_tf_c_m[closest_idx]) @ tf 
-            self.xyzabc_m_OPTK_m_CCV = tf_to_xyzabc(self.tf_m_OPTK_m_CCV[i,:,:]) 
-        for i, tf in enumerate(self.OPTK_tf_c_m):
-            self.OPTK_xyzabc_c_m[i,:] = tf_to_xyzabc(self.OPTK_tf_c_m[i]) 
+    calibration_configs = {
+        "realsense_435": (388.505, 388.505, 317.534, 237.229, np.zeros(5)),
+        "charuco_435": (722, 698, 310, 272, np.array([-0.124113729, 1.64488988, -0.00982401198, -0.000507274595, -8.23426373])),
+        "realsense_415": (1360.49, 1360.49, 957.355, 540.8, np.zeros(5)),
+        "charuco_415": (1363.85031, 1365.39541, 958.580898, 552.245426, np.array([0.16925566, -0.47551045, 0.00181413, 0.0022729, 0.4113696]))
+    }
 
-        # absolute pose comparison plots 
-        plot_labels = ["x", "y", "z", "alpha", "beta", "gamma"] 
-        unit_labels = ["m", "m", "m", "deg", "deg", "deg"] 
-        fig_abs, axs_abs = plt.subplots(2, 3, figsize=(15, 10)) 
-        fig_abs.suptitle("Absolute Pose Comparison: Optitrack vs OpenCV")
-        for i in range(6):
-            axs_abs[i//3, i%3].scatter(self.OPTK_time, self.OPTK_xyzabc_c_m[:,i], label="Optitrack", color='blue', s=5)
-            axs_abs[i//3, i%3].scatter(self.CCV_time, self.CCV_xyzabc_c_m[:,i], label="OpenCV", color='red', s=5)
-            axs_abs[i//3, i%3].set_title(plot_labels[i])
-            axs_abs[i//3, i%3].set_xlabel("Time (s)") 
-            axs_abs[i//3, i%3].set_ylabel(f"{plot_labels[i]} ({unit_labels[i]})") 
-            axs_abs[i//3, i%3].legend()
-            axs_abs[i//3, i%3].grid()
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.show() 
-
-        # relative pose comparison plots 
-        fig_rel, axs_rel = plt.subplots(2, 3, figsize=(15, 10))
-        fig_rel.suptitle("Relative Pose Comparison: Optitrack vs OpenCV")
-        for i in range(6):
-            axs_rel[i//3, i%3].scatter(self.OPTK_time, self.xyzabc_m_OPTK_m_CCV[:,i], label="Optitrack", color='blue', s=5)
-            axs_rel[i//3, i%3].scatter(self.CCV_time, self.xyzabc_m_OPTK_m_CCV[:,i], label="OpenCV", color='red', s=5)
-            axs_rel[i//3, i%3].set_title(plot_labels[i])
-            axs_rel[i//3, i%3].set_xlabel("Time (s)") 
-            axs_rel[i//3, i%3].set_ylabel(f"{plot_labels[i]} ({unit_labels[i]})") 
-            axs_rel[i//3, i%3].legend()
-            axs_rel[i//3, i%3].grid()
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.show() 
-
-        return 
-
-# MAIN SCRIPT 
-def main(): 
-    trial_idx = 5 
-    calibration = "charuco_415" # "realsense_435", "charuco_435", "realsense_415", "charuco_415" 
-
-    if calibration == "realsense_435": 
-        fx, fy, cx, cy = 388.505, 388.505, 317.534, 237.229 # from realsense 435 camera 
-        dist_coeffs = np.zeros(5) 
-    elif calibration == "charuco_435": 
-        fx, fy, cx, cy = 722, 698, 310, 272 # from charuco board calibration 
-        dist_coeffs = np.array([-1.24113729e-01, 1.64488988e+00, -9.82401198e-03, -5.07274595e-04, -8.23426373e+00]) # from charuco board calibration 
-    elif calibration == "realsense_415": 
-        fx, fy, cx, cy = 1360.49, 1360.49, 957.355, 540.8 # from realsense 415 camera 
-        dist_coeffs = np.zeros(5)
-    elif calibration == "charuco_415": 
-        fx, fy, cx, cy = 1391.0075, 1348.2882, 952.2033, 564.2092 
-        dist_coeffs = np.array([0.1172223, -0.41138324, 0.0048569,-0.00155142, 0.24223279]) # from charuco board calibration
+    fx, fy, cx, cy, dist_coeffs = calibration_configs[calibration]
 
     tf_w_CS200 = np.array([
-        [1,0,0,0],
-        [0,-1,0,0],
-        [0,0,-1,0],
-        [0,0,0,1] 
-    ]) 
-    if calibration == "realsense_435" or calibration == "charuco_435":   
-        tf_CS200_mount = np.array([
-            [1/np.sqrt(2), 0, -1/np.sqrt(2), 10e-3],
-            [0,-1,0,7e-3],
-            [-1/np.sqrt(2), 0, -1/np.sqrt(2), 110e-3],  
-            [0,0,0,1]
-        ])
-        tf_mount_camera = np.array([
-            [1,0,0,-32.5e-3],
-            [0,1,0,-12.5e-3],
-            [0,0,1,+14.8e-3],
-            [0,0,0,1] 
-        ])
-    elif calibration == "realsense_415" or calibration == "charuco_415":
-        tf_CS200_mount = np.array([
-            [0,0,-1, 10.0e-3],
-            [0,-1,0, 1.2e-3],
-            [-1,0,0, 110.0e-3],  
-            [0,0,0,1]
-        ])
-        tf_mount_camera = np.array([
-            [1,0,0,-35e-3],
-            [0,1,0,-11.5e-3-1.2e-3],
-            [0,0,1,+9.0e-3],
-            [0,0,0,1] 
-        ])
-    tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera  
+        [1, 0, 0, -1.67e-3],
+        [0, -1, 0, 25.365e-3],
+        [0, 0, -1, 220.095e-3],
+        [0, 0, 0, 1]
+    ])
+
+    tf_CS200_mount = np.array([
+        [0, 0, -1, 10.0e-3],
+        [0, -1, 0, 1.2e-3],
+        [-1, 0, 0, 110.0e-3],
+        [0, 0, 0, 1]
+    ])
+
+    tf_mount_camera = np.array([
+        [1, 0, 0, -35e-3],
+        [0, 1, 0, -11.5e-3],
+        [0, 0, 1, 9.8e-3],
+        [0, 0, 0, 1]
+    ])
+
+    tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera
 
     tf_trackmark_fidumark = np.array([
-        [1,0,0,0],
-        [0,-1,0,0],
-        [0,0,-1,0],
-        [0,0,0,1]
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, -20.46e-3],
+        [0, 0, 0, 1]
     ])
 
     config = {
-        "trial_idx": trial_idx,  
+        "trial_idx": trial_idx,
         "optitrack_csv_file": f"./real_data_processing/raw_data/optitrack/optitrack_{trial_idx}.csv",
-        "realsense_video_file": f"./real_data_processing/raw_data/realsense/realsense_{trial_idx}.mp4", 
-        "tf_trackmark_fidumark": tf_trackmark_fidumark, 
-        "camera_intrinsic_matrix": np.array([[fx,0,cx],[0,fy,cy],[0,0,1]]), 
+        "realsense_video_file": f"./real_data_processing/raw_data/realsense/realsense_{trial_idx}.mp4",
+        "tf_trackmark_fidumark": tf_trackmark_fidumark,
+        "camera_intrinsic_matrix": np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
         "camera_dist_coeffs": dist_coeffs,
-        "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11, 
-        "marker_length": 0.1, 
-        "camera_extrinsic_matrix": tf_w_c, 
-        "t_offset_optk_ccv": 1.3, # offset between optitrack and classical cv timestamps
+        "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11,
+        "marker_length": 0.0798,
+        "camera_extrinsic_matrix": tf_w_c,
+        "t_offset_optk_ccv": 1.9,
+        "max_frames": 100000
     }
-    
-    ORDP = optitrack_realsense_data_processor(optitrack_csv_file=config["optitrack_csv_file"], 
-                                             realsense_video_file=config["realsense_video_file"],
-                                             t_offset_optk_ccv=config["t_offset_optk_ccv"]) 
-    ORDP.set_tf_trackmark_fidumark(config["tf_trackmark_fidumark"]) 
-    ORDP.set_fiducial_marker_detector(
-        camera_matrix=config["camera_intrinsic_matrix"], 
-        dist_coeffs=config["camera_dist_coeffs"], 
-        aruco_dict=config["aruco_dict"], 
-        marker_length=config["marker_length"], 
-        tf_optitrack_camera=config["camera_extrinsic_matrix"]
-    ) 
-    ORDP.process_optitrack_data() 
-    ORDP.run_opencv_fiducial_marker_detection(save_results=False) 
-    ORDP.compare_marker_poses() 
 
-    return True 
+    processor = OptitrackRealsenseDataProcessor(config)
+    processor.set_marker_detector()
+    processor.process_optitrack_data()
+    processor.run_opencv_fiducial_marker_detection(save_results=False) 
+    processor.compare_marker_poses(show=True) 
+    processor.reproject_optitrack_pose_estimates(save_dir=f"./real_data_processing/raw_data/OPTK_reprojections_{trial_idx}", show=False)
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     main()
