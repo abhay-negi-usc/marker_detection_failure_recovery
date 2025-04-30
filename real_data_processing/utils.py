@@ -42,6 +42,32 @@ def tf_to_xyzabc(tf: np.ndarray) -> np.ndarray:
 
     return np.array([x, y, z, a, b, c])
 
+def xyzabc_to_tf(xyzabc: np.ndarray) -> np.ndarray:
+    """
+    Convert [x, y, z, alpha, beta, gamma] to a homogeneous transformation matrix.
+    
+    Args:
+        xyzabc: A numpy array containing [x, y, z, alpha, beta, gamma].
+
+    Returns:
+        A 4x4 homogeneous transformation matrix.
+    """
+    if xyzabc.shape == (1,6): 
+        xyzabc = xyzabc.reshape(6) 
+
+    x, y, z = xyzabc[:3]
+    a, b, c = np.radians(xyzabc[3:])  # Convert degrees to radians
+
+    # Create rotation matrix from Euler angles
+    R_mat = R.from_euler('xyz', [a, b, c]).as_matrix()
+
+    # Create the transformation matrix
+    tf = np.eye(4)
+    tf[:3, :3] = R_mat
+    tf[:3, 3] = [x, y, z]
+
+    return tf
+
 def split_video_to_frames(video_path, output_folder, get_timestamps=False):
     video_filename = os.path.basename(video_path).replace(".mp4","")
 
