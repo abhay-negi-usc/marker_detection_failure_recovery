@@ -1,2 +1,4 @@
-sdg_markers_20250422-205424, cam, aruco tag 159  
+sdg_markers_20250422-205424, cam, aruco tag 159 
 sdg_markers_20250423-190447, cam, aruco 6x6 dictionary
+sdg_markers_20250424-220238, cam, aruco 6x6 dictionary
+sdg_markers_20250424-220240, cam, aruco 6x6 dictionary
