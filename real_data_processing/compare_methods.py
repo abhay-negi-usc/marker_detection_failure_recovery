@@ -10,14 +10,55 @@ from pathlib import Path
 sys.path.append(os.curdir)
 from real_data_processing.utils import *
 
-# CLASS DEFINITIONS
+class datapoint:
+    def __init__(self, image_path):
+        self.image_path = image_path 
+        self.image = None 
 
-class OptitrackRealsenseDataProcessor:
+    def get_image(self):
+        self.image = cv2.imread(self.image_path) 
+        return self.image 
+    
+    def forget_image(self):
+        self.image = None 
+
+    def set_time(self, time):   
+        self.time = time
+
+    def _set_pose(self, pose):
+        if pose is None:
+            return None, None, False  
+        elif pose.shape == (4, 4): 
+            tf = pose 
+            xyzabc = tf_to_xyzabc(pose) 
+            return tf, xyzabc, True 
+        elif pose.shape == (6,):
+            xyzabc = pose 
+            tf = xyzabc_to_tf(pose) 
+            return tf, xyzabc, True 
+        else: 
+            raise ValueError("Invalid pose shape. Expected (4, 4) or (6).") 
+
+    def set_OPTK_tf_pose(self, pose): 
+        self.OPTK_tf, self.OPTK_pose, self.OPTK_detected = self._set_pose(pose) 
+
+    def set_CCV_tf_pose(self, pose): 
+        self.CCV_tf, self.CCV_pose, self.CCV_detected = self._set_pose(pose)
+
+        
+    def set_LBCV_tf_pose(self, pose): 
+        self.LBCV_tf, self.LBCV_pose, self.LBCV_detected = self._set_pose(pose)
+
+    def __repr__(self):
+        return f"datapoint(name={self.name}, method={self.method_name})" 
+    
+class dataset_processor: 
     def __init__(self, config):
         self.config = config
         self._load_parameters()
         self._load_optitrack_data()
         self._load_realsense_data()
+        self._set_datapoints() 
 
     def _load_parameters(self):
         self.optitrack_csv_file = self.config["optitrack_csv_file"]
@@ -58,6 +99,13 @@ class OptitrackRealsenseDataProcessor:
             self.realsense_frames_paths = self.realsense_frames_paths[::step]
             self.RLSN_time = self.RLSN_time[::step]
 
+    def _set_datapoints(self):
+        self.datapoints = []
+        for idx, frame_path in enumerate(self.realsense_frames_paths):
+            dp = datapoint(frame_path)
+            dp.set_time(self.RLSN_time[idx]) 
+            self.datapoints.append(dp) 
+
     def process_optitrack_data(self):
         tf_w_o, tf_w_m, tf_mo_mi, timestamps, tf_c_m = [], [], [], [], []
         tf_mo_w = None
@@ -91,11 +139,16 @@ class OptitrackRealsenseDataProcessor:
 
         print(f"Optitrack detection rate: {len(self.OPTK_time)}/{len(self.optitrack_data)}")
 
+        for dp in self.datapoints:
+            closest_idx = np.argmin(np.abs(self.OPTK_time - dp.time))
+            dp.set_OPTK_tf_pose(self.OPTK_tf_c_m[closest_idx]) 
+
     def set_marker_detector(self):
         self.detector = cv2.aruco.getPredefinedDictionary(self.aruco_dict)
 
     def run_opencv_fiducial_marker_detection(self, save_results=False):
         timestamps, tf_c_m, tf_w_m, tf_mo_mi = [], [], [], []
+        tf_c_m_all = [] 
         tf_mo_w = None
         output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_CCV'))
         if save_results:
@@ -104,14 +157,16 @@ class OptitrackRealsenseDataProcessor:
         for idx, frame_path in enumerate(self.realsense_frames_paths):
             frame = cv2.imread(str(frame_path))
             if frame is None:
-                continue
+                tf_c_m_all.append(None) 
+                continue 
 
             marker_ids, rvecs, tvecs, corners = marker_pose_estimation_estimatePoseSingleMarkers(
                 frame, self.camera_matrix, self.dist_coeffs, self.aruco_dict, self.marker_length, show=False
             )
 
             if rvecs is None or tvecs is None:
-                continue
+                tf_c_m_all.append(None)
+                continue 
 
             timestamps.append(self.RLSN_time[idx])
             tf_Ccv_Mcv = np.eye(4)
@@ -121,6 +176,7 @@ class OptitrackRealsenseDataProcessor:
             tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv
             tf_c_m.append(tf_Ccv_Mcv)
             tf_w_m.append(tf_w_m_i)
+            tf_c_m_all.append(tf_Ccv_Mcv) 
 
             if tf_mo_w is None:
                 tf_mo_w = np.linalg.inv(tf_w_m_i)
@@ -136,130 +192,14 @@ class OptitrackRealsenseDataProcessor:
         self.CCV_time = np.array(timestamps) - timestamps[0]
         self.CCV_tf_c_m = np.array(tf_c_m)
         self.CCV_tf_w_m = np.array(tf_w_m)
-        self.CCV_tf_mo_mi = np.array(tf_mo_mi)
+        self.CCV_tf_mo_mi = np.array(tf_mo_mi) 
 
-    def compare_marker_poses(self, show=False):
-        self.CCV_xyzabc_c_m = np.array([tf_to_xyzabc(tf) for tf in self.CCV_tf_c_m])
-        self.OPTK_xyzabc_c_m = np.array([tf_to_xyzabc(tf) for tf in self.OPTK_tf_c_m])
+        for idx, dp in enumerate(self.datapoints):
+            dp.set_CCV_tf_pose(tf_c_m_all[idx]) 
 
-        self.tf_m_OPTK_m_CCV = []
-        self.xyzabc_m_OPTK_m_CCV = []
+    def __repr__(self):
+        return f"dataset(name={self.name}, datapoints={self.datapoints})"
 
-        for i, tf_c in enumerate(self.CCV_tf_c_m):
-            idx_closest = np.argmin(np.abs(self.CCV_time[i] - self.OPTK_time))
-            tf_m_OPT = self.OPTK_tf_c_m[idx_closest]
-            tf_err = np.linalg.inv(tf_m_OPT) @ tf_c
-            self.tf_m_OPTK_m_CCV.append(tf_err)
-            self.xyzabc_m_OPTK_m_CCV.append(tf_to_xyzabc(tf_err))
-
-        self.tf_m_OPTK_m_CCV = np.array(self.tf_m_OPTK_m_CCV)
-        self.xyzabc_m_OPTK_m_CCV = np.array(self.xyzabc_m_OPTK_m_CCV)
-
-        if show:
-            plot_labels = ["x", "y", "z", "alpha", "beta", "gamma"]
-            unit_labels = ["m", "m", "m", "deg", "deg", "deg"]
-
-            fig, axs = plt.subplots(2, 3, figsize=(15, 10))
-            for i in range(6):
-                axs[i//3, i%3].scatter(self.OPTK_time, self.OPTK_xyzabc_c_m[:, i], label='Optitrack', color='blue', s=5)
-                axs[i//3, i%3].scatter(self.CCV_time, self.CCV_xyzabc_c_m[:, i], label='OpenCV', color='red', s=5)
-                axs[i//3, i%3].set_title(f"{plot_labels[i]} ({unit_labels[i]})")
-                axs[i//3, i%3].legend()
-                axs[i//3, i%3].grid()
-            plt.tight_layout()
-            plt.show()
-
-            fig2, axs2 = plt.subplots(2, 3, figsize=(15, 10))
-            for i in range(6):
-                axs2[i//3, i%3].scatter(self.CCV_time, self.xyzabc_m_OPTK_m_CCV[:, i], color='green', s=5)
-                axs2[i//3, i%3].set_title(f"Error {plot_labels[i]} ({unit_labels[i]})")
-                axs2[i//3, i%3].grid()
-            plt.tight_layout()
-            plt.show()
-
-    def reproject_opencv_pose_estimates(self, save_dir=None, show=False):
-        if not hasattr(self, "CCV_tf_c_m"):
-            return
-
-        marker_half = self.marker_length / 2
-        marker_pts = np.array([
-            [-marker_half, marker_half, 0],
-            [marker_half, marker_half, 0],
-            [marker_half, -marker_half, 0],
-            [-marker_half, -marker_half, 0]
-        ], dtype=np.float32)
-
-        if save_dir:
-            Path(save_dir).mkdir(parents=True, exist_ok=True)
-
-        for i, (img_path, tf) in enumerate(zip(self.realsense_frames_paths, self.CCV_tf_c_m)):
-            frame = cv2.imread(str(img_path))
-            rvec, _ = cv2.Rodrigues(tf[:3, :3])
-            tvec = tf[:3, 3]
-            img_pts, _ = cv2.projectPoints(marker_pts, rvec, tvec, self.camera_matrix, self.dist_coeffs)
-            img_pts = img_pts.reshape(-1, 2).astype(int)
-
-            for j in range(4):
-                pt1, pt2 = tuple(img_pts[j]), tuple(img_pts[(j+1)%4])
-                cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
-
-            if save_dir:
-                cv2.imwrite(str(Path(save_dir) / f"CCV_proj_{i:05d}.png"), frame)
-            if show:
-                cv2.imshow("CCV Reproject", frame)
-                cv2.waitKey(1)
-
-        if show:
-            cv2.destroyAllWindows()
-
-    def reproject_optitrack_pose_estimates(self, save_dir=None, show=False):
-        if not hasattr(self, "OPTK_tf_c_m"):
-            return
-
-        marker_half = self.marker_length / 2
-        marker_pts = np.array([
-            [-marker_half, marker_half, 0],
-            [marker_half, marker_half, 0],
-            [marker_half, -marker_half, 0],
-            [-marker_half, -marker_half, 0]
-        ], dtype=np.float32)
-
-        if save_dir:
-            Path(save_dir).mkdir(parents=True, exist_ok=True)
-
-        for i, (img_path, time) in enumerate(zip(self.realsense_frames_paths, self.RLSN_time)):
-            frame = cv2.imread(str(img_path))
-            idx = np.searchsorted(self.OPTK_time, time)
-            idx0, idx1 = idx-1, idx
-
-            if idx0 < 0 or idx1 >= len(self.OPTK_time):
-                continue
-
-            t0, t1 = self.OPTK_time[idx0], self.OPTK_time[idx1]
-            tf0, tf1 = self.OPTK_tf_c_m[idx0], self.OPTK_tf_c_m[idx1]
-
-            alpha = (time - t0) / (t1 - t0)
-
-            rot_interp = Slerp([0, 1], R.from_matrix([tf0[:3, :3], tf1[:3, :3]]))([alpha])[0].as_matrix()
-            trans_interp = (1 - alpha) * tf0[:3, 3] + alpha * tf1[:3, 3]
-
-            rvec, _ = cv2.Rodrigues(rot_interp)
-            tvec = trans_interp.reshape(3, 1)
-            img_pts, _ = cv2.projectPoints(marker_pts, rvec, tvec, self.camera_matrix, self.dist_coeffs)
-            img_pts = img_pts.reshape(-1, 2).astype(int)
-
-            for j in range(4):
-                pt1, pt2 = tuple(img_pts[j]), tuple(img_pts[(j+1)%4])
-                cv2.line(frame, pt1, pt2, (255, 0, 0), 2)
-
-            if save_dir:
-                cv2.imwrite(str(Path(save_dir) / f"OPTK_proj_{i:05d}.png"), frame)
-            if show:
-                cv2.imshow("OptiTrack Reproject", frame)
-                cv2.waitKey(1)
-
-        if show:
-            cv2.destroyAllWindows()
 
 # MAIN SCRIPT
 
@@ -317,15 +257,17 @@ def main():
         "marker_length": 0.0798,
         "camera_extrinsic_matrix": tf_w_c,
         "t_offset_optk_ccv": 1.9,
-        "max_frames": 100000
+        "max_frames": 100 
     }
 
-    processor = OptitrackRealsenseDataProcessor(config)
+    processor = dataset_processor(config)
     processor.set_marker_detector()
     processor.process_optitrack_data()
     processor.run_opencv_fiducial_marker_detection(save_results=False) 
-    processor.compare_marker_poses(show=True) 
-    processor.reproject_optitrack_pose_estimates(save_dir=f"./real_data_processing/raw_data/OPTK_reprojections_{trial_idx}", show=False)
+    # processor.compare_marker_poses(show=True) 
+    # processor.reproject_optitrack_pose_estimates(save_dir=f"./real_data_processing/raw_data/OPTK_reprojections_{trial_idx}", show=False)
+
+    import pdb; pdb.set_trace() 
 
 if __name__ == "__main__":
     main()
