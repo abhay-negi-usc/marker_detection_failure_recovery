@@ -4,6 +4,50 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R, Slerp 
 import cv2 
 import os 
+from pathlib import Path
+from typing import Optional, Tuple, List
+import logging
+
+class DataPoint:
+    def __init__(self, image_path: Path):
+        self.image_path = image_path
+        self.image: Optional[np.ndarray] = None
+        self.time: Optional[float] = None
+
+    def get_image(self) -> Optional[np.ndarray]:
+        self.image = cv2.imread(str(self.image_path))
+        if self.image is None:
+            logging.warning(f"Failed to read image: {self.image_path}")
+        return self.image
+
+    def forget_image(self):
+        self.image = None
+
+    def set_time(self, time: float):
+        self.time = time
+
+    def _set_pose(self, pose: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
+        if pose is None or not isinstance(pose, np.ndarray):
+            return None, None, False
+        if pose.shape == (4, 4):
+            tf = pose
+            xyzabc = tf_to_xyzabc(tf)
+            return tf, xyzabc, True
+        elif pose.shape == (6,):
+            xyzabc = pose
+            tf = xyzabc_to_tf(xyzabc)
+            return tf, xyzabc, True
+        else:
+            raise ValueError(f"Invalid pose shape {pose.shape}. Expected (4, 4) or (6,)")
+
+    def set_pose(self, method: str, pose: np.ndarray):
+        tf, xyzabc, detected = self._set_pose(pose)
+        setattr(self, f"{method}_tf", tf)
+        setattr(self, f"{method}_pose", xyzabc)
+        setattr(self, f"{method}_detected", detected)
+
+    def __repr__(self):
+        return f"DataPoint(path={self.image_path.name}, time={self.time})"
 
 def xyzquat_to_tf(xyzquat: np.ndarray, input_qw_first: bool) -> np.ndarray:
     """

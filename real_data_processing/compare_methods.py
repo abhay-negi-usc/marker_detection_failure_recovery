@@ -5,10 +5,15 @@ import logging
 from pathlib import Path
 from typing import Optional, Tuple, List
 from real_data_processing.utils import *
+import PIL 
+from PIL import Image
+import json
+import cv2
+from keypoints_model.utils import overlay_points_on_image
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
 
 # Constants for config keys
 OPTITRACK_CSV_FILE = "optitrack_csv_file"
@@ -22,46 +27,6 @@ TF_TRACKMARK_FIDUMARK = "tf_trackmark_fidumark"
 T_OFFSET_OPTK_CCV = "t_offset_optk_ccv"
 MAX_FRAMES = "max_frames"
 
-class DataPoint:
-    def __init__(self, image_path: Path):
-        self.image_path = image_path
-        self.image: Optional[np.ndarray] = None
-        self.time: Optional[float] = None
-
-    def get_image(self) -> Optional[np.ndarray]:
-        self.image = cv2.imread(str(self.image_path))
-        if self.image is None:
-            logging.warning(f"Failed to read image: {self.image_path}")
-        return self.image
-
-    def forget_image(self):
-        self.image = None
-
-    def set_time(self, time: float):
-        self.time = time
-
-    def _set_pose(self, pose: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
-        if pose is None or not isinstance(pose, np.ndarray):
-            return None, None, False
-        if pose.shape == (4, 4):
-            tf = pose
-            xyzabc = tf_to_xyzabc(tf)
-            return tf, xyzabc, True
-        elif pose.shape == (6,):
-            xyzabc = pose
-            tf = xyzabc_to_tf(xyzabc)
-            return tf, xyzabc, True
-        else:
-            raise ValueError(f"Invalid pose shape {pose.shape}. Expected (4, 4) or (6,)")
-
-    def set_pose(self, method: str, pose: np.ndarray):
-        tf, xyzabc, detected = self._set_pose(pose)
-        setattr(self, f"{method}_tf", tf)
-        setattr(self, f"{method}_pose", xyzabc)
-        setattr(self, f"{method}_detected", detected)
-
-    def __repr__(self):
-        return f"DataPoint(path={self.image_path.name}, time={self.time})"
 class DatasetProcessor:
     def __init__(self, config: dict):
         self.config = config
@@ -162,6 +127,10 @@ class DatasetProcessor:
             dp.set_pose("OPTK", self.OPTK_tf_c_m[idx])
 
     def run_opencv_fiducial_marker_detection(self, save_results=False):
+        import cv2
+        from pathlib import Path
+        import logging
+
         tf_c_m_all = []
         tf_w_m, tf_mo_mi, timestamps = [], [], []
         tf_mo_w = None
@@ -182,30 +151,35 @@ class DatasetProcessor:
                 self.marker_length, show=False
             )
 
-            if rvecs is None or tvecs is None:
-                tf_c_m_all.append(None)
-                continue
+            out_img = frame.copy()
+            pose_detected = False
 
-            tf_Ccv_Mcv = np.eye(4)
-            tf_Ccv_Mcv[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
-            tf_Ccv_Mcv[:3, 3] = tvecs[0].reshape(3)
+            if rvecs is not None and tvecs is not None:
+                tf_Ccv_Mcv = np.eye(4)
+                tf_Ccv_Mcv[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
+                tf_Ccv_Mcv[:3, 3] = tvecs[0].reshape(3)
+                tf_c_m_all.append(tf_Ccv_Mcv)
 
-            tf_c_m_all.append(tf_Ccv_Mcv)
-            tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv
-            tf_w_m.append(tf_w_m_i)
+                tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv
+                tf_w_m.append(tf_w_m_i)
 
-            if tf_mo_w is None:
-                tf_mo_w = np.linalg.inv(tf_w_m_i)
-                tf_mo_mi.append(np.eye(4))
+                if tf_mo_w is None:
+                    tf_mo_w = np.linalg.inv(tf_w_m_i)
+                    tf_mo_mi.append(np.eye(4))
+                else:
+                    tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
+
+                pose_detected = True
             else:
-                tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
+                tf_c_m_all.append(None)
 
             timestamps.append(self.RLSN_time[idx])
 
-            if save_results and corners:
-                img = cv2.aruco.drawDetectedMarkers(frame.copy(), corners, marker_ids)
+            if save_results:
+                if pose_detected:
+                    out_img = cv2.aruco.drawDetectedMarkers(out_img, corners, marker_ids)
                 outpath = output_dir / f"CCV_frame_{idx:05d}.png"
-                cv2.imwrite(str(outpath), img)
+                cv2.imwrite(str(outpath), out_img)
 
         self.CCV_time = np.array(timestamps) - timestamps[0]
         self.CCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
@@ -215,10 +189,249 @@ class DatasetProcessor:
         for idx, dp in enumerate(self.datapoints):
             dp.set_pose("CCV", tf_c_m_all[idx] if idx < len(tf_c_m_all) else None)
 
-    def __repr__(self):
-        return f"DatasetProcessor(num_datapoints={len(self.datapoints)})"
+    def run_learning_based_detection(self, predict_fn, save_results=False, save_segmentation=False):
+        from PIL import Image
+        import json
+        import numpy as np
+        import cv2
+        from keypoints_model.utils import overlay_points_on_image
 
-    
+        tf_c_m_all = []
+        tf_w_m, tf_mo_mi, timestamps = [], [], []
+        tf_mo_w = None
+
+        output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_LBCV'))
+        if save_results:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "keypoints_overlay").mkdir(exist_ok=True)
+            (output_dir / "keypoints_json").mkdir(exist_ok=True)
+        if save_segmentation:
+            (output_dir / "segmentation_masks").mkdir(parents=True, exist_ok=True)
+
+        for idx, dp in enumerate(self.datapoints):
+            image = dp.get_image()
+            if image is None:
+                tf_c_m_all.append(None)
+                continue
+
+            # Run LBCV predictor (2- or 3-return format)
+            result = predict_fn(image)
+            if isinstance(result, tuple) and len(result) == 3:
+                tf_marker, keypoints, segmentation_mask = result
+            else:
+                tf_marker, keypoints = result
+                segmentation_mask = None
+
+            tf_c_m_all.append(tf_marker)
+
+            if tf_marker is None:
+                # Save fallback results
+                if save_results:
+                    # Raw image
+                    overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
+                    Image.fromarray(image).save(str(overlay_path))
+
+                    # Empty keypoints
+                    json_path = output_dir / "keypoints_json" / f"LBCV_frame_{idx:05d}.json"
+                    with open(json_path, "w") as f:
+                        json.dump([], f)
+
+                if save_segmentation:
+                    seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
+                    blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
+                    blank_mask.save(str(seg_path))
+                continue
+
+            tf_w_m_i = self.tf_w_c @ tf_marker
+            tf_w_m.append(tf_w_m_i)
+
+            if tf_mo_w is None:
+                tf_mo_w = np.linalg.inv(tf_w_m_i)
+                tf_mo_mi.append(np.eye(4))
+            else:
+                tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
+
+            timestamps.append(dp.time)
+            dp.set_pose("LBCV", tf_marker)
+
+            # --- Save keypoints visualization and JSON ---
+            if save_results and keypoints is not None:
+                overlay = overlay_points_on_image(image.copy(), keypoints, radius=3)
+                overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
+                Image.fromarray(overlay).save(str(overlay_path))
+
+                json_path = output_dir / "keypoints_json" / f"LBCV_frame_{idx:05d}.json"
+                with open(json_path, "w") as f:
+                    json.dump(keypoints.tolist(), f)
+
+            # --- Save segmentation mask if requested ---
+            if save_segmentation and segmentation_mask is not None:
+                seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
+                segmentation_mask.convert("L").save(str(seg_path))
+
+        self.LBCV_time = np.array(timestamps) - timestamps[0] if timestamps else None
+        self.LBCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
+        self.LBCV_tf_w_m = np.array(tf_w_m)
+        self.LBCV_tf_mo_mi = np.array(tf_mo_mi)
+
+def build_lbcv_predictor(
+    seg_model_path: str,
+    kp_model_path: str,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    marker_image: 'PIL.Image.Image',
+    marker_side_length: float,
+    keypoints_tag_frame: np.ndarray,
+):
+    import numpy as np
+    import torch
+    import cv2
+    from torchvision import transforms
+    from segmentation_model.model import UNETWithDropout
+    from segmentation_model.utils import load_checkpoint as load_seg_ckpt
+    from keypoints_model.model import RegressorMobileNetV3
+    from keypoints_model.utils import load_checkpoint as load_kp_ckpt
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+    from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+    seg_model = UNETWithDropout(in_channels=3, out_channels=1).to(DEVICE)
+    load_seg_ckpt(torch.load(seg_model_path, map_location=DEVICE), seg_model)
+    seg_model.eval()
+
+    kp_model = RegressorMobileNetV3().to(DEVICE)
+    load_kp_ckpt(torch.load(kp_model_path, map_location=DEVICE), kp_model)
+    kp_model.eval()
+
+    tf_W_Ccv = np.array([
+        [1, 0, 0, 0],
+        [0, -1, 0, 0],
+        [0, 0, -1, 0],
+        [0, 0, 0, 1]
+    ])
+
+    def compute_roi(seg, rgb):
+
+        padding = 5
+        roi_size = 128
+        image_border_size = np.max([np.array(seg).shape[0], np.array(seg).shape[1]])
+
+        seg = np.array(seg)
+        seg = cv2.copyMakeBorder(seg, image_border_size, image_border_size, image_border_size, image_border_size, cv2.BORDER_CONSTANT, value=0)
+        tag_pixels = np.argwhere(seg == 255)
+        if tag_pixels.size == 0:
+            return None, None
+
+        seg_tag_min_x = np.min(tag_pixels[:, 1])
+        seg_tag_max_x = np.max(tag_pixels[:, 1])
+        seg_tag_min_y = np.min(tag_pixels[:, 0])
+        seg_tag_max_y = np.max(tag_pixels[:, 0])
+        seg_height = seg_tag_max_y - seg_tag_min_y
+        seg_width = seg_tag_max_x - seg_tag_min_x
+        seg_center_x = (seg_tag_min_x + seg_tag_max_x) // 2
+        seg_center_y = (seg_tag_min_y + seg_tag_max_y) // 2
+
+        if isinstance(rgb, str):
+            rgb = np.array(cv2.imread(rgb))
+        if isinstance(rgb, Image.Image):
+            rgb = np.array(rgb)
+        if isinstance(rgb, np.ndarray):
+            rgb = rgb
+        rgb = cv2.copyMakeBorder(rgb, image_border_size, image_border_size, image_border_size, image_border_size, cv2.BORDER_CONSTANT, value=0)
+
+        rgb_side = max(seg_height, seg_width) + 2 * padding
+        rgb_tag_min_x = seg_center_x - rgb_side // 2
+        rgb_tag_max_x = seg_center_x + rgb_side // 2
+        rgb_tag_min_y = seg_center_y - rgb_side // 2
+        rgb_tag_max_y = seg_center_y + rgb_side // 2
+        roi_img = rgb[rgb_tag_min_y:rgb_tag_max_y, rgb_tag_min_x:rgb_tag_max_x, :]
+        roi_img = cv2.resize(roi_img, (roi_size, roi_size))
+        roi_coordinates = np.array([rgb_tag_min_x, rgb_tag_max_x, rgb_tag_min_y, rgb_tag_max_y]) - image_border_size 
+
+        return roi_img, roi_coordinates
+
+    def predict_pose_from_image(image: np.ndarray):
+        seg_size = (640, 480)
+
+        # Resize RGB image to match segmentation input
+        resized_rgb = cv2.resize(image, seg_size)  # shape (H, W, 3)
+
+        # Segmentation transform: normalized for model
+        seg_transform = A.Compose([
+            A.Normalize(max_pixel_value=1.0),
+            ToTensorV2()
+        ])
+        transformed = seg_transform(image=resized_rgb)
+        img_tensor = transformed["image"].unsqueeze(0).to(DEVICE)
+
+        with torch.no_grad():
+            seg_mask = torch.sigmoid(seg_model(img_tensor))
+            seg_mask = (seg_mask > 0.5).float().cpu()
+
+        seg_mask_img = transforms.ToPILImage()(seg_mask.squeeze(0))  # shape matches resized_rgb
+
+        # No tag detected
+        if np.array(seg_mask_img).max() == 0:
+            return None, None, seg_mask_img
+
+        # --- Compute ROI using resized RGB and seg ---
+        roi_img, roi_coords = compute_roi(seg_mask_img, resized_rgb)
+        if roi_img is None:
+            return None, None, seg_mask_img
+
+        # Keypoint transform (no resize)
+        kp_transform = A.Compose([ToTensorV2()])
+        roi_tensor = kp_transform(image=roi_img)["image"].unsqueeze(0).float().to(DEVICE)
+
+        with torch.no_grad():
+            keypoints_roi = kp_model(roi_tensor).cpu().numpy().reshape(-1, 2)
+
+        # Step 1: remap from ROI (128×128) to resized RGB (640×480)
+        roi_height, roi_width = roi_img.shape[:2]
+        w = roi_coords[1] - roi_coords[0]
+        h = roi_coords[3] - roi_coords[2]
+
+        scale_x = w / roi_width
+        scale_y = h / roi_height
+
+        origin_x = roi_coords[0]
+        origin_y = roi_coords[2]
+
+        keypoints_in_resized_rgb = np.stack([
+            keypoints_roi[:, 0] * scale_x + origin_x,
+            keypoints_roi[:, 1] * scale_y + origin_y
+        ], axis=1)
+
+        # Step 2: remap from resized RGB (640×480) to original image
+        H_orig, W_orig = image.shape[:2]
+        H_resized, W_resized = resized_rgb.shape[:2]
+
+        scale_x_back = W_orig / W_resized
+        scale_y_back = H_orig / H_resized
+
+        keypoints_img = np.stack([
+            keypoints_in_resized_rgb[:, 0] * scale_x_back,
+            keypoints_in_resized_rgb[:, 1] * scale_y_back
+        ], axis=1)
+
+        success, rvec, tvec = cv2.solvePnP(
+            objectPoints=keypoints_tag_frame,
+            imagePoints=keypoints_img,
+            cameraMatrix=camera_matrix,
+            distCoeffs=dist_coeffs,
+        )
+        if not success:
+            return None, None, seg_mask_img
+
+        pose_marker = rvectvec_to_xyzabc(rvec, tvec)
+        tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+        return tf_marker, keypoints_img, seg_mask_img
+
+
+    return predict_pose_from_image
+
 def main():
     import logging
     logging.basicConfig(level=logging.INFO)
@@ -293,6 +506,54 @@ def main():
     processor.set_marker_detector()
     processor.process_optitrack_data()
     processor.run_opencv_fiducial_marker_detection(save_results=True)
+
+    # --- Load LBCV predictor ---
+    from PIL import Image
+    from keypoints_model.utils import compute_2D_gridpoints  # adjust import if needed
+
+    # Set marker params
+    marker_image_path = "./synthetic_data_generation/assets/tags/tag36h11_0.png"
+    marker_image = Image.open(marker_image_path).convert("RGB")
+    marker_side_length = 0.0798  # meters
+    marker_num_squares = 10
+    keypoints_tag_frame = np.array(compute_2D_gridpoints(N=marker_num_squares, s=marker_side_length))
+
+    predict_pose_from_image = build_lbcv_predictor(
+        seg_model_path="/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/models/my_checkpoint_20250329.pth.tar",
+        kp_model_path="/home/rp/abhay_ws/marker_detection_failure_recovery/keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar",
+        camera_matrix=config["camera_intrinsic_matrix"],
+        dist_coeffs=config["camera_dist_coeffs"],
+        marker_image=marker_image,
+        marker_side_length=marker_side_length,
+        keypoints_tag_frame=keypoints_tag_frame,
+    )
+
+    processor.run_learning_based_detection(predict_pose_from_image, save_results=True, save_segmentation=True)
+
+    # --- Compare methods ---
+    def compare_pose_errors(datapoints, method1="CCV", method2="LBCV"):
+        position_errors = []
+        rotation_errors = []
+
+        for dp in datapoints:
+            tf1 = getattr(dp, f"{method1}_tf", None)
+            tf2 = getattr(dp, f"{method2}_tf", None)
+            if tf1 is None or tf2 is None:
+                continue
+
+            delta = np.linalg.inv(tf1) @ tf2
+            pos_err = np.linalg.norm(delta[:3, 3])
+            rot_err = np.arccos(np.clip((np.trace(delta[:3, :3]) - 1) / 2, -1.0, 1.0))
+
+            position_errors.append(pos_err)
+            rotation_errors.append(rot_err)
+
+        return np.array(position_errors), np.array(rotation_errors)
+
+    pos_errs, rot_errs = compare_pose_errors(processor.datapoints)
+    print(f"\n[Comparison: CCV vs LBCV]")
+    print(f"Mean position error: {np.mean(pos_errs):.3f} m")
+    print(f"Mean rotation error: {np.degrees(np.mean(rot_errs)):.2f} deg")
 
     logging.info("Data processing complete.")
 
