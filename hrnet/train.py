@@ -9,6 +9,14 @@ from pathlib import Path
 import os
 import wandb
 
+from hrnet.model import HRNetModel  # use updated model
+from hrnet.utils import keypoint_loss
+from keypoints_model.dataset import MarkersDataset  # updated class name
+
+# Replace HRNetSE3() → HRNetModel(num_keypoints=N)
+
+
+
 def train(
     image_dir: str,
     pose_dir: str,
@@ -43,8 +51,12 @@ def train(
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # Model, loss, optimizer
-    model = HRNetSE3().cuda()
+    # model = HRNetSE3().cuda()
+    NUM_KEYPOINTS = 2*(10+1)**2
+    model = HRNetModel(num_keypoints=NUM_KEYPOINTS).cuda()
+    loss_fn = keypoint_loss
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
 
     # ✅ Load pretrained weights if provided
     if load_model_path is not None:

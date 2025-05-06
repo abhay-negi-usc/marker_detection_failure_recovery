@@ -15,3 +15,6 @@ def lie_to_matrix(lie_vec):
     T[:3, :3] = rot
     T[:3, 3] = lie_vec[3:]
     return T
+
+def keypoint_loss(pred, target):
+    return torch.mean((pred - target) ** 2)  # MSE over (x, y) pairs
