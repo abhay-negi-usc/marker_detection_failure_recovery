@@ -1,28 +1,24 @@
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from torch import nn
 from torchvision import transforms
-from .model import HRNetSE3
-from .dataset import TagPoseDataset
-from .utils import se3_loss
 from pathlib import Path
 import os
 import wandb
 
-# -------- IMPORTS --------
 from hrnet.model import HRNetModel  # updated HRNet backbone
 from hrnet.utils import heatmap_loss
 from keypoints_model.dataset import MarkersDataset  # your keypoint dataset
 
-# -------- TRAIN FUNCTION --------
 def train(
-    image_dir: str,
-    pose_dir: str,
+    train_image_dir: str,
+    train_pose_dir: str,
+    val_image_dir: str,
+    val_pose_dir: str,
     batch_size: int = 16,
     num_epochs: int = 50,
     learning_rate: float = 1e-4,
     save_dir: str = "checkpoints",
-    val_split: float = 0.2,
     load_model_path: str = None  
 ):
     wandb.init(
@@ -32,23 +28,23 @@ def train(
             "batch_size": batch_size,
             "epochs": num_epochs,
             "learning_rate": learning_rate,
-            "image_dir": image_dir,
-            "pose_dir": pose_dir,
+            "train_image_dir": train_image_dir,
+            "train_pose_dir": train_pose_dir,
+            "val_image_dir": val_image_dir,
+            "val_pose_dir": val_pose_dir,
             "load_model_path": load_model_path
         }
     )
 
-    # -------- DATASET --------
-    full_dataset = MarkersDataset(image_dir, pose_dir, heatmap_size=64)
-    val_size = int(val_split * len(full_dataset))
-    train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    # -------- DATASETS --------
+    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=64)
+    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=64)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # -------- MODEL + LOSS --------
-    NUM_KEYPOINTS = full_dataset[0][1].shape[0]  # K from (K, H, W)
+    NUM_KEYPOINTS = train_dataset[0][1].shape[0]  # K from (K, H, W)
     model = HRNetModel(num_keypoints=NUM_KEYPOINTS).cuda()
     loss_fn = heatmap_loss
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -66,9 +62,9 @@ def train(
         model.train()
         total_train_loss = 0
 
-        for imgs, heatmaps in train_loader:  # 🔁 changed
-            imgs, heatmaps = imgs.cuda(), heatmaps.cuda()  # [B, 3, H, W], [B, K, H, W]
-            preds = model(imgs)  # [B, K, H, W]
+        for imgs, heatmaps in train_loader:
+            imgs, heatmaps = imgs.cuda(), heatmaps.cuda()
+            preds = model(imgs)
             loss = loss_fn(preds, heatmaps)
 
             optimizer.zero_grad()
@@ -102,13 +98,15 @@ def train(
 
     wandb.finish()
 
-
 if __name__ == "__main__":
-    main_dir = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/output/sdg_markers_20250422-205424/"
+    main_dir = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/"
+
     train(
-        image_dir=f"{main_dir}/rgb",
-        pose_dir=f"{main_dir}/pose",
-        batch_size=256,
+        train_image_dir=f"{main_dir}/train/rgb",
+        train_pose_dir=f"{main_dir}/train/keypoints",
+        val_image_dir=f"{main_dir}/val/rgb",
+        val_pose_dir=f"{main_dir}/val/keypoints",
+        batch_size=8,
         num_epochs=1_000_000,
         learning_rate=1e-7,
         save_dir="./hrnet/checkpoints",

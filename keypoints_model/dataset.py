@@ -19,20 +19,25 @@ def load_image(filename):
     else:
         return Image.open(filename)
 
-from utils import generate_heatmap
+from hrnet.utils import generate_heatmap
 
 class MarkersDataset(Dataset):
     def __init__(self, image_dir, keypoints_dir, transform=None, heatmap_size=64):
         self.image_dir = image_dir
         self.keypoints_dir = keypoints_dir
         self.transform = transform or transforms.ToTensor()
-        self.images = os.listdir(image_dir)
+        self.images = sorted(os.listdir(image_dir))  # 👈 make sure this is deterministic
         self.heatmap_size = heatmap_size
+
+    def __len__(self):
+        return len(self.images)  # ✅ this is the missing method
+
 
     def __getitem__(self, index):
         img_path = os.path.join(self.image_dir, self.images[index])
         img_filename = os.path.basename(img_path)
-        keypoints_filename = img_filename.replace("_", "_keypoints_").replace(".png", ".json")
+        # keypoints_filename = img_filename.replace("_", "_keypoints_").replace(".png", ".json")
+        keypoints_filename = img_filename.replace("img", "keypoints").replace("_0.png", ".json")
         keypoints_path = os.path.join(self.keypoints_dir, keypoints_filename)
 
         image = Image.open(img_path).convert("RGB")
