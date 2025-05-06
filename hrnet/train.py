@@ -9,14 +9,12 @@ from pathlib import Path
 import os
 import wandb
 
-from hrnet.model import HRNetModel  # use updated model
-from hrnet.utils import keypoint_loss
-from keypoints_model.dataset import MarkersDataset  # updated class name
+# -------- IMPORTS --------
+from hrnet.model import HRNetModel  # updated HRNet backbone
+from hrnet.utils import heatmap_loss
+from keypoints_model.dataset import MarkersDataset  # your keypoint dataset
 
-# Replace HRNetSE3() → HRNetModel(num_keypoints=N)
-
-
-
+# -------- TRAIN FUNCTION --------
 def train(
     image_dir: str,
     pose_dir: str,
@@ -27,10 +25,9 @@ def train(
     val_split: float = 0.2,
     load_model_path: str = None  
 ):
-    # Init WandB
     wandb.init(
-        project="se3-pose-estimation",
-        name=f"hrnet_run_bs{batch_size}_lr{learning_rate}" if not load_model_path else f"resume_{Path(load_model_path).stem}",
+        project="keypoint-hrnet",
+        name=f"hrnet_keypoints_bs{batch_size}_lr{learning_rate}" if not load_model_path else f"resume_{Path(load_model_path).stem}",
         config={
             "batch_size": batch_size,
             "epochs": num_epochs,
@@ -41,8 +38,8 @@ def train(
         }
     )
 
-    # Dataset and DataLoader
-    full_dataset = TagPoseDataset(image_dir, pose_dir)
+    # -------- DATASET --------
+    full_dataset = MarkersDataset(image_dir, pose_dir, heatmap_size=64)
     val_size = int(val_split * len(full_dataset))
     train_size = len(full_dataset) - val_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
@@ -50,15 +47,13 @@ def train(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    # Model, loss, optimizer
-    # model = HRNetSE3().cuda()
-    NUM_KEYPOINTS = 2*(10+1)**2
+    # -------- MODEL + LOSS --------
+    NUM_KEYPOINTS = full_dataset[0][1].shape[0]  # K from (K, H, W)
     model = HRNetModel(num_keypoints=NUM_KEYPOINTS).cuda()
-    loss_fn = keypoint_loss
+    loss_fn = heatmap_loss
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-
-    # ✅ Load pretrained weights if provided
+    # -------- LOAD MODEL --------
     if load_model_path is not None:
         print(f"[INFO] Loading model from {load_model_path}")
         checkpoint = torch.load(load_model_path, map_location='cuda')
@@ -66,15 +61,15 @@ def train(
 
     os.makedirs(save_dir, exist_ok=True)
 
+    # -------- TRAINING LOOP --------
     for epoch in range(num_epochs):
         model.train()
         total_train_loss = 0
 
-        for imgs, poses in train_loader:
-            imgs, poses = imgs.cuda(), poses.cuda()
-            preds = model(imgs)
-
-            loss = se3_loss(preds, poses)
+        for imgs, heatmaps in train_loader:  # 🔁 changed
+            imgs, heatmaps = imgs.cuda(), heatmaps.cuda()  # [B, 3, H, W], [B, K, H, W]
+            preds = model(imgs)  # [B, K, H, W]
+            loss = loss_fn(preds, heatmaps)
 
             optimizer.zero_grad()
             loss.backward()
@@ -84,31 +79,29 @@ def train(
 
         avg_train_loss = total_train_loss / len(train_loader)
 
-        # Validation step
+        # -------- VALIDATION LOOP --------
         model.eval()
         total_val_loss = 0
         with torch.no_grad():
-            for imgs, poses in val_loader:
-                imgs, poses = imgs.cuda(), poses.cuda()
+            for imgs, heatmaps in val_loader:
+                imgs, heatmaps = imgs.cuda(), heatmaps.cuda()
                 preds = model(imgs)
-                loss = se3_loss(preds, poses)
+                loss = loss_fn(preds, heatmaps)
                 total_val_loss += loss.item()
 
         avg_val_loss = total_val_loss / len(val_loader)
 
         print(f"[Epoch {epoch+1:02d}] Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}")
-
-        # ✅ Log to WandB
         wandb.log({
             "epoch": epoch + 1,
             "train_loss": avg_train_loss,
             "val_loss": avg_val_loss
         })
 
-        # Save checkpoint
-        torch.save(model.state_dict(), Path(save_dir) / f"hrnet_pose_epoch{epoch+1:02d}.pth")
+        torch.save(model.state_dict(), Path(save_dir) / f"hrnet_keypoint_epoch{epoch+1:02d}.pth")
 
     wandb.finish()
+
 
 if __name__ == "__main__":
     main_dir = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/output/sdg_markers_20250422-205424/"
@@ -119,6 +112,5 @@ if __name__ == "__main__":
         num_epochs=1_000_000,
         learning_rate=1e-7,
         save_dir="./hrnet/checkpoints",
-        load_model_path= None, # ✅ or None
+        load_model_path=None
     )
-0
