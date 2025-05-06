@@ -75,9 +75,12 @@ class DatasetProcessor:
 
         max_frames = self.config.get("max_frames", None)
         if max_frames and len(self.realsense_frames_paths) > max_frames:
-            step = len(self.realsense_frames_paths) // max_frames
-            self.realsense_frames_paths = self.realsense_frames_paths[::step]
-            self.RLSN_time = self.RLSN_time[::step]
+            # FIXME: revert 
+            # step = len(self.realsense_frames_paths) // max_frames
+            # self.realsense_frames_paths = self.realsense_frames_paths[::step]
+            # self.RLSN_time = self.RLSN_time[::step]
+            self.realsense_frames_paths = self.realsense_frames_paths[:max_frames]
+            self.RLSN_time = self.RLSN_time[:max_frames]
 
     def _set_datapoints(self):
         self.datapoints = []
@@ -125,6 +128,9 @@ class DatasetProcessor:
         for dp in self.datapoints:
             idx = np.argmin(np.abs(optk_times - dp.time))
             dp.set_pose("OPTK", self.OPTK_tf_c_m[idx])
+            # get root directory of the optitrack csv file 
+            self.optk_frames_dir = os.path.join(f"./real_data_processing/raw_data/realsense/realsense_{self.config["trial_idx"]}_frames_OPTK")
+            dp.save_overlay("OPTK", square_length=self.marker_length, K=self.camera_matrix, output_dir=self.optk_frames_dir)
 
     def run_opencv_fiducial_marker_detection(self, save_results=False):
         import cv2
@@ -207,6 +213,7 @@ class DatasetProcessor:
             (output_dir / "keypoints_json").mkdir(exist_ok=True)
         if save_segmentation:
             (output_dir / "segmentation_masks").mkdir(parents=True, exist_ok=True)
+            (output_dir / "segmentation_masks_full").mkdir(parents=True, exist_ok=True)
 
         for idx, dp in enumerate(self.datapoints):
             image = dp.get_image()
@@ -216,11 +223,8 @@ class DatasetProcessor:
 
             # Run LBCV predictor (2- or 3-return format)
             result = predict_fn(image)
-            if isinstance(result, tuple) and len(result) == 3:
-                tf_marker, keypoints, segmentation_mask = result
-            else:
-                tf_marker, keypoints = result
-                segmentation_mask = None
+            if isinstance(result, tuple) and len(result) == 4:
+                tf_marker, keypoints, segmentation_mask, segmentation_mask_full = result
 
             tf_c_m_all.append(tf_marker)
 
@@ -238,6 +242,10 @@ class DatasetProcessor:
 
                 if save_segmentation:
                     seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
+                    blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
+                    blank_mask.save(str(seg_path))
+
+                    seg_path = output_dir / "segmentation_masks_full" / f"LBCV_seg_{idx:05d}.png"
                     blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
                     blank_mask.save(str(seg_path))
                 continue
@@ -269,6 +277,9 @@ class DatasetProcessor:
                 seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
                 segmentation_mask.convert("L").save(str(seg_path))
 
+                seg_path = output_dir / "segmentation_masks_full" / f"LBCV_seg_{idx:05d}.png"
+                segmentation_mask_full.convert("L").save(str(seg_path))
+
         self.LBCV_time = np.array(timestamps) - timestamps[0] if timestamps else None
         self.LBCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
         self.LBCV_tf_w_m = np.array(tf_w_m)
@@ -282,6 +293,7 @@ def build_lbcv_predictor(
     marker_image: 'PIL.Image.Image',
     marker_side_length: float,
     keypoints_tag_frame: np.ndarray,
+    method: str = "kp" # "seg" or "kp"
 ):
     import numpy as np
     import torch
@@ -305,12 +317,18 @@ def build_lbcv_predictor(
     load_kp_ckpt(torch.load(kp_model_path, map_location=DEVICE), kp_model)
     kp_model.eval()
 
+    # tf_W_Ccv = np.array([
+    #     [1, 0, 0, 0],
+    #     [0, -1, 0, 0],
+    #     [0, 0, -1, 0],
+    #     [0, 0, 0, 1]
+    # ])
     tf_W_Ccv = np.array([
-        [1, 0, 0, 0],
-        [0, -1, 0, 0],
-        [0, 0, -1, 0],
-        [0, 0, 0, 1]
-    ])
+        [-1,0,0,0],
+        [0,-1,0,0],
+        [0,0,1,0],
+        [0,0,0,1],
+    ]) # FIXME: don't know why the original tf_W_Ccv is not working 
 
     def compute_roi(seg, rgb):
 
@@ -372,62 +390,84 @@ def build_lbcv_predictor(
 
         seg_mask_img = transforms.ToPILImage()(seg_mask.squeeze(0))  # shape matches resized_rgb
 
-        # No tag detected
-        if np.array(seg_mask_img).max() == 0:
-            return None, None, seg_mask_img
-
-        # --- Compute ROI using resized RGB and seg ---
-        roi_img, roi_coords = compute_roi(seg_mask_img, resized_rgb)
-        if roi_img is None:
-            return None, None, seg_mask_img
-
-        # Keypoint transform (no resize)
-        kp_transform = A.Compose([ToTensorV2()])
-        roi_tensor = kp_transform(image=roi_img)["image"].unsqueeze(0).float().to(DEVICE)
+        seg_transform_full = A.Compose([
+            A.Normalize(max_pixel_value=1.0),
+            ToTensorV2()
+        ])
+        transformed_full = seg_transform_full(image=image)
+        img_tensor_full = transformed_full["image"].unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
-            keypoints_roi = kp_model(roi_tensor).cpu().numpy().reshape(-1, 2)
+            seg_mask_full = torch.sigmoid(seg_model(img_tensor_full))
+            seg_mask_full = (seg_mask_full > 0.5).float().cpu()
 
-        # Step 1: remap from ROI (128×128) to resized RGB (640×480)
-        roi_height, roi_width = roi_img.shape[:2]
-        w = roi_coords[1] - roi_coords[0]
-        h = roi_coords[3] - roi_coords[2]
+        seg_mask_img_full = transforms.ToPILImage()(seg_mask_full.squeeze(0))  # shape matches resized_rgb
 
-        scale_x = w / roi_width
-        scale_y = h / roi_height
+        # No tag detected
+        if np.array(seg_mask_img).max() == 0:
+            return None, None, seg_mask_img, seg_mask_img_full
 
-        origin_x = roi_coords[0]
-        origin_y = roi_coords[2]
+        # FIXME: hardcoding for now 
+        method = "kp"
 
-        keypoints_in_resized_rgb = np.stack([
-            keypoints_roi[:, 0] * scale_x + origin_x,
-            keypoints_roi[:, 1] * scale_y + origin_y
-        ], axis=1)
+        if method == "seg": 
+            # tf_marker = 
+            return tf_marker, None, seg_mask_img, seg_mask_img_full 
 
-        # Step 2: remap from resized RGB (640×480) to original image
-        H_orig, W_orig = image.shape[:2]
-        H_resized, W_resized = resized_rgb.shape[:2]
+        if method == "kp":
+            # --- Compute ROI using resized RGB and seg ---
+            roi_img, roi_coords = compute_roi(seg_mask_img, resized_rgb)
+            if roi_img is None:
+                return None, None, seg_mask_img, seg_mask_img_full
 
-        scale_x_back = W_orig / W_resized
-        scale_y_back = H_orig / H_resized
+            # Keypoint transform (no resize)
+            kp_transform = A.Compose([ToTensorV2()])
+            roi_tensor = kp_transform(image=roi_img)["image"].unsqueeze(0).float().to(DEVICE)
 
-        keypoints_img = np.stack([
-            keypoints_in_resized_rgb[:, 0] * scale_x_back,
-            keypoints_in_resized_rgb[:, 1] * scale_y_back
-        ], axis=1)
+            with torch.no_grad():
+                keypoints_roi = kp_model(roi_tensor).cpu().numpy().reshape(-1, 2)
 
-        success, rvec, tvec = cv2.solvePnP(
-            objectPoints=keypoints_tag_frame,
-            imagePoints=keypoints_img,
-            cameraMatrix=camera_matrix,
-            distCoeffs=dist_coeffs,
-        )
-        if not success:
-            return None, None, seg_mask_img
+            # Step 1: remap from ROI (128×128) to resized RGB (640×480)
+            roi_height, roi_width = roi_img.shape[:2]
+            w = roi_coords[1] - roi_coords[0]
+            h = roi_coords[3] - roi_coords[2]
 
-        pose_marker = rvectvec_to_xyzabc(rvec, tvec)
-        tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
-        return tf_marker, keypoints_img, seg_mask_img
+            scale_x = w / roi_width
+            scale_y = h / roi_height
+
+            origin_x = roi_coords[0]
+            origin_y = roi_coords[2]
+
+            keypoints_in_resized_rgb = np.stack([
+                keypoints_roi[:, 0] * scale_x + origin_x,
+                keypoints_roi[:, 1] * scale_y + origin_y
+            ], axis=1)
+
+            # Step 2: remap from resized RGB (640×480) to original image
+            H_orig, W_orig = image.shape[:2]
+            H_resized, W_resized = resized_rgb.shape[:2]
+
+            scale_x_back = W_orig / W_resized
+            scale_y_back = H_orig / H_resized
+
+            keypoints_img = np.stack([
+                keypoints_in_resized_rgb[:, 0] * scale_x_back,
+                keypoints_in_resized_rgb[:, 1] * scale_y_back
+            ], axis=1)
+
+            success, rvec, tvec = cv2.solvePnP(
+                objectPoints=keypoints_tag_frame,
+                imagePoints=keypoints_img,
+                cameraMatrix=camera_matrix,
+                distCoeffs=dist_coeffs,
+            )
+            if not success:
+                return None, None, seg_mask_img, seg_mask_img_full 
+            
+            pose_marker = rvectvec_to_xyzabc(rvec, tvec)
+            tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+
+            return tf_marker, keypoints_img, seg_mask_img, seg_mask_img_full 
 
 
     return predict_pose_from_image
@@ -437,7 +477,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # === Trial and Calibration Parameters ===
-    trial_idx = 5
+    trial_idx = 6
     calibration_name = "charuco_415"
 
     calibration_configs = {
@@ -455,29 +495,35 @@ def main():
     
     fx, fy, cx, cy, dist_coeffs = calibration_configs[calibration_name]
 
-    # === Extrinsic Transforms ===
-    tf_w_CS200 = np.array([
-        [1, 0, 0, -1.67e-3],
-        [0, -1, 0, 25.365e-3],
-        [0, 0, -1, 220.095e-3],
-        [0, 0, 0, 1]
-    ])
+    # # === Extrinsic Transforms ===
+    # tf_w_CS200 = np.array([
+    #     [1, 0, 0, -1.67e-3],
+    #     [0, -1, 0, 25.365e-3],
+    #     [0, 0, -1, 220.095e-3],
+    #     [0, 0, 0, 1]
+    # ])
 
-    tf_CS200_mount = np.array([
-        [0, 0, -1, 10.0e-3],
-        [0, -1, 0, 1.2e-3],
-        [-1, 0, 0, 110.0e-3],
-        [0, 0, 0, 1]
-    ])
+    # tf_CS200_mount = np.array([
+    #     [0, 0, -1, 10.0e-3],
+    #     [0, -1, 0, 1.2e-3],
+    #     [-1, 0, 0, 110.0e-3],
+    #     [0, 0, 0, 1]
+    # ])
 
-    tf_mount_camera = np.array([
-        [1, 0, 0, -35e-3],
-        [0, 1, 0, -11.5e-3],
-        [0, 0, 1, 9.8e-3],
-        [0, 0, 0, 1]
-    ])
+    # tf_mount_camera = np.array([
+    #     [1, 0, 0, -35e-3],
+    #     [0, 1, 0, -11.5e-3],
+    #     [0, 0, 1, 9.8e-3],
+    #     [0, 0, 0, 1]
+    # ])
 
-    tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera
+    # tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera
+    
+    tf_w_c = np.array([[-0.27116848 , 0.07892863 ,-0.95917653 , 0.11814422],
+                        [-0.51339413, -0.85478831,  0.07481102,  0.15727561],
+                        [-0.81413918,  0.51276536,  0.27232667, -0.15179611],
+                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
+                    ) 
 
     tf_trackmark_fidumark = np.array([
         [1, 0, 0, 0],
@@ -497,7 +543,7 @@ def main():
         ARUCO_DICT: cv2.aruco.DICT_APRILTAG_36h11,
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
-        T_OFFSET_OPTK_CCV: 1.9,
+        T_OFFSET_OPTK_CCV: 1.59, # increase if the CCV detection is too early
         MAX_FRAMES: 100
     }
 
@@ -520,7 +566,7 @@ def main():
 
     predict_pose_from_image = build_lbcv_predictor(
         seg_model_path="/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/models/my_checkpoint_20250329.pth.tar",
-        kp_model_path="/home/rp/abhay_ws/marker_detection_failure_recovery/keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar",
+        kp_model_path="/home/rp/abhay_ws/marker_detection_failure_recovery/keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar",
         camera_matrix=config["camera_intrinsic_matrix"],
         dist_coeffs=config["camera_dist_coeffs"],
         marker_image=marker_image,
@@ -556,6 +602,8 @@ def main():
     print(f"Mean rotation error: {np.degrees(np.mean(rot_errs)):.2f} deg")
 
     logging.info("Data processing complete.")
+
+    import pdb; pdb.set_trace( )
 
 if __name__ == "__main__":
     main()

@@ -7,6 +7,8 @@ from torch.optim import Adam
 import torch.nn.functional as F
 import math 
 import matplotlib.pyplot as plt
+from skopt import gp_minimize
+from skopt.space import Real
 
 def xyzabc_to_tf(xyzabc):
     t = xyzabc[:3]
@@ -134,7 +136,7 @@ def custom_overlap_loss(
     reproj_img: torch.Tensor,
     reproj_seg: torch.Tensor,
     sharpening: float = 1.0,
-    overlap_reward_weight: float = 10.0
+    overlap_reward_weight: float = 1000.0
 ) -> torch.Tensor:
     """
     Custom loss:
@@ -154,6 +156,16 @@ def custom_overlap_loss(
     if seg.ndim == 3:
         seg = seg.unsqueeze(1)
     seg_resized = F.interpolate(seg, size=(H_r, W_r), mode='nearest')
+
+    # check if max value is greater than 1
+    if seg_resized.max() > 1.001:
+        print("Segmentation max value greater than 1, normalizing...")
+        seg_resized = seg_resized / 255.0
+    if reproj_seg.max() > 1.001:
+        print("Reprojected segmentation max value greater than 1, normalizing...")
+        import pdb; pdb.set_trace()
+        reproj_seg = reproj_seg / 255.0
+        
 
     # Convert to grayscale
     gray_img = 0.2989 * img_resized[:, 0, :, :] + 0.5870 * img_resized[:, 1, :, :] + 0.1140 * img_resized[:, 2, :, :]
@@ -196,7 +208,6 @@ def marker_reprojection_differentiable(marker_image_np, marker_corners_2d, marke
     marker_tensor = marker_tensor.to(device)
 
     t = xyzabc[:3]
-    rot = R.from_euler("xyz", xyzabc[3:].detach().cpu().numpy(), degrees=True)
     R_mat = euler_to_rot_matrix(xyzabc[3:])
     rvec, _ = cv2.Rodrigues(R_mat.cpu().numpy())
     rvec = torch.from_numpy(rvec).squeeze().float().to(device)
@@ -257,7 +268,7 @@ class Processor():
         rgb_img = torch.from_numpy(cv2.imread(self.datapoints[0].rgb_path)).permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
 
         marker_seg = marker_image.copy() 
-        marker_seg[:, :, :] = 1 
+        marker_seg[:, :, :] = marker_seg.max() 
 
         for i in range(steps):
             optimizer.zero_grad()
@@ -278,6 +289,43 @@ class Processor():
 
 
         return pose.detach().cpu(), self.loss_history
+
+    def optimize_pose_bayesian(self, marker_image, marker_corners_2d, marker_corners_3d, seg_gt, camera_matrix, device, n_calls=40, pose_initial=None):
+        seg_tensor = torch.from_numpy(seg_gt).float().to(device).unsqueeze(0) / 255.0
+        rgb_img = torch.from_numpy(cv2.imread(self.datapoints[0].rgb_path)).permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
+        marker_seg = marker_image.copy()
+        marker_seg[:, :, :] = marker_seg.max()
+
+        def loss_fn(x):
+            pose_tensor = torch.tensor(x, dtype=torch.float32, device=device)
+            rendered = marker_reprojection_differentiable(marker_image, marker_corners_2d, marker_corners_3d, pose_tensor, camera_matrix)
+            rendered_seg = marker_reprojection_differentiable(marker_seg, marker_corners_2d, marker_corners_3d, pose_tensor, camera_matrix)
+            loss = custom_overlap_loss(rgb_img, seg_tensor, rendered, rendered_seg)
+            return loss.item()
+
+        if pose_initial is None:
+            raise ValueError("Initial pose must be provided to define centered search space.")
+
+        pose_initial_np = pose_initial.detach().cpu().numpy()
+        deltas = np.array([0.10, 0.10, 0.5, 10.0, 10.0, 10.0])  # Define perturbation bounds
+        space = [Real(pose_initial_np[i] - deltas[i], pose_initial_np[i] + deltas[i]) for i in range(6)]
+
+        result = gp_minimize(loss_fn, space, n_calls=n_calls, random_state=42)
+        best_pose = torch.tensor(result.x, dtype=torch.float32, device=device)
+        self.loss_history = result.func_vals.tolist()
+
+        return best_pose, self.loss_history
+    
+    def save_overlay(self, optimized_pose, marker_corners_2d, marker_corners_3d, camera_matrix, device):
+        with torch.no_grad():
+            rendered = marker_reprojection_differentiable(self.marker, marker_corners_2d, marker_corners_3d, optimized_pose.to(device), camera_matrix)
+        dp = self.datapoints[0]
+        rgb = cv2.resize(dp.get_rgb(), (rendered.shape[-1], rendered.shape[-2]))
+        rendered_np = (rendered.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        blended = cv2.addWeighted(rgb, 0.4, rendered_np, 0.6, 0)
+        os.makedirs("visualization", exist_ok=True)
+        cv2.imwrite("visualization/optimized_overlay.png", blended)
+        print("Saved overlay to visualization/optimized_overlay.png")
 
 
     def plot_loss_curve(self, loss_history):
@@ -339,9 +387,15 @@ def estimate_initial_pose_from_segmentation(seg_mask: np.ndarray,
         pose = np.concatenate([tvec.flatten(), rot_euler])
         pose_tensor = torch.tensor(pose, dtype=torch.float32, device=device)
 
+        marker_seg = marker_image.copy()
+        marker_seg[:, :, :] = marker_seg.max()
+
         rendered = marker_reprojection_differentiable(marker_image, marker_corners_2d, marker_corners_3d,
                                                        pose_tensor, camera_matrix, image_size=image_size)
-        loss = custom_overlap_loss(rgb_img, seg_tensor, rendered, rendered)
+        rendered_seg = marker_reprojection_differentiable(marker_seg, marker_corners_2d, marker_corners_3d, pose_tensor, camera_matrix)
+
+        
+        loss = custom_overlap_loss(rgb_img, seg_tensor, rendered, rendered_seg)
 
         if loss.item() < best_loss:
             best_loss = loss.item()
@@ -363,6 +417,58 @@ from torch.optim import Adam
 import torch.nn.functional as F
 import math 
 import matplotlib.pyplot as plt
+
+def _optimize_pose_gradient_free(self, marker_image, marker_corners_2d, marker_corners_3d, seg_gt, camera_matrix, pose_initial, device, steps=1000, perturb_eps=None, num_perturb=10, lr=1e-4):
+    pose = pose_initial.clone().detach().to(device)
+    self.loss_history = []
+
+    seg_tensor = torch.from_numpy(seg_gt).float().to(device).unsqueeze(0) / 255.0
+    rgb_img = torch.from_numpy(cv2.imread(self.datapoints[0].rgb_path)).permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
+    marker_seg = marker_image.copy()
+    marker_seg[:, :, :] = marker_seg.max()
+
+    for i in range(steps):
+        loss_curr = custom_overlap_loss(
+            rgb_img,
+            seg_tensor,
+            marker_reprojection_differentiable(marker_image, marker_corners_2d, marker_corners_3d, pose, camera_matrix),
+            marker_reprojection_differentiable(marker_seg, marker_corners_2d, marker_corners_3d, pose, camera_matrix)
+        )
+        grad_estimate = torch.zeros_like(pose)
+
+        for j in range(len(pose)):
+            grad_estimate_perturbs = []
+
+            for _ in range(num_perturb):
+                pose_perturbed = pose.clone()
+                
+                # Create perturbation only in the j-th dimension
+                delta = torch.zeros_like(pose)
+                delta[j] = torch.randn(1, device=pose.device) * perturb_eps[j]
+                
+                pose_perturbed += delta
+
+                loss_perturbed = custom_overlap_loss(
+                    rgb_img,
+                    seg_tensor,
+                    marker_reprojection_differentiable(marker_image, marker_corners_2d, marker_corners_3d, pose_perturbed, camera_matrix),
+                    marker_reprojection_differentiable(marker_seg, marker_corners_2d, marker_corners_3d, pose_perturbed, camera_matrix)
+                )
+
+                delta_loss = (loss_perturbed - loss_curr).item()
+                grad_estimate_perturbs.append(delta_loss / delta[j].item())
+
+            grad_estimate[j] = np.mean(grad_estimate_perturbs)
+
+        pose -= lr * grad_estimate  # update with estimated gradient
+
+        self.loss_history.append(loss_curr.item())
+        if i % 100 == 0:
+            print(f"[Gradient-Free] Iter {i}, Loss: {loss_curr.item():.6f}, Gradient: {grad_estimate.detach().cpu().numpy()}")
+
+    return pose.detach().cpu(), self.loss_history
+
+Processor._optimize_pose_gradient_free = _optimize_pose_gradient_free
 
 def main():
     p = Processor(
@@ -394,7 +500,6 @@ def main():
         [p.marker.shape[1], 0]
     ], dtype=np.float32)
 
-
     marker_length = 0.10  # meters
     marker_corners_3d = np.array([
         [0, 0, 0],
@@ -413,12 +518,19 @@ def main():
     pose_initial = (pose_initial.clone().detach() +
                 torch.tensor([0.0, -0.0, 0.0, 0.0, 0, 10], device=pose_initial.device)).requires_grad_()
 
-    optimized_pose, loss_history = p._optimize_pose_custom(p.marker, marker_corners_2d, marker_corners_3d, seg_gt, camera_matrix, pose_initial, device, lr=1e-4, steps=1_000)
+    use_gradient_free = True  
+    dim_ranges = np.array([0.10, 0.10, 1.0, 10.0, 10.0, 10.0])
+
+    if use_gradient_free:
+        optimized_pose, loss_history = p._optimize_pose_gradient_free(
+            p.marker, marker_corners_2d, marker_corners_3d, seg_gt, camera_matrix, pose_initial, device, steps=1000, perturb_eps=dim_ranges*1e-1, num_perturb=25, lr=1e-13)
+    else:
+        optimized_pose, loss_history = p._optimize_pose_custom(
+            p.marker, marker_corners_2d, marker_corners_3d, seg_gt, camera_matrix, pose_initial, device, lr=1e-4, steps=1000)
 
     print("Final pose:", optimized_pose.numpy())
     p.plot_loss_curve(loss_history)
 
-        # --- Overlay visualization ---
     with torch.no_grad():
         initial_rendered = marker_reprojection_differentiable(p.marker, marker_corners_2d, marker_corners_3d, pose_initial.to(device), camera_matrix)
         final_rendered = marker_reprojection_differentiable(p.marker, marker_corners_2d, marker_corners_3d, optimized_pose.to(device), camera_matrix)
@@ -435,8 +547,6 @@ def main():
     comparison = np.hstack([blended_initial, blended_final])
     cv2.imwrite("comparison_overlay.png", comparison)
     print("Saved initial and final overlay comparison to comparison_overlay.png")
-
-
 
 if __name__ == "__main__":
     main()

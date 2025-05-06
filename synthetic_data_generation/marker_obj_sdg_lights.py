@@ -35,18 +35,17 @@ timestr = time.strftime("%Y%m%d-%H%M%S")
 print(os.getcwd())
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     OUT_DIR = os.path.join(os.getcwd(), "output", "sdg_markers_" + timestr)
-    # dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
-    # dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
+    dir_textures = "/home/anegi/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag" 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     # dir_backgrounds = "/media/anegi/easystore/abhay_ws/marker_detection_failure_recovery/background_images" 
     dir_backgrounds = "/home/anegi/Downloads/test2017" 
 else: # CAM machine 
     OUT_DIR = os.path.join("/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/", "output", "sdg_markers_" + timestr)
-    # dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag"
+    dir_textures = "/home/rp/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/tags/sdg_tag"
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
 
-dir_textures = "./synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
+# dir_textures = "./synthetic_data_generation/assets/tags/aruco dictionary 6x6 png" 
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(OUT_DIR,"rgb"), exist_ok=True)
@@ -573,7 +572,7 @@ with rep.trigger.on_custom_event(event_name="randomize_marker_pose_cam_space"):
         )
         rep.modify.pose(
             # rotation=rep.distribution.uniform((-180,-180,-180), (180,180,180)), 
-            rotation=rep.distribution.uniform((-60,-60,-180), (60,60,180)), # REDUCED ANGULAR RANGE 
+            rotation=rep.distribution.uniform((-80,-80,-180), (80,80,180)), # REDUCED ANGULAR RANGE 
             # rotation=(0,0,0),   
             # position=(0,0,-0.5), 
         )
