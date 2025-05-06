@@ -1,3 +1,8 @@
+# FIXME: 
+# delete segmentation mask full output 
+# segmenation masks output has wrong channel permutation 
+
+
 import numpy as np
 import pandas as pd
 import cv2
@@ -9,6 +14,8 @@ import PIL
 from PIL import Image
 import json
 import cv2
+import matplotlib.pyplot as plt
+import seaborn as sns
 from keypoints_model.utils import overlay_points_on_image
 
 
@@ -26,6 +33,7 @@ MARKER_LENGTH = "marker_length"
 TF_TRACKMARK_FIDUMARK = "tf_trackmark_fidumark"
 T_OFFSET_OPTK_CCV = "t_offset_optk_ccv"
 MAX_FRAMES = "max_frames"
+OUT_DIR = "out_dir" 
 
 class DatasetProcessor:
     def __init__(self, config: dict):
@@ -34,6 +42,8 @@ class DatasetProcessor:
         self._load_optitrack_data()
         self._load_realsense_data()
         self._set_datapoints()
+        self.out_dir = self.config[OUT_DIR] 
+        os.makedirs(self.out_dir, exist_ok=True)
 
     def _load_parameters(self):
         self.optitrack_csv_file = self.config["optitrack_csv_file"]
@@ -87,6 +97,8 @@ class DatasetProcessor:
         for idx, frame_path in enumerate(self.realsense_frames_paths):
             dp = DataPoint(frame_path)
             dp.set_time(self.RLSN_time[idx])
+            dp.set_camera_matrix(self.camera_matrix)
+            dp.set_marker_length(self.marker_length)
             self.datapoints.append(dp)
 
     def set_marker_detector(self):
@@ -140,6 +152,7 @@ class DatasetProcessor:
         tf_c_m_all = []
         tf_w_m, tf_mo_mi, timestamps = [], [], []
         tf_mo_w = None
+        detected = [] 
 
         output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_CCV'))
         if save_results:
@@ -180,6 +193,7 @@ class DatasetProcessor:
                 tf_c_m_all.append(None)
 
             timestamps.append(self.RLSN_time[idx])
+            detected.append(pose_detected)
 
             if save_results:
                 if pose_detected:
@@ -191,6 +205,7 @@ class DatasetProcessor:
         self.CCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
         self.CCV_tf_w_m = np.array(tf_w_m)
         self.CCV_tf_mo_mi = np.array(tf_mo_mi)
+        self.CCV_detected = detected 
 
         for idx, dp in enumerate(self.datapoints):
             dp.set_pose("CCV", tf_c_m_all[idx] if idx < len(tf_c_m_all) else None)
@@ -205,6 +220,7 @@ class DatasetProcessor:
         tf_c_m_all = []
         tf_w_m, tf_mo_mi, timestamps = [], [], []
         tf_mo_w = None
+        detected = [] 
 
         output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_LBCV'))
         if save_results:
@@ -229,6 +245,7 @@ class DatasetProcessor:
             tf_c_m_all.append(tf_marker)
 
             if tf_marker is None:
+                detected.append(False) 
                 # Save fallback results
                 if save_results:
                     # Raw image
@@ -249,6 +266,8 @@ class DatasetProcessor:
                     blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
                     blank_mask.save(str(seg_path))
                 continue
+            else: 
+                detected.append(True) 
 
             tf_w_m_i = self.tf_w_c @ tf_marker
             tf_w_m.append(tf_w_m_i)
@@ -284,6 +303,173 @@ class DatasetProcessor:
         self.LBCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
         self.LBCV_tf_w_m = np.array(tf_w_m)
         self.LBCV_tf_mo_mi = np.array(tf_mo_mi)
+        self.LBCV_detected = detected 
+
+    def compare_detection(self, num_bins=10): 
+        # compute the fraction of marker detects for each method 
+        ccv_detects = np.sum(self.CCV_detected) / len(self.datapoints)
+        lbcv_detects = np.sum(self.LBCV_detected) / len(self.datapoints) 
+
+        # save a bar chart 
+        sns.set_theme(style="whitegrid")
+        methods = ["CCV", "LBCV"]
+        detection_rates = [ccv_detects, lbcv_detects]
+        plt.figure(figsize=(8, 6))
+        sns.barplot(x=methods, y=detection_rates)
+        plt.title("Detection Rates")
+        plt.ylabel("Detection Rate")
+        plt.ylim(0, 1)
+        plt.savefig(os.path.join(self.out_dir, "detection_rates.png"))
+        plt.close()
+        logger.info(f"[Detection Rates] CCV: {ccv_detects:.2f}, LBCV: {lbcv_detects:.2f}") 
+
+        # plot detection rate vs marker brightness 
+        brightness = np.array([dp.get_marker_brightness() for dp in self.datapoints])
+        bin_edges = np.linspace(brightness.min(), brightness.max(), num_bins + 1)
+
+        # Prepare counters
+        ccv_detections = np.zeros(num_bins)
+        lbcv_detections = np.zeros(num_bins)
+        total_counts = np.zeros(num_bins)
+
+        # Count detections and totals per brightness bin
+        for dp in self.datapoints:
+            b = dp.marker_brightness
+            bin_idx = np.searchsorted(bin_edges, b, side='right') - 1
+            bin_idx = min(max(bin_idx, 0), num_bins - 1)
+
+            total_counts[bin_idx] += 1
+            if hasattr(dp, 'CCV_tf') and dp.CCV_tf is not None:
+                ccv_detections[bin_idx] += 1
+            if hasattr(dp, 'LBCV_tf') and dp.LBCV_tf is not None:
+                lbcv_detections[bin_idx] += 1
+
+        # Avoid divide-by-zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ccv_rates = np.where(total_counts > 0, ccv_detections / total_counts, 0)
+            lbcv_rates = np.where(total_counts > 0, lbcv_detections / total_counts, 0)
+
+        # Midpoints of bins for plotting
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        plt.figure()
+        plt.plot(bin_centers, ccv_rates, label="CCV Detection Rate", marker='o')
+        plt.plot(bin_centers, lbcv_rates, label="LBCV Detection Rate", marker='x')
+        plt.xlabel("Marker Brightness")
+        plt.ylabel("Detection Rate")
+        plt.title("Detection Rate vs Marker Brightness")
+        plt.ylim(0, 1.05)
+        plt.grid(True)
+        plt.legend()
+        # plt.show()
+        plt.savefig(os.path.join(self.out_dir, "marker_brightness_detection_rate.png")) 
+        plt.close()
+
+        # plot detection rate vs marker area 
+        areas = np.array([dp.get_marker_area() for dp in self.datapoints])
+        bin_edges = np.linspace(areas.min(), areas.max(), num_bins + 1)
+        # Prepare counters
+        ccv_detections = np.zeros(num_bins)
+        lbcv_detections = np.zeros(num_bins)
+        total_counts = np.zeros(num_bins)
+        # Count detections and totals per brightness bin
+        for dp in self.datapoints:  
+            a = dp.marker_area
+            bin_idx = np.searchsorted(bin_edges, a, side='right') - 1
+            bin_idx = min(max(bin_idx, 0), num_bins - 1)
+
+            total_counts[bin_idx] += 1
+            if hasattr(dp, 'CCV_tf') and dp.CCV_tf is not None:
+                ccv_detections[bin_idx] += 1
+            if hasattr(dp, 'LBCV_tf') and dp.LBCV_tf is not None:
+                lbcv_detections[bin_idx] += 1
+        # Avoid divide-by-zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ccv_rates = np.where(total_counts > 0, ccv_detections / total_counts, 0)
+            lbcv_rates = np.where(total_counts > 0, lbcv_detections / total_counts, 0)
+        # Midpoints of bins for plotting
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        plt.figure()
+        plt.plot(bin_centers, ccv_rates, label="CCV Detection Rate", marker='o')
+        plt.plot(bin_centers, lbcv_rates, label="LBCV Detection Rate", marker='x')
+        plt.xlabel("Marker Area")
+        plt.ylabel("Detection Rate")
+        plt.title("Detection Rate vs Marker Area")
+        plt.ylim(0, 1.05)
+        plt.grid(True)
+        plt.legend()
+        # plt.show()
+        plt.savefig(os.path.join(self.out_dir, "marker_area_detection_rate.png")) 
+
+    def compare_pose_estimation(self): 
+        # for each datapoint, for each method, compute the error in position and orientation
+        CCV_translation_errors = [] 
+        CCV_rotation_errors = [] 
+        LBCV_translation_errors = [] 
+        LBCV_rotation_errors = [] 
+        
+        for dp in self.datapoints:
+            CCV_error, LBCV_error  = dp.compute_errors()  
+            if CCV_error is not None:
+                CCV_translation_errors.append(CCV_error["translation"])
+                CCV_rotation_errors.append(CCV_error["rotation"])
+            else:
+                CCV_translation_errors.append(None)
+                CCV_rotation_errors.append(None)
+            if LBCV_error is not None:
+                LBCV_translation_errors.append(LBCV_error["translation"])
+                LBCV_rotation_errors.append(LBCV_error["rotation"])
+            else:
+                LBCV_translation_errors.append(None)
+                LBCV_rotation_errors.append(None)
+
+        brightness = np.array([dp.get_marker_brightness() for dp in self.datapoints])
+        area = np.array([dp.get_marker_area() for dp in self.datapoints])
+        
+        # plot translation error vs marker brightness 
+        plt.figure()
+        plt.scatter(brightness, CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
+        plt.scatter(brightness, LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
+        plt.xlabel("Marker Brightness")
+        plt.ylabel("Translation Error (m)")
+        plt.title("Translation Error vs Marker Brightness")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.out_dir, "translation_error_vs_brightness.png"))
+
+        # plot translation error vs marker area
+        plt.figure()
+        plt.scatter(area, CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
+        plt.scatter(area, LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
+        plt.xlabel("Marker Area")
+        plt.ylabel("Translation Error (m)")
+        plt.title("Translation Error vs Marker Area")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.out_dir, "translation_error_vs_area.png"))
+
+        # plot rotation error vs marker brightness
+        plt.figure()
+        plt.scatter(brightness, CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
+        plt.scatter(brightness, LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
+        plt.xlabel("Marker Brightness")
+        plt.ylabel("Rotation Error (degrees)")
+        plt.title("Rotation Error vs Marker Brightness")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.out_dir, "rotation_error_vs_brightness.png"))
+
+        # plot rotation error vs marker area
+        plt.figure()
+        plt.scatter(area, CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
+        plt.scatter(area, LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
+        plt.xlabel("Marker Area")
+        plt.ylabel("Rotation Error (degrees)")
+        plt.title("Rotation Error vs Marker Area")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.out_dir, "rotation_error_vs_area.png"))
+
 
 def build_lbcv_predictor(
     seg_model_path: str,
@@ -329,6 +515,7 @@ def build_lbcv_predictor(
         [0,0,1,0],
         [0,0,0,1],
     ]) # FIXME: don't know why the original tf_W_Ccv is not working 
+    # tf_W_Ccv = np.eye(4)
 
     def compute_roi(seg, rgb):
 
@@ -517,20 +704,45 @@ def main():
     #     [0, 0, 0, 1]
     # ])
 
-    # tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera
+    # tf_camera_camera = np.array([
+    #     [-1,0,0,0],
+    #     [0,-1,0,0],
+    #     [0,0,1,0],
+    #     [0,0,0,1]
+    # ]) 
+
+    # tf_w_c = tf_w_CS200 @ tf_CS200_mount @ tf_mount_camera @ tf_camera_camera 
+
+    # delta = np.array([[ 0.99940154,  0.00513568,  0.03420804, -0.06748126],
+    #    [-0.00538714,  0.99995911,  0.00726272,  0.01338278],
+    #    [-0.03416934, -0.00744266,  0.99938834,  0.01271901],
+    #    [ 0.        ,  0.        ,  0.        ,  1.        ]]) 
     
-    tf_w_c = np.array([[-0.27116848 , 0.07892863 ,-0.95917653 , 0.11814422],
-                        [-0.51339413, -0.85478831,  0.07481102,  0.15727561],
-                        [-0.81413918,  0.51276536,  0.27232667, -0.15179611],
-                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
-                    ) 
+    tf_w_c = np.array([
+        [ 2.75948359e-02,  5.52790892e-04, -9.99538260e-01, -4.83132852e-04],
+        [ 3.38597313e-03, -9.99963612e-01, -4.62774725e-04,  2.35655819e-02],
+        [-9.99558574e-01, -3.35315861e-03, -2.75932114e-02,  1.59464760e-01],
+        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
+    ])  
+
+    # tf_w_c = np.array([
+    #     [-0.27116848,  0.07892863, -0.95917653,  0.11814422],
+    #     [-0.51339413, -0.85478831,  0.07481102,  0.15727561],
+    #     [-0.81413918,  0.51276536,  0.27232667, -0.15179611],
+    #     [ 0.        ,  0.        ,  0.        ,  1.        ]
+    # ])  
+
+    delta = np.array([[ 0.9984765 ,  0.00725654,  0.05533876,  0.00688403],
+       [-0.00747035,  0.99998515,  0.00279132, -0.00463532],
+       [-0.05531373, -0.00320403,  0.99851338,  0.00410505],
+       [ 0.        ,  0.        ,  0.        ,  1.        ]]) 
 
     tf_trackmark_fidumark = np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, -20.46e-3],
-        [0, 0, 0, 1]
-    ])
+        [-1,0,0,0],
+        [0,1,0,0],
+        [0,0,-1,0],
+        [0,0,0,1]
+    ]) @ np.linalg.inv(delta) 
 
     # === Config ===
     config = {
@@ -543,8 +755,9 @@ def main():
         ARUCO_DICT: cv2.aruco.DICT_APRILTAG_36h11,
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
-        T_OFFSET_OPTK_CCV: 1.59, # increase if the CCV detection is too early
-        MAX_FRAMES: 100
+        T_OFFSET_OPTK_CCV: 1.15, # increase if the CCV detection is too early
+        MAX_FRAMES: 1000,
+        OUT_DIR: f"./real_data_processing/results",
     }
 
     # === Run Processing ===
@@ -574,10 +787,12 @@ def main():
         keypoints_tag_frame=keypoints_tag_frame,
     )
 
-    processor.run_learning_based_detection(predict_pose_from_image, save_results=True, save_segmentation=True)
+    processor.run_learning_based_detection(predict_pose_from_image, save_results=False, save_segmentation=False)
+    processor.compare_detection(num_bins=10)
+    processor.compare_pose_estimation()
 
     # --- Compare methods ---
-    def compare_pose_errors(datapoints, method1="CCV", method2="LBCV"):
+    def compare_pose_errors(datapoints, method1="LBCV", method2="OPTK"):
         position_errors = []
         rotation_errors = []
 

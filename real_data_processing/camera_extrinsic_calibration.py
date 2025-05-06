@@ -24,7 +24,7 @@ tf_M_M = np.array([
 ])
 
 tf_W_C_list = []
-for i in [6,7,8,9,10]: 
+for i in [11,12,13,14,15]: 
     image_filename = os.path.join(dir_data, f"m{i}.jpg") 
     image = np.array(cv2.imread(image_filename)) 
     tf_C_M, pose_C_M, corners = opencv_marker_pose(image, K, dist_coeffs, marker_size, show=False)   
@@ -35,7 +35,7 @@ for i in [6,7,8,9,10]:
     # tf_M0_Mi_c = np.linalg.inv(tf_C_M0) @ tf_C_M 
     # print(tf_M0_Mi_c)
 
-    pose_filename = os.path.join(dir_data, f"marker_cal_pose_00{i}.csv") 
+    pose_filename = os.path.join(dir_data, f"cal_00{i}.csv") 
     pose = pd.read_csv(pose_filename) 
     tf_W_M = np.eye(4) 
     tf_W_M[:3, 3] = pose[['X','Y','Z']].mean()  
@@ -66,11 +66,11 @@ tf_W_C_mean = np.mean(np.array(tf_W_C_list), axis=0)
 
 print(tf_W_C_mean)
 
-for i in [6,7,8,9,10]: 
+for i in [11,12,13,14,15]: 
     image_filename = os.path.join(dir_data, f"m{i}.jpg") 
     image = np.array(cv2.imread(image_filename)) 
 
-    pose_filename = os.path.join(dir_data, f"marker_cal_pose_00{i}.csv") 
+    pose_filename = os.path.join(dir_data, f"cal_00{i}.csv") 
     pose = pd.read_csv(pose_filename) 
     tf_W_M = np.eye(4) 
     tf_W_M[:3, 3] = pose[['X','Y','Z']].mean()  

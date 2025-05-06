@@ -44,6 +44,37 @@ def draw_overlay_square(image: np.ndarray, tf: np.ndarray, square_length: float,
 
     return overlay_img
 
+def get_marker_segmentation(image, tf, square_length, K):
+    """
+    Segments the marker from the image using the pose and camera intrinsics.
+    """
+    # Define 3D square corners in marker frame
+    square_corners_3d = np.array([
+        [square_length/2, square_length/2, 0],
+        [-square_length/2, square_length/2, 0],
+        [-square_length/2, -square_length/2, 0],
+        [square_length/2, -square_length/2, 0]
+    ])  # shape (4, 3)
+
+    # Extract rotation and translation
+    R_wc = tf[:3, :3]
+    t_wc = tf[:3, 3]
+
+    # Transform corners to camera frame
+    square_corners_cam = (R_wc @ square_corners_3d.T + t_wc.reshape(3, 1)).T  # shape (4, 3)
+
+    # Project to 2D using intrinsic matrix
+    square_corners_2d = (K @ square_corners_cam.T).T  # shape (4, 3)
+    square_corners_2d = square_corners_2d[:, :2] / square_corners_2d[:, 2:3]  # normalize
+
+    # Create a mask for the marker
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    pts = square_corners_2d.astype(int).reshape(-1, 1, 2)
+    cv2.fillPoly(mask, [pts], color=(255))
+
+    return mask
+
+
 class DataPoint:
     def __init__(self, image_path: Path):
         self.image_path = image_path
@@ -112,6 +143,63 @@ class DataPoint:
         output_path = os.path.join(output_dir, image_filename)
         cv2.imwrite(str(output_path), overlay_img)
         # logging.info(f"Saved overlay image to {output_path}")
+
+    def set_marker_length(self, marker_length: float):
+        self.marker_length = marker_length
+    
+    def set_camera_matrix(self, K: np.ndarray):
+        self.K = K
+
+    def get_marker_brightness(self): 
+        # use OPTK_tf to segment the marker pixels 
+        image = cv2.imread(str(self.image_path))
+        # if don't have attribute marker_pixels 
+        if not hasattr(self, "marker_pixels"):
+            seg = get_marker_segmentation(image, self.OPTK_tf, self.marker_length, self.K)
+            self.marker_pixels = image[seg == 255]
+        self.marker_brightness = np.mean(self.marker_pixels)
+        return self.marker_brightness  
+    
+    def get_marker_area(self): 
+        # use OPTK_tf to segment the marker pixels 
+        image = cv2.imread(str(self.image_path))
+        # if don't have attribute marker_pixels 
+        if not hasattr(self, "marker_pixels"):
+            seg = get_marker_segmentation(image, self.OPTK_tf, self.marker_length, self.K)
+            self.marker_pixels = image[seg == 255]
+        self.marker_area = np.sum(self.marker_pixels > 0)
+        return self.marker_area
+    
+    def compute_errors(self): 
+        for method in ["CCV", "LBCV"]: 
+            if not getattr(self, f"{method}_detected", False):
+                setattr(self, f"{method}_error", None) 
+                continue 
+            tf = getattr(self, f"{method}_tf") 
+            if tf is None:
+                setattr(self, f"{method}_error", None)
+                continue
+            tf_true = self.OPTK_tf 
+            error_tf = np.linalg.inv(tf_true) @ tf
+            setattr(self, f"{method}_error_tf", error_tf)
+            # compute the error in translation and rotation 
+            error_translation = np.linalg.norm(error_tf[:3, 3])
+            error_rotation = np.degrees(np.arccos((np.trace(error_tf[:3, :3]) - 1) / 2)) 
+            error_in_plane_translation = np.linalg.norm(error_tf[:2, 3]) 
+            error_out_plane_translation = error_tf[2, 3]
+            error_in_plane_rotation = np.degrees(np.arctan2(error_tf[1, 0], error_tf[0, 0]))
+            error_out_plane_rotation = np.degrees(np.arctan2(error_tf[2, 1], error_tf[2, 2]))
+            error = {
+                "translation": error_translation,
+                "rotation": error_rotation,
+                "in_plane_translation": error_in_plane_translation,
+                "out_plane_translation": error_out_plane_translation,
+                "in_plane_rotation": error_in_plane_rotation,
+                "out_plane_rotation": error_out_plane_rotation
+            }
+            setattr(self, f"{method}_error", error) 
+        return self.CCV_error, self.LBCV_error 
+
 
     def __repr__(self):
         return f"DataPoint(path={self.image_path.name}, time={self.time})"
