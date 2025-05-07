@@ -44,12 +44,13 @@ class TagPoseDataset(Dataset):
 
 
 class MarkersDataset(Dataset):
-    def __init__(self, image_dir, keypoints_dir, transform=None, heatmap_size=64):
+    def __init__(self, image_dir, keypoints_dir, transform=None, heatmap_size=64, indices=None):
         self.image_dir = image_dir
         self.keypoints_dir = keypoints_dir
         self.transform = transform or transforms.ToTensor()
         self.images = sorted(os.listdir(image_dir))  # 👈 make sure this is deterministic
         self.heatmap_size = heatmap_size
+        self.indices = indices
 
     def __len__(self):
         return len(self.images)  # ✅ this is the missing method
@@ -70,6 +71,8 @@ class MarkersDataset(Dataset):
         with open(keypoints_path, 'r') as f:
             keypoints_data = json.load(f)
         keypoints = np.stack([np.array(v) for v in keypoints_data.values()])  # shape (K, 2)
+        if self.indices is not None:
+            keypoints = keypoints[self.indices]
 
         # ✅ Normalize to [0, 1] by original image size
         keypoints[:, 0] /= w

@@ -6,7 +6,8 @@ from pathlib import Path
 import os
 import wandb
 
-from hrnet.model import HRNetModel, HRNetKeypoint  # updated HRNet backbone
+# from hrnet.model import HRNetModel, HRNetKeypoint, HRNetCorners  # updated HRNet backbone
+from hrnet.keypoint_hrnet import HRNetKeypoint, HRNetCorners
 from hrnet.utils import heatmap_loss
 from hrnet.dataset import MarkersDataset  # your keypoint dataset
 
@@ -37,15 +38,16 @@ def train(
     )
 
     # -------- DATASETS --------
-    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=None)
-    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=None)
+    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=None, indices=[0,10,110,120])
+    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=None, indices=[0,10,110,120])
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # -------- MODEL + LOSS --------
     NUM_KEYPOINTS = train_dataset[0][1].shape[0] // 2
-    model = HRNetKeypoint(num_keypoints=NUM_KEYPOINTS).cuda()
+    # model = HRNetKeypoint(num_keypoints=NUM_KEYPOINTS).cuda()
+    model = HRNetCorners().cuda()
     # loss_fn = heatmap_loss
     loss_fn = nn.MSELoss()  # Mean Squared Error for keypoint regression 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -58,7 +60,7 @@ def train(
 
     os.makedirs(save_dir, exist_ok=True)
 
-        # -------- TRAINING LOOP --------
+    # -------- TRAINING LOOP --------
     for epoch in range(num_epochs):
         model.train()
         total_train_loss = 0
@@ -98,7 +100,8 @@ def train(
 
         # Optionally save only every N epochs
         if (epoch + 1) % 1 == 0 or (epoch + 1) == num_epochs:
-            torch.save(model.state_dict(), Path(save_dir) / f"hrnet_keypoint_epoch{epoch+1:06d}.pth")
+            # torch.save(model.state_dict(), Path(save_dir) / f"hrnet_keypoint_epoch{epoch+1:06d}.pth")
+            torch.save(model.state_dict(), Path(save_dir) / f"hrnet_corners_epoch{epoch+1:06d}.pth")
 
     wandb.finish()
 
@@ -114,5 +117,5 @@ if __name__ == "__main__":
         num_epochs=1_000_000,
         learning_rate=1e-3,
         save_dir="./hrnet/checkpoints",
-        load_model_path="./hrnet/checkpoints/hrnet_keypoint_epoch000078.pth",
+        load_model_path=None,
     )
