@@ -6,9 +6,9 @@ from pathlib import Path
 import os
 import wandb
 
-from hrnet.model import HRNetModel  # updated HRNet backbone
+from hrnet.model import HRNetModel, HRNetKeypoint  # updated HRNet backbone
 from hrnet.utils import heatmap_loss
-from keypoints_model.dataset import MarkersDataset  # your keypoint dataset
+from hrnet.dataset import MarkersDataset  # your keypoint dataset
 
 def train(
     train_image_dir: str,
@@ -37,16 +37,17 @@ def train(
     )
 
     # -------- DATASETS --------
-    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=64)
-    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=64)
+    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=None)
+    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=None)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # -------- MODEL + LOSS --------
-    NUM_KEYPOINTS = train_dataset[0][1].shape[0]  # K from (K, H, W)
-    model = HRNetModel(num_keypoints=NUM_KEYPOINTS).cuda()
-    loss_fn = heatmap_loss
+    NUM_KEYPOINTS = train_dataset[0][1].shape[0] // 2
+    model = HRNetKeypoint(num_keypoints=NUM_KEYPOINTS).cuda()
+    # loss_fn = heatmap_loss
+    loss_fn = nn.MSELoss()  # Mean Squared Error for keypoint regression 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # -------- LOAD MODEL --------
@@ -62,16 +63,22 @@ def train(
         model.train()
         total_train_loss = 0
 
-        for imgs, heatmaps in train_loader:
-            imgs, heatmaps = imgs.cuda(), heatmaps.cuda()
+        # for imgs, heatmaps in train_loader:
+        #     imgs, heatmaps = imgs.cuda(), heatmaps.cuda()
+        #     preds = model(imgs)
+        #     loss = loss_fn(preds, heatmaps)
+
+        #     optimizer.zero_grad()
+        #     loss.backward()
+        #     optimizer.step()
+
+        #     total_train_loss += loss.item()
+
+        for imgs, keypoints in train_loader:
+            imgs, keypoints = imgs.cuda(), keypoints.cuda()
             preds = model(imgs)
-            loss = loss_fn(preds, heatmaps)
+            loss = loss_fn(preds, keypoints)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item()
 
         avg_train_loss = total_train_loss / len(train_loader)
 
@@ -106,7 +113,7 @@ if __name__ == "__main__":
         train_pose_dir=f"{main_dir}/train/keypoints",
         val_image_dir=f"{main_dir}/val/rgb",
         val_pose_dir=f"{main_dir}/val/keypoints",
-        batch_size=8,
+        batch_size=1,
         num_epochs=1_000_000,
         learning_rate=1e-7,
         save_dir="./hrnet/checkpoints",

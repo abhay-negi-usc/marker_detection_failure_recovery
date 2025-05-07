@@ -6,6 +6,7 @@ import json
 import numpy as np
 from pathlib import Path
 from scipy.spatial.transform import Rotation as R
+import os 
 
 class TagPoseDataset(Dataset):
     def __init__(self, image_dir, pose_dir, transform=None):
@@ -40,3 +41,43 @@ class TagPoseDataset(Dataset):
         pose_6d = np.concatenate([rvec, t_vec], axis=0).astype(np.float32)  # (6,)
 
         return self.transform(image), torch.tensor(pose_6d)
+
+
+class MarkersDataset(Dataset):
+    def __init__(self, image_dir, keypoints_dir, transform=None, heatmap_size=64):
+        self.image_dir = image_dir
+        self.keypoints_dir = keypoints_dir
+        self.transform = transform or transforms.ToTensor()
+        self.images = sorted(os.listdir(image_dir))  # 👈 make sure this is deterministic
+        self.heatmap_size = heatmap_size
+
+    def __len__(self):
+        return len(self.images)  # ✅ this is the missing method
+
+
+    def __getitem__(self, index):
+        img_path = os.path.join(self.image_dir, self.images[index])
+        img_filename = os.path.basename(img_path)
+        # keypoints_filename = img_filename.replace("_", "_keypoints_").replace(".png", ".json")
+        keypoints_filename = img_filename.replace("img", "keypoints").replace("_0.png", ".json")
+        keypoints_path = os.path.join(self.keypoints_dir, keypoints_filename)
+
+        image = Image.open(img_path).convert("RGB")
+        w, h = image.size
+        image_tensor = self.transform(image)  # This resizes to e.g. 256×256
+
+        # load raw keypoints
+        with open(keypoints_path, 'r') as f:
+            keypoints_data = json.load(f)
+        keypoints = np.stack([np.array(v) for v in keypoints_data.values()])  # shape (K, 2)
+
+        # ✅ Normalize to [0, 1] by original image size
+        keypoints[:, 0] /= w
+        keypoints[:, 1] /= h
+
+        # flatten to [2K]
+        keypoints = keypoints.flatten()
+        keypoints = torch.tensor(keypoints, dtype=torch.float32)
+
+        return image_tensor, keypoints
+
