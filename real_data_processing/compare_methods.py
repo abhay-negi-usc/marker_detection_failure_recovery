@@ -314,14 +314,21 @@ class DatasetProcessor:
         sns.set_theme(style="whitegrid")
         methods = ["CCV", "LBCV"]
         detection_rates = [ccv_detects, lbcv_detects]
+
         plt.figure(figsize=(8, 6))
-        sns.barplot(x=methods, y=detection_rates)
+        ax = sns.barplot(x=methods, y=detection_rates)
+
+        # Add labels above bars
+        for i, rate in enumerate(detection_rates):
+            plt.text(i, rate + 0.02, f"{rate:.2f}", ha='center', va='bottom', fontsize=12)
+
         plt.title("Detection Rates")
         plt.ylabel("Detection Rate")
-        plt.ylim(0, 1)
+        plt.ylim(0, 1.05)  # extend limit slightly to make space for label
         plt.savefig(os.path.join(self.out_dir, "detection_rates.png"))
         plt.close()
-        logger.info(f"[Detection Rates] CCV: {ccv_detects:.2f}, LBCV: {lbcv_detects:.2f}") 
+
+        logger.info(f"[Detection Rates] CCV: {ccv_detects:.2f}, LBCV: {lbcv_detects:.2f}")
 
         # plot detection rate vs marker brightness 
         brightness = np.array([dp.get_marker_brightness() for dp in self.datapoints])
@@ -403,33 +410,33 @@ class DatasetProcessor:
 
     def compare_pose_estimation(self): 
         # for each datapoint, for each method, compute the error in position and orientation
-        CCV_translation_errors = [] 
-        CCV_rotation_errors = [] 
-        LBCV_translation_errors = [] 
-        LBCV_rotation_errors = [] 
+        self.CCV_translation_errors = [] 
+        self.CCV_rotation_errors = [] 
+        self.LBCV_translation_errors = [] 
+        self.LBCV_rotation_errors = [] 
         
         for dp in self.datapoints:
             CCV_error, LBCV_error  = dp.compute_errors()  
             if CCV_error is not None:
-                CCV_translation_errors.append(CCV_error["translation"])
-                CCV_rotation_errors.append(CCV_error["rotation"])
+                self.CCV_translation_errors.append(CCV_error["translation"])
+                self.CCV_rotation_errors.append(CCV_error["rotation"])
             else:
-                CCV_translation_errors.append(None)
-                CCV_rotation_errors.append(None)
+                self.CCV_translation_errors.append(None)
+                self.CCV_rotation_errors.append(None)
             if LBCV_error is not None:
-                LBCV_translation_errors.append(LBCV_error["translation"])
-                LBCV_rotation_errors.append(LBCV_error["rotation"])
+                self.LBCV_translation_errors.append(LBCV_error["translation"])
+                self.LBCV_rotation_errors.append(LBCV_error["rotation"])
             else:
-                LBCV_translation_errors.append(None)
-                LBCV_rotation_errors.append(None)
+                self.LBCV_translation_errors.append(None)
+                self.LBCV_rotation_errors.append(None)
 
         brightness = np.array([dp.get_marker_brightness() for dp in self.datapoints])
         area = np.array([dp.get_marker_area() for dp in self.datapoints])
         
         # plot translation error vs marker brightness 
         plt.figure()
-        plt.scatter(brightness, CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
-        plt.scatter(brightness, LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
+        plt.scatter(brightness, self.CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
+        plt.scatter(brightness, self.LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
         plt.xlabel("Marker Brightness")
         plt.ylabel("Translation Error (m)")
         plt.title("Translation Error vs Marker Brightness")
@@ -439,8 +446,8 @@ class DatasetProcessor:
 
         # plot translation error vs marker area
         plt.figure()
-        plt.scatter(area, CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
-        plt.scatter(area, LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
+        plt.scatter(area, self.CCV_translation_errors, label="CCV Translation Error", alpha=0.5)
+        plt.scatter(area, self.LBCV_translation_errors, label="LBCV Translation Error", alpha=0.5)
         plt.xlabel("Marker Area")
         plt.ylabel("Translation Error (m)")
         plt.title("Translation Error vs Marker Area")
@@ -450,8 +457,8 @@ class DatasetProcessor:
 
         # plot rotation error vs marker brightness
         plt.figure()
-        plt.scatter(brightness, CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
-        plt.scatter(brightness, LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
+        plt.scatter(brightness, self.CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
+        plt.scatter(brightness, self.LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
         plt.xlabel("Marker Brightness")
         plt.ylabel("Rotation Error (degrees)")
         plt.title("Rotation Error vs Marker Brightness")
@@ -461,8 +468,8 @@ class DatasetProcessor:
 
         # plot rotation error vs marker area
         plt.figure()
-        plt.scatter(area, CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
-        plt.scatter(area, LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
+        plt.scatter(area, self.CCV_rotation_errors, label="CCV Rotation Error", alpha=0.5)
+        plt.scatter(area, self.LBCV_rotation_errors, label="LBCV Rotation Error", alpha=0.5)
         plt.xlabel("Marker Area")
         plt.ylabel("Rotation Error (degrees)")
         plt.title("Rotation Error vs Marker Area")
