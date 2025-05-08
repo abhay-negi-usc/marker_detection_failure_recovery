@@ -4,8 +4,8 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm 
 import torch.nn as nn 
 import torch.optim as optim 
-from model import RegressorMobileNetV3 
-from utils import (
+from keypoints_model.model import RegressorMobileNetV3 
+from keypoints_model.utils import (
     load_checkpoint, 
     save_checkpoint, 
     get_loaders, 
@@ -22,23 +22,23 @@ import matplotlib
 matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 
-LEARNING_RATE = 1e-7 * 4 
+LEARNING_RATE = 1e-3 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 1         
+BATCH_SIZE = 2**4           
 NUM_EPOCHS = 10000 
 num_epoch_dont_save = 0 
-NUM_WORKERS = 30 
+NUM_WORKERS = 24 
 # FIXME: Change to 128 x 128 
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 TEST_FREQUENCY = 10 
 PIN_MEMORY = True 
-LOAD_MODEL = True  
-MAIN_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250330-013534/" 
-TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb") 
-TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
-VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb")  
-VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "roi_keypoints")
+LOAD_MODEL = False   
+MAIN_DIR = "./segmentation_model/data/data_20250330-013534/" 
+TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
+TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
+VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
+VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
     
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
     loop = tqdm(loader) # progress bar 
@@ -122,8 +122,8 @@ def main():
 
     model = RegressorMobileNetV3().to(DEVICE) 
     
-    # loss_fn = nn.MSELoss()  
-    loss_fn = nn.L1Loss() 
+    loss_fn = nn.MSELoss()  
+    # loss_fn = nn.L1Loss() 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(

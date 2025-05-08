@@ -55,7 +55,7 @@ if __name__ == "__main__":
     eval_config = {
         "image_dir": "./output/data_20250330-013534/val/rgb",
         "keypoints_dir": "./output/data_20250330-013534/val/keypoints",
-        "model_path": "./hrnet/checkpoints/hrnet_keypoint_epoch000078.pth",
+        "model_path": "./hrnet/checkpoints/hrnet_keypoint_best.pth",
         "save_dir": "./eval_outputs/keypoints_vis",
         "num_keypoints": (10 + 1)**2,
     }

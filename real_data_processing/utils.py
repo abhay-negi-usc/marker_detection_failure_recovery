@@ -74,6 +74,21 @@ def get_marker_segmentation(image, tf, square_length, K):
 
     return mask
 
+def seg_IOU(seg1, seg2):
+    """
+    Computes the Intersection over Union (IoU) between two segmentation masks.
+    
+    Args:
+        seg1: First segmentation mask (binary).
+        seg2: Second segmentation mask (binary).
+
+    Returns:
+        IoU value.
+    """
+    intersection = np.logical_and(seg1, seg2)
+    union = np.logical_or(seg1, seg2)
+    iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
+    return iou
 
 class DataPoint:
     def __init__(self, image_path: Path):

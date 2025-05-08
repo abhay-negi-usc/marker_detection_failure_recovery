@@ -19,39 +19,38 @@ def load_image(filename):
     else:
         return Image.open(filename)
 
-from hrnet.utils import generate_heatmap
-
 class MarkersDataset(Dataset):
-    def __init__(self, image_dir, keypoints_dir, transform=None, heatmap_size=64):
+    def __init__(self, image_dir, keypoints_dir, transform=None):
         self.image_dir = image_dir
         self.keypoints_dir = keypoints_dir
-        self.transform = transform or transforms.ToTensor()
-        self.images = sorted(os.listdir(image_dir))  # 👈 make sure this is deterministic
-        self.heatmap_size = heatmap_size
+        self.transform = transform
+        self.images = os.listdir(image_dir)
 
     def __len__(self):
-        return len(self.images)  # ✅ this is the missing method
-
+        return len(self.images)
 
     def __getitem__(self, index):
         img_path = os.path.join(self.image_dir, self.images[index])
-        img_filename = os.path.basename(img_path)
-        # keypoints_filename = img_filename.replace("_", "_keypoints_").replace(".png", ".json")
-        keypoints_filename = img_filename.replace("img", "keypoints").replace("_0.png", ".json")
-        keypoints_path = os.path.join(self.keypoints_dir, keypoints_filename)
+        img_filename = os.path.basename(img_path) 
+        # replace all characters after last underscore with '.png' 
+        # keypoints_filename = img_filename.replace("_","_keypoints_").replace(".png",".json") 
+        keypoints_filename = img_filename.replace("_0.png", ".json").replace('img', 'keypoints')  
+        keypoints_path = os.path.join(
+            self.keypoints_dir, 
+            keypoints_filename
+        )
 
-        image = Image.open(img_path).convert("RGB")
-        w, h = image.size
-        image_tensor = self.transform(image)
-
+        # Load image and convert to numpy array
+        image = np.array(Image.open(img_path).convert("RGB"))
+        
+        # Load keypoints from json as np array
+        # TODO: preprocess json's as npy files  
         with open(keypoints_path, 'r') as f:
-            keypoints_data = json.load(f)
-        keypoints_list = [np.array(v) for v in keypoints_data.values()]
-        keypoints = np.stack(keypoints_list)  # shape (K, 2)
+            keypoints_data = json.load(f) 
+        keypoints_list = [] 
+        for key in keypoints_data.keys():
+            keypoints_list.append(np.array(keypoints_data[key])) 
+        keypoints = np.array(keypoints_list).flatten() 
 
-        heatmaps = generate_heatmap(keypoints, img_size=(w, h), heatmap_size=self.heatmap_size)
-        heatmaps = torch.from_numpy(heatmaps)
-
-        return image_tensor, heatmaps
-
+        return image, keypoints
 

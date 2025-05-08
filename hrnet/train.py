@@ -38,17 +38,19 @@ def train(
     )
 
     # -------- DATASETS --------
-    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=None, indices=[0,10,110,120])
-    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=None, indices=[0,10,110,120])
+    indices = None # [0, 10, 110, 120]  
+    train_dataset = MarkersDataset(train_image_dir, train_pose_dir, heatmap_size=None, indices=indices)
+    val_dataset = MarkersDataset(val_image_dir, val_pose_dir, heatmap_size=None, indices=indices)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # -------- MODEL + LOSS --------
     NUM_KEYPOINTS = train_dataset[0][1].shape[0] // 2
-    # model = HRNetKeypoint(num_keypoints=NUM_KEYPOINTS).cuda()
-    model = HRNetCorners().cuda()
-    # loss_fn = heatmap_loss
+
+    model = HRNetKeypoint(num_keypoints=NUM_KEYPOINTS).cuda()
+    # model = HRNetCorners().cuda()
+    
     loss_fn = nn.MSELoss()  # Mean Squared Error for keypoint regression 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -100,8 +102,8 @@ def train(
 
         # Optionally save only every N epochs
         if (epoch + 1) % 1 == 0 or (epoch + 1) == num_epochs:
-            # torch.save(model.state_dict(), Path(save_dir) / f"hrnet_keypoint_epoch{epoch+1:06d}.pth")
-            torch.save(model.state_dict(), Path(save_dir) / f"hrnet_corners_epoch{epoch+1:06d}.pth")
+            torch.save(model.state_dict(), Path(save_dir) / f"hrnet_keypoint_epoch{epoch+1:06d}.pth")
+            # torch.save(model.state_dict(), Path(save_dir) / f"hrnet_corners_epoch{epoch+1:06d}.pth")
 
     wandb.finish()
 
@@ -115,7 +117,8 @@ if __name__ == "__main__":
         val_pose_dir=f"{main_dir}/val/keypoints",
         batch_size=32,
         num_epochs=1_000_000,
-        learning_rate=1e-3,
+        learning_rate=1e-5,
         save_dir="./hrnet/checkpoints",
-        load_model_path=None,
+        load_model_path="./hrnet/checkpoints/hrnet_keypoint_epoch000018.pth",
+        # load_model_path="./hrnet/checkpoints/hrnet_corners_epoch000020.pth",
     )

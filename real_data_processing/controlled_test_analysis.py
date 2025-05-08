@@ -1,6 +1,11 @@
 import numpy as np 
 import os 
-from real_data_processing.utils import DataPoint, opencv_marker_pose
+from real_data_processing.utils import (
+    DataPoint, 
+    opencv_marker_pose, 
+    get_marker_segmentation, 
+    seg_IOU
+)
 import cv2 
 import torch
 from torchvision import transforms
@@ -59,6 +64,13 @@ class Processor():
         for idx, dp in enumerate(self.datapoints): 
             self.datapoints[idx].set_pose("OPTK", self.CCV_pose_mean) 
             marker_brightness.append(dp.get_marker_brightness()) 
+        self.marker_brightness_list = marker_brightness 
+
+    def get_ground_truth_mask(self): 
+        # get mask by projecting CCV_pose_mean 
+        # onto the image plane and creating a mask
+        # for the marker area
+        self.true_seg = get_marker_segmentation(self.datapoints[0].get_image(), self.CCV_pose_mean, self.marker_length, self.K) / 255 
 
     def load_seg_model(self, seg_model_path): 
         # Load the segmentation model from the specified path
@@ -74,6 +86,11 @@ class Processor():
         ])
 
         self.LBCV_detected_list = [] 
+        self.LBCV_IOU_list = [] 
+
+        # resize the true segmentation mask to the same size as the input image 
+        true_seg = cv2.resize(self.true_seg, seg_size)  # shape (H, W, 3) 
+
         for dp in self.datapoints: 
             image = np.array(cv2.imread(dp.image_path)) 
             resized_rgb = cv2.resize(image, seg_size)  # shape (H, W, 3)
@@ -84,7 +101,8 @@ class Processor():
                 seg_mask = torch.sigmoid(self.seg_model(img_tensor))
                 seg_mask = (seg_mask > seg_thresh).float().cpu()
 
-            seg_mask_img = np.array(transforms.ToPILImage()(seg_mask.squeeze(0)))/255 # shape matches resized_rgb
+            seg_mask_img = np.array(transforms.ToPILImage()(seg_mask.squeeze(0)))/255 # shape matches resized_rgb 
+            self.LBCV_IOU_list.append(seg_IOU(true_seg, seg_mask_img)) 
 
             if save_segmentation:
                 os.makedirs(os.path.join(self.out_dir, "LBCV_segmentation"), exist_ok=True)
@@ -104,7 +122,18 @@ class Processor():
         print(f"CCV detection rate: {CCV_detection_rate:.2f}")  
         print(f"LBCV detection rate: {LBCV_detection_rate:.2f}") 
 
-        # plot bar chart of detection rate by binning by marker brightness 
+        # plot LBCV IOU vs marker brightness coplotted with CCV detection rate vs marker brightness 
+        plt.figure(figsize=(10, 5))
+        plt.scatter(self.marker_brightness_list, self.LBCV_IOU_list, label="LBCV IOU", color="blue")
+        plt.scatter(self.marker_brightness_list, self.CCV_detected_list, label="CCV Detection", color="red")
+        plt.xlabel("Marker Brightness")
+        plt.ylabel("Detection Bool / IOU")
+        plt.title("Detection Rate Comparison")
+        plt.grid() 
+        plt.ylim(0, 1)
+        plt.legend()
+        plt.savefig(os.path.join(self.out_dir, "detection_rate_comparison.png"))
+        plt.close()
                 
         
 def main(): 
@@ -112,19 +141,20 @@ def main():
     fx, fy, cx, cy, dist_coeffs = (1363.85, 1365.40, 958.58, 552.25, np.array([0.1693, -0.4755, 0.0018, 0.0023, 0.4114]))
 
     config = {
-        "dir_path": "./real_data_processing/raw_data/dark_test_3",
+        "dir_path": "./real_data_processing/raw_data/controlled_tests/TEST",
         "camera_intrinsic_matrix": np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
         "camera_dist_coeffs": dist_coeffs,
         "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11,
         "marker_length": 0.0798,
-        "out_dir": f"./real_data_processing/raw_data/dark_test_3/results",
+        "out_dir": f"./real_data_processing/raw_data/controlled_tests/TEST/results",
     }
 
     processor = Processor(config)
     processor.load_seg_model("./segmentation_model/models/my_checkpoint_20250329.pth.tar")  # Load the segmentation model 
     processor.run_CCV_detection()
+    processor.get_ground_truth_mask()  
     processor.get_marker_brightness()
-    processor.run_LBCV_detection(seg_thresh=0.01, save_segmentation=True)  # Save segmentation results
+    processor.run_LBCV_detection(seg_thresh=0.001, save_segmentation=True)  # Save segmentation results
     processor.compare_detection_rates()
     # "./keypoints_model/models/my_checkpoint_keypoints_20250401.pth"
     print("Processing complete.")

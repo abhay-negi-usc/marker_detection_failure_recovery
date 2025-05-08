@@ -49,6 +49,6 @@ def split_video_to_frames(video_path, output_folder, get_timestamps=False):
         # Return the list of timestamps if requested
         return np.array(timestamps) 
     
-video_path = "./real_data_processing/raw_data/realsense/realsense_6.mp4"
-output_folder = "./real_data_processing/raw_data/realsense/realsense_6_frames"  # Folder to save the PNGs
+video_path = "./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4"
+output_folder = "./real_data_processing/raw_data/controlled_tests/dark_test_3"  # Folder to save the PNGs
 split_video_to_frames(video_path, output_folder, get_timestamps=False)

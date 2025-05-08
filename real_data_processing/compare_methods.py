@@ -34,6 +34,7 @@ TF_TRACKMARK_FIDUMARK = "tf_trackmark_fidumark"
 T_OFFSET_OPTK_CCV = "t_offset_optk_ccv"
 MAX_FRAMES = "max_frames"
 OUT_DIR = "out_dir" 
+POSE_EST_METHOD = "pose_est_method" 
 
 class DatasetProcessor:
     def __init__(self, config: dict):
@@ -241,6 +242,8 @@ class DatasetProcessor:
             result = predict_fn(image)
             if isinstance(result, tuple) and len(result) == 4:
                 tf_marker, keypoints, segmentation_mask, segmentation_mask_full = result
+            else: 
+                tf_marker = None 
 
             tf_c_m_all.append(tf_marker)
 
@@ -250,6 +253,7 @@ class DatasetProcessor:
                 if save_results:
                     # Raw image
                     overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
                     Image.fromarray(image).save(str(overlay_path))
 
                     # Empty keypoints
@@ -285,6 +289,7 @@ class DatasetProcessor:
             if save_results and keypoints is not None:
                 overlay = overlay_points_on_image(image.copy(), keypoints, radius=3)
                 overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
+                overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
                 Image.fromarray(overlay).save(str(overlay_path))
 
                 json_path = output_dir / "keypoints_json" / f"LBCV_frame_{idx:05d}.json"
@@ -486,7 +491,8 @@ def build_lbcv_predictor(
     marker_image: 'PIL.Image.Image',
     marker_side_length: float,
     keypoints_tag_frame: np.ndarray,
-    method: str = "kp" # "seg" or "kp"
+    method: str = "kp_hrnet", # "seg" or "kp_mobilenet" or "kp_hrnet" 
+    kp_hrnet_model_path: Optional[str] = None,
 ):
     import numpy as np
     import torch
@@ -506,9 +512,10 @@ def build_lbcv_predictor(
     load_seg_ckpt(torch.load(seg_model_path, map_location=DEVICE), seg_model)
     seg_model.eval()
 
-    kp_model = RegressorMobileNetV3().to(DEVICE)
-    load_kp_ckpt(torch.load(kp_model_path, map_location=DEVICE), kp_model)
-    kp_model.eval()
+    if method == "kp_mobilenet":
+        kp_model = RegressorMobileNetV3().to(DEVICE)
+        load_kp_ckpt(torch.load(kp_model_path, map_location=DEVICE), kp_model)
+        kp_model.eval()
 
     # tf_W_Ccv = np.array([
     #     [1, 0, 0, 0],
@@ -564,7 +571,10 @@ def build_lbcv_predictor(
 
         return roi_img, roi_coordinates
 
-    def predict_pose_from_image(image: np.ndarray):
+    def predict_pose_from_image(image: np.ndarray, method=method):
+        from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+
+        tf_marker = None
         seg_size = (640, 480)
 
         # Resize RGB image to match segmentation input
@@ -598,17 +608,13 @@ def build_lbcv_predictor(
         seg_mask_img_full = transforms.ToPILImage()(seg_mask_full.squeeze(0))  # shape matches resized_rgb
 
         # No tag detected
-        if np.array(seg_mask_img).max() == 0:
+        if np.array(seg_mask_img).max() == 0 and (method == "seg" or method == "kp_mobilenet"):
             return None, None, seg_mask_img, seg_mask_img_full
 
-        # FIXME: hardcoding for now 
-        method = "kp"
-
         if method == "seg": 
-            # tf_marker = 
             return tf_marker, None, seg_mask_img, seg_mask_img_full 
 
-        if method == "kp":
+        if method == "kp_mobilenet": 
             # --- Compute ROI using resized RGB and seg ---
             roi_img, roi_coords = compute_roi(seg_mask_img, resized_rgb)
             if roi_img is None:
@@ -663,6 +669,46 @@ def build_lbcv_predictor(
 
             return tf_marker, keypoints_img, seg_mask_img, seg_mask_img_full 
 
+        if method == "kp_hrnet":
+            from hrnet.model import HRNetKeypoint
+            from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+
+            tf_marker = None  
+
+            HRNET_NUM_KEYPOINTS = keypoints_tag_frame.shape[0]
+            hrnet_model = HRNetKeypoint(num_keypoints=HRNET_NUM_KEYPOINTS).to(DEVICE)
+            hrnet_model.load_state_dict(torch.load(kp_hrnet_model_path, map_location=DEVICE))
+            hrnet_model.eval()
+
+            # Prepare input
+            hrnet_transform = A.Compose([
+                A.Resize(256, 256),
+                A.Normalize(max_pixel_value=255.0),
+                ToTensorV2()
+            ])
+            transformed = hrnet_transform(image=image)
+            img_tensor = transformed["image"].unsqueeze(0).to(DEVICE)
+
+            with torch.no_grad():
+                pred_flat = hrnet_model(img_tensor)[0].cpu().numpy()  # shape: [2K]
+                keypoints_normalized = pred_flat.reshape(-1, 2)
+
+            H_img, W_img = image.shape[:2]
+            keypoints_img = keypoints_normalized.copy()
+            keypoints_img[:, 0] *= W_img
+            keypoints_img[:, 1] *= H_img
+
+            success, rvec, tvec = cv2.solvePnP(
+                objectPoints=keypoints_tag_frame,
+                imagePoints=keypoints_img,
+                cameraMatrix=camera_matrix,
+                distCoeffs=dist_coeffs,
+            )
+            if success:
+                pose_marker = rvectvec_to_xyzabc(rvec, tvec)
+                tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+
+            return tf_marker, keypoints_img, None, None
 
     return predict_pose_from_image
 
@@ -763,8 +809,9 @@ def main():
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
         T_OFFSET_OPTK_CCV: 1.15, # increase if the CCV detection is too early
-        MAX_FRAMES: 1000,
+        MAX_FRAMES: 28782,
         OUT_DIR: f"./real_data_processing/results",
+        POSE_EST_METHOD: "kp_mobilenet",  # "seg" or "kp_mobilenet" or "kp_hrnet" 
     }
 
     # === Run Processing ===
@@ -792,9 +839,11 @@ def main():
         marker_image=marker_image,
         marker_side_length=marker_side_length,
         keypoints_tag_frame=keypoints_tag_frame,
+        method=config["pose_est_method"],
+        kp_hrnet_model_path="./hrnet/checkpoints/hrnet_keypoint_best.pth",
     )
 
-    processor.run_learning_based_detection(predict_pose_from_image, save_results=False, save_segmentation=False)
+    processor.run_learning_based_detection(predict_pose_from_image, save_results=True, save_segmentation=True)
     processor.compare_detection(num_bins=10)
     processor.compare_pose_estimation()
 
