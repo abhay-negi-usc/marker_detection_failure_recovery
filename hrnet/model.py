@@ -10,12 +10,13 @@ class HRNetSE3(nn.Module):
     def forward(self, x):
         return self.backbone(x)
 
-from hrnet.keypoint_hrnet import HRNetKeypoint
+from hrnet.keypoint_hrnet import HRNetKeypoint, HRNetCorners
 
 class HRNetModel(nn.Module):
     def __init__(self, num_keypoints=8):
         super().__init__()
-        self.net = HRNetKeypoint(num_keypoints=num_keypoints)
+        # self.net = HRNetKeypoint(num_keypoints=num_keypoints)
+        self.net = HRNetCorners()
 
     def forward(self, x):
         return self.net(x)

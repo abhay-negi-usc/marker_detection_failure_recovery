@@ -18,3 +18,4 @@ test_data
 real_data_processing/raw_data 
 real_data_processing/results
 hrnet/hrnet 
+eval_outputs
