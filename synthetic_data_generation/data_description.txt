@@ -1,4 +1,22 @@
-sdg_markers_20250422-205424, cam, aruco tag 159 
-sdg_markers_20250423-190447, cam, aruco 6x6 dictionary
-sdg_markers_20250424-220238, cam, aruco 6x6 dictionary
-sdg_markers_20250424-220240, cam, aruco 6x6 dictionary
+sdg_markers_20250422-205424, cam, aruco tag 159, 16K 
+ 
+sdg_markers_20250423-190447, cam, aruco 6x6 dictionary, 8K 
+sdg_markers_20250423-191924, cam, aruco 6x6 dictionary, 100K  
+sdg_markers_20250424-220238, cam, aruco 6x6 dictionary, 15K  
+sdg_markers_20250424-220240, cam, aruco 6x6 dictionary, 15K 
+
+sdg_markers_20250423-191220, isaac, aruco 6x6 dictionary, 100K 
+sdg_markers_20250423-191357, isaac, aruco 6x6 dictionary, 100K 
+sdg_markers_20250423-191716, isaac, aruco 6x6 dictionary, 81K 
+sdg_markers_20250423-191924, isaac, aruco 6x6 dictionary, 100K 
+
+sdg_markers_20250323-032914, isaac, aruco 4x4 31, 10K 
+sdg_markers_20250323-033133, isaac, aruco 4x4 31, 2K 
+sdg_markers_20250324-181901, isaac, aruco 4x4 31, 6K 
+sdg_markers_20250324-183440, isaac, aruco 4x4 31, 41K 
+sdg_markers_20250326-143252, isaac, aruco 4x4 31, 17K 
+sdg_markers_20250327-153817, isaac, aruco 4x4 31, 2K 
+
+sdg_markers_20250401-123254, isaac, apriltag 36h11 0, 3K 
+sdg_markers_20250402-152243, isaac, apriltag 36h11 0, 63K 
+

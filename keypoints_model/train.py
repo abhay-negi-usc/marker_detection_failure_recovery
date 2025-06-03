@@ -24,7 +24,7 @@ matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 LEARNING_RATE = 1e-3 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 2**4           
+BATCH_SIZE = 1          
 NUM_EPOCHS = 10000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 24 
