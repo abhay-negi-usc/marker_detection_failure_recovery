@@ -20,7 +20,7 @@ class HRNetKeypoint(nn.Module):
             nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, num_keypoints * 2),
-            nn.Sigmoid()  # clamp predictions to [0, 1]
+            # nn.Sigmoid()  # clamp predictions to [0, 1]
         )
 
 

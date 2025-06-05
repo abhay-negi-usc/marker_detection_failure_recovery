@@ -108,17 +108,17 @@ def train(
     wandb.finish()
 
 if __name__ == "__main__":
-    main_dir = "./segmentation_model/data/data_20250330-013534/"
+    main_dir = "./segmentation_model/data/data_20250603-201339/"
 
     train(
         train_image_dir=f"{main_dir}/train/rgb",
         train_pose_dir=f"{main_dir}/train/keypoints",
         val_image_dir=f"{main_dir}/val/rgb",
         val_pose_dir=f"{main_dir}/val/keypoints",
-        batch_size=32,
+        batch_size=64,
         num_epochs=1_000_000,
-        learning_rate=1e-5,
+        learning_rate=1e-6,
         save_dir="./hrnet/checkpoints",
-        load_model_path="./hrnet/checkpoints/hrnet_keypoint_epoch000018.pth",
-        # load_model_path="./hrnet/checkpoints/hrnet_corners_epoch000020.pth",
+        # load_model_path=None,  # Uncomment to resume training
+        load_model_path="./hrnet/checkpoints/hrnet_keypoint_epoch000014.pth",
     )

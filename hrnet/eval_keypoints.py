@@ -31,12 +31,15 @@ def evaluate_model(
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
     for idx, (img_tensor, _) in enumerate(tqdm(dataloader)):
-        img_tensor = img_tensor.to(device)
+        img_tensor = img_tensor.permute(0, 3, 1, 2)  # [B, H, W, C] → [B, C, H, W]
+        img_tensor = img_tensor.float() / 255.0  # Convert to float32 normalized
+        img_tensor = img_tensor.to(device).float()  # Ensure float32
         pred_flat = model(img_tensor)[0].cpu()  # shape: [2K]
         keypoints = pred_flat.view(num_keypoints, 2)  # shape: [K, 2] with normalized coords in [0,1]
 
         # Get image dimensions
-        img_vis = (img_tensor[0].cpu() * 255).byte()
+        img_vis = (img_tensor[0].cpu() * 255).clamp(0, 255).byte()
+        # img_vis = (img_tensor[0].cpu() * 255).byte()
         C, H_img, W_img = img_vis.shape
 
         # ✅ Rescale from [0,1] to image coordinates
@@ -53,11 +56,14 @@ def evaluate_model(
 
 if __name__ == "__main__":
     eval_config = {
-        "image_dir": "./output/data_20250330-013534/val/rgb",
-        "keypoints_dir": "./output/data_20250330-013534/val/keypoints",
-        "model_path": "./hrnet/checkpoints/hrnet_keypoint_best.pth",
+        # "image_dir": "./segmentation_model/data/sdg_markers_20250330-013534_val/val/rgb",
+        # "keypoints_dir": "./segmentation_model/data/sdg_markers_20250330-013534_val/val/keypoints",
+        "image_dir": "./segmentation_model/data/data_20250603-201339/val/rgb",
+        "keypoints_dir": "./segmentation_model/data/data_20250603-201339/val/keypoints",
+        "model_path": "./hrnet/checkpoints/hrnet_keypoint_epoch000014.pth",
         "save_dir": "./eval_outputs/keypoints_vis",
-        "num_keypoints": (10 + 1)**2,
+        # "num_keypoints": (10 + 1)**2,
+        "num_keypoints": (6 + 1)**2,
     }
 
     evaluate_model(**eval_config)
