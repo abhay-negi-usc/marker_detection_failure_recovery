@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class LiteHRNet(nn.Module):
-    def __init__(self, num_keypoints):
+    def __init__(self, num_keypoints, dropout_p=0.2):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),
@@ -28,6 +27,7 @@ class LiteHRNet(nn.Module):
             nn.Flatten(),
             nn.Linear(128, 128),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_p),
             nn.Linear(128, num_keypoints * 2),
         )
 
@@ -37,3 +37,13 @@ class LiteHRNet(nn.Module):
         x = self.global_pool(x)
         x = self.head(x)
         return x
+
+class HRNetLiteKeypoint(nn.Module):
+    def __init__(self, num_keypoints, input_width, input_height, dropout_p=0.2):
+        super().__init__()
+        self.backbone = LiteHRNet(num_keypoints=num_keypoints, dropout_p=dropout_p)
+        self.input_width = input_width
+        self.input_height = input_height
+
+    def forward(self, x):
+        return self.backbone(x)

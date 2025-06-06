@@ -215,6 +215,18 @@ class DataPoint:
             setattr(self, f"{method}_error", error) 
         return self.CCV_error, self.LBCV_error 
 
+    def set_ccv_corners(self, corners: np.ndarray):
+        self.CCV_corners = corners
+
+    def get_ccv_corners(self) -> Optional[np.ndarray]:
+        return getattr(self, "CCV_corners", None)
+
+    def set_lbcv_keypoints(self, keypoints: np.ndarray):
+        self.LBCV_keypoints = keypoints
+
+    def get_lbcv_keypoints(self) -> Optional[np.ndarray]:
+        return getattr(self, "LBCV_keypoints", None)
+
 
     def __repr__(self):
         return f"DataPoint(path={self.image_path.name}, time={self.time})"
@@ -550,6 +562,19 @@ def opencv_marker_pose(
     
     return tf, xyzabc, corners 
 
+def sanitize_for_json(obj):
+    if isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    else:
+        return obj
 
 
 def main(): 

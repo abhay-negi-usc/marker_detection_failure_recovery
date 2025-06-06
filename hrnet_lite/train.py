@@ -8,18 +8,7 @@ import wandb
 from PIL import Image
 import json
 import numpy as np
-from hrnet_lite.model import LiteHRNet
-
-# ------------ MODEL ------------
-class HRNetLiteKeypoint(nn.Module):
-    def __init__(self, num_keypoints, input_width, input_height):
-        super().__init__()
-        self.backbone = LiteHRNet(num_keypoints=num_keypoints)
-        self.input_width = input_width
-        self.input_height = input_height
-
-    def forward(self, x):
-        return self.backbone(x)
+from hrnet_lite.model import HRNetLiteKeypoint
 
 # ------------ DATASET ------------
 class MarkersDataset(Dataset):
@@ -69,12 +58,11 @@ def train(
     train_image_dir, train_keypoint_dir,
     val_image_dir, val_keypoint_dir,
     batch_size=32, num_epochs=100,
-    learning_rate=1e-4, save_dir="checkpoints",
-    load_model_path=None,
-    input_width=256,
-    input_height=192
-):
-    wandb.init(project="lite-hrnet-keypoint")
+    learning_rate=1e-4, weight_decay=1e-4, dropout_p=0.2,
+    save_dir="checkpoints", load_model_path=None,
+    input_width=256, input_height=192
+):  
+    wandb.init(project="lite-hrnet-keypoint-normalized")
 
     train_dataset = MarkersDataset(train_image_dir, train_keypoint_dir, input_width, input_height)
     val_dataset = MarkersDataset(val_image_dir, val_keypoint_dir, input_width, input_height)
@@ -86,13 +74,13 @@ def train(
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     num_keypoints = train_dataset[0][1].shape[0] // 2
-    model = HRNetLiteKeypoint(num_keypoints, input_width, input_height).cuda()
+    model = HRNetLiteKeypoint(num_keypoints, input_width, input_height, dropout_p=dropout_p).cuda()
 
     if load_model_path:
         model.load_state_dict(torch.load(load_model_path))
 
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     os.makedirs(save_dir, exist_ok=True)
 
@@ -102,9 +90,7 @@ def train(
         for imgs, keypoints in train_loader:
             imgs, keypoints = imgs.cuda(), keypoints.cuda()
             preds = model(imgs)
-            loss = loss_fn(preds * input_width, keypoints * input_width)
-            loss_y = loss_fn(preds * input_height, keypoints * input_height)
-            loss = (loss + loss_y) / 2
+            loss = loss_fn(preds, keypoints)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -118,13 +104,11 @@ def train(
             for imgs, keypoints in val_loader:
                 imgs, keypoints = imgs.cuda(), keypoints.cuda()
                 preds = model(imgs)
-                loss = loss_fn(preds * input_width, keypoints * input_width)
-                loss_y = loss_fn(preds * input_height, keypoints * input_height)
-                loss = (loss + loss_y) / 2
+                loss = loss_fn(preds, keypoints)
                 val_loss += loss.item()
 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f} px, Val Loss = {avg_val_loss:.4f} px")
+        print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}")
         wandb.log({"epoch": epoch + 1, "train_loss": avg_train_loss, "val_loss": avg_val_loss})
 
         if (epoch + 1) % 10 == 0:
@@ -142,9 +126,12 @@ if __name__ == "__main__":
         val_keypoint_dir=f"{data_dir}/val/keypoints",
         batch_size=64,
         num_epochs=10000,
-        learning_rate=1e-3,
-        save_dir="./checkpoints",
-        load_model_path=None,
+        learning_rate=1e-4,
+        weight_decay=1e-4,
+        dropout_p=0.2,
+        save_dir="./hrnet_lite/checkpoints",
+        load_model_path="./hrnet_lite/checkpoints/lite_hrnet_epoch140.pth",
+        # load_model_path=None,
         input_width=640,
         input_height=480
     )

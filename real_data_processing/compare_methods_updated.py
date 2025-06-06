@@ -8,16 +8,16 @@ import pandas as pd
 import cv2
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional 
 from real_data_processing.utils import *
 import PIL 
 from PIL import Image
-import json
 import cv2
 import matplotlib.pyplot as plt
 import seaborn as sns
 from keypoints_model.utils import overlay_points_on_image
-
+import csv
+import json 
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -146,24 +146,22 @@ class DatasetProcessor:
             dp.save_overlay("OPTK", square_length=self.marker_length, K=self.camera_matrix, output_dir=self.optk_frames_dir)
 
     def run_opencv_fiducial_marker_detection(self, save_results=False):
-        import cv2
-        from pathlib import Path
-        import logging
-
-        tf_c_m_all = []
-        tf_w_m, tf_mo_mi, timestamps = [], [], []
-        tf_mo_w = None
-        detected = [] 
+        # Preallocate to match number of frames
+        num_frames = len(self.realsense_frames_paths)
+        tf_c_m_all = [None] * num_frames
+        CCV_corners = [None] * num_frames
+        detected = [False] * num_frames
 
         output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_CCV'))
-        if save_results:
-            output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Track valid poses
+        tf_w_m, tf_mo_mi, timestamps = [], [], []
+        tf_mo_w = None
 
         for idx, frame_path in enumerate(self.realsense_frames_paths):
             frame = cv2.imread(str(frame_path))
             if frame is None:
                 logger.warning(f"[CCV] Could not read frame {frame_path}")
-                tf_c_m_all.append(None)
                 continue
 
             marker_ids, rvecs, tvecs, corners = marker_pose_estimation_estimatePoseSingleMarkers(
@@ -171,16 +169,15 @@ class DatasetProcessor:
                 self.marker_length, show=False
             )
 
-            out_img = frame.copy()
-            pose_detected = False
-
             if rvecs is not None and tvecs is not None:
-                tf_Ccv_Mcv = np.eye(4)
-                tf_Ccv_Mcv[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
-                tf_Ccv_Mcv[:3, 3] = tvecs[0].reshape(3)
-                tf_c_m_all.append(tf_Ccv_Mcv)
+                tf = np.eye(4)
+                tf[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
+                tf[:3, 3] = tvecs[0].reshape(3)
+                tf_c_m_all[idx] = tf
+                CCV_corners[idx] = corners
+                detected[idx] = True
 
-                tf_w_m_i = self.tf_w_c @ tf_Ccv_Mcv
+                tf_w_m_i = self.tf_w_c @ tf
                 tf_w_m.append(tf_w_m_i)
 
                 if tf_mo_w is None:
@@ -189,39 +186,32 @@ class DatasetProcessor:
                 else:
                     tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
 
-                pose_detected = True
-            else:
-                tf_c_m_all.append(None)
-
             timestamps.append(self.RLSN_time[idx])
-            detected.append(pose_detected)
-
             if save_results:
-                if pose_detected:
+                out_img = frame.copy()
+                if detected[idx]:
                     out_img = cv2.aruco.drawDetectedMarkers(out_img, corners, marker_ids)
                 outpath = output_dir / f"CCV_frame_{idx:05d}.png"
                 cv2.imwrite(str(outpath), out_img)
 
         self.CCV_time = np.array(timestamps) - timestamps[0]
-        self.CCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
+        self.CCV_tf_c_m = tf_c_m_all
         self.CCV_tf_w_m = np.array(tf_w_m)
         self.CCV_tf_mo_mi = np.array(tf_mo_mi)
-        self.CCV_detected = detected 
+        self.CCV_detected = detected
+        self.CCV_corners = CCV_corners
 
-        for idx, dp in enumerate(self.datapoints):
-            dp.set_pose("CCV", tf_c_m_all[idx] if idx < len(tf_c_m_all) else None)
+            
 
     def run_learning_based_detection(self, predict_fn, save_results=False, save_segmentation=False):
-        from PIL import Image
-        import json
-        import numpy as np
-        import cv2
-        from keypoints_model.utils import overlay_points_on_image
 
-        tf_c_m_all = []
+        num_frames = len(self.datapoints)
+        tf_c_m_all = [None] * num_frames
+        LBCV_keypoints = [None] * num_frames
+        detected = [False] * num_frames
+
         tf_w_m, tf_mo_mi, timestamps = [], [], []
         tf_mo_w = None
-        detected = [] 
 
         output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_LBCV'))
         if save_results:
@@ -235,55 +225,32 @@ class DatasetProcessor:
         for idx, dp in enumerate(self.datapoints):
             image = dp.get_image()
             if image is None:
-                tf_c_m_all.append(None)
                 continue
 
-            # Run LBCV predictor (2- or 3-return format)
             result = predict_fn(image)
             if isinstance(result, tuple) and len(result) == 4:
                 tf_marker, keypoints, segmentation_mask, segmentation_mask_full = result
-            else: 
-                tf_marker = None 
-
-            tf_c_m_all.append(tf_marker)
-
-            if tf_marker is None:
-                detected.append(False) 
-                # Save fallback results
-                if save_results:
-                    # Raw image
-                    overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
-                    Image.fromarray(image).save(str(overlay_path))
-
-                    # Empty keypoints
-                    json_path = output_dir / "keypoints_json" / f"LBCV_frame_{idx:05d}.json"
-                    with open(json_path, "w") as f:
-                        json.dump([], f)
-
-                if save_segmentation:
-                    seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
-                    blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
-                    blank_mask.save(str(seg_path))
-
-                    seg_path = output_dir / "segmentation_masks_full" / f"LBCV_seg_{idx:05d}.png"
-                    blank_mask = Image.fromarray(np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8))
-                    blank_mask.save(str(seg_path))
-                continue
-            else: 
-                detected.append(True) 
-
-            tf_w_m_i = self.tf_w_c @ tf_marker
-            tf_w_m.append(tf_w_m_i)
-
-            if tf_mo_w is None:
-                tf_mo_w = np.linalg.inv(tf_w_m_i)
-                tf_mo_mi.append(np.eye(4))
             else:
-                tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
+                tf_marker, keypoints, segmentation_mask, segmentation_mask_full = None, None, None, None
 
-            timestamps.append(dp.time)
+            tf_c_m_all[idx] = tf_marker
+            LBCV_keypoints[idx] = keypoints
+
+            if tf_marker is not None:
+                detected[idx] = True
+                tf_w_m_i = self.tf_w_c @ tf_marker
+                tf_w_m.append(tf_w_m_i)
+
+                if tf_mo_w is None:
+                    tf_mo_w = np.linalg.inv(tf_w_m_i)
+                    tf_mo_mi.append(np.eye(4))
+                else:
+                    tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
+
+                timestamps.append(dp.time)
+
             dp.set_pose("LBCV", tf_marker)
+            dp.set_lbcv_keypoints(keypoints)
 
             # --- Save keypoints visualization and JSON ---
             if save_results and keypoints is not None:
@@ -309,6 +276,8 @@ class DatasetProcessor:
         self.LBCV_tf_w_m = np.array(tf_w_m)
         self.LBCV_tf_mo_mi = np.array(tf_mo_mi)
         self.LBCV_detected = detected 
+        self.LBCV_keypoints = np.array(LBCV_keypoints, dtype=object)
+
 
     def compare_detection(self, num_bins=10): 
         # compute the fraction of marker detects for each method 
@@ -482,13 +451,90 @@ class DatasetProcessor:
         plt.grid(True)
         plt.savefig(os.path.join(self.out_dir, "rotation_error_vs_area.png"))
 
+    def save_summary_csv(self, output_path="marker_pose_summary.csv"):
+        import csv
+
+        # Compute marker position and orientation velocity from optitrack tf
+        marker_pos_velocities = []
+        marker_rot_velocities = []
+
+        prev_tf = None
+        prev_time = None
+
+        for i, dp in enumerate(self.datapoints):
+            optk_tf = getattr(dp, 'OPTK_tf', None)
+            time = getattr(dp, 'time', None)
+
+            if optk_tf is not None and prev_tf is not None and time is not None and prev_time is not None:
+                dt = time - prev_time
+                if dt > 0:
+                    # Position velocity (m/s)
+                    dp_velocity = np.linalg.norm(optk_tf[:3, 3] - prev_tf[:3, 3]) / dt
+                    marker_pos_velocities.append(dp_velocity)
+
+                    # Rotation velocity (rad/s)
+                    R_delta = prev_tf[:3, :3].T @ optk_tf[:3, :3]
+                    angle = np.arccos(np.clip((np.trace(R_delta) - 1) / 2, -1.0, 1.0))
+                    dp_rot_vel = angle / dt
+                    marker_rot_velocities.append(dp_rot_vel)
+                else:
+                    marker_pos_velocities.append(None)
+                    marker_rot_velocities.append(None)
+            else:
+                marker_pos_velocities.append(None)
+                marker_rot_velocities.append(None)
+
+            prev_tf = optk_tf
+            prev_time = time
+
+        rows = []
+        for i, dp in enumerate(self.datapoints):
+            time = getattr(dp, 'time', None)
+            brightness = getattr(dp, 'marker_brightness', None)
+            area = getattr(dp, 'marker_area', None)
+
+            optk_tf = getattr(dp, 'OPTK_tf', None)
+            ccv_tf = getattr(dp, 'CCV_tf', None)
+            lbcv_tf = getattr(dp, 'LBCV_tf', None)
+            ccv_corners = getattr(dp, 'CCV_corners', None) if hasattr(dp, 'CCV_corners') else None
+            lbcv_keypoints = getattr(dp, 'LBCV_keypoints', None) if hasattr(dp, 'LBCV_keypoints') else None
+
+            row = {
+                "time": time,
+                "marker_brightness": brightness,
+                "marker_area": area,
+                "marker_pos_vel": marker_pos_velocities[i],
+                "marker_rot_vel": marker_rot_velocities[i],
+                "optk_tf": optk_tf.flatten().tolist() if optk_tf is not None else None,
+                "ccv_tf": ccv_tf.flatten().tolist() if ccv_tf is not None else None,
+                "ccv_corners": ccv_corners.tolist() if ccv_corners is not None else None,
+                "lbcv_tf": lbcv_tf.flatten().tolist() if lbcv_tf is not None else None,
+                "lbcv_keypoints": lbcv_keypoints.tolist() if lbcv_keypoints is not None else None,
+            }
+            rows.append(row)
+
+        # Write to CSV
+        with open(output_path, 'w', newline='') as csvfile:
+            fieldnames = list(rows[0].keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+        # Also save as .npy and .json
+        summary_base = os.path.splitext(output_path)[0]
+        np.save(f"{summary_base}.npy", rows)
+
+        with open(f"{summary_base}.json", 'w') as f:
+            json.dump(sanitize_for_json(rows), f, indent=2)
+
 
 def build_lbcv_predictor(
     seg_model_path: str,
     kp_model_path: str,
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
-    marker_image: 'PIL.Image.Image',
+    marker_image: 'PIL.Image.Image',    
     marker_side_length: float,
     keypoints_tag_frame: np.ndarray,
     method: str = "kp_hrnet", # "seg" or "kp_mobilenet" or "kp_hrnet" 
@@ -712,6 +758,8 @@ def build_lbcv_predictor(
 
     return predict_pose_from_image
 
+
+
 def main():
     import logging
     logging.basicConfig(level=logging.INFO)
@@ -871,6 +919,9 @@ def main():
     print(f"\n[Comparison: CCV vs LBCV]")
     print(f"Mean position error: {np.mean(pos_errs):.3f} m")
     print(f"Mean rotation error: {np.degrees(np.mean(rot_errs)):.2f} deg")
+
+    summary_path = os.path.join(config[OUT_DIR], "marker_pose_summary.csv")
+    processor.save_summary_csv(summary_path)
 
     logging.info("Data processing complete.")
 

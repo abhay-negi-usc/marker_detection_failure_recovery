@@ -31,16 +31,9 @@ class MarkersDataset(Dataset):
 
     def __getitem__(self, index):
         img_path = os.path.join(self.image_dir, self.images[index])
-<<<<<<< Updated upstream
-        img_filename = os.path.basename(img_path) 
-        # replace all characters after last underscore with '.png' 
-        # keypoints_filename = img_filename.replace("_","_keypoints_").replace(".png",".json") 
-        keypoints_filename = img_filename.replace("_0.png", ".json").replace('img', 'keypoints')  
-=======
         img_filename = os.path.basename(img_path)
         keypoints_filename = img_filename.replace("_","_keypoints_").replace(".png",".json") 
         # keypoints_filename = keypoints_filename.replace('img', 'keypoints')  
->>>>>>> Stashed changes
         keypoints_path = os.path.join(
             self.keypoints_dir, 
             keypoints_filename
@@ -48,11 +41,6 @@ class MarkersDataset(Dataset):
 
         # Load image and convert to numpy array
         image = np.array(Image.open(img_path).convert("RGB"))
-<<<<<<< Updated upstream
-        
-=======
-
->>>>>>> Stashed changes
         # Load keypoints from json as np array
         # TODO: preprocess json's as npy files  
         with open(keypoints_path, 'r') as f:
@@ -61,10 +49,5 @@ class MarkersDataset(Dataset):
         for key in keypoints_data.keys():
             keypoints_list.append(np.array(keypoints_data[key])) 
         keypoints = np.array(keypoints_list).flatten() 
-<<<<<<< Updated upstream
-
-        return image, keypoints
-=======
->>>>>>> Stashed changes
 
         return image, keypoints
