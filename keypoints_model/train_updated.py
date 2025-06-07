@@ -1,0 +1,180 @@
+import os
+import torch
+import numpy as np
+from tqdm import tqdm
+from PIL import Image
+import matplotlib.pyplot as plt
+from torchvision.transforms import ToPILImage
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import torch.nn as nn
+import torch.optim as optim
+import wandb
+
+from keypoints_model.model import RegressorMobileNetV3
+from keypoints_model.utils import (
+    load_checkpoint, save_checkpoint, get_loaders,
+    evaluate_l1_loss, overlay_points_on_image
+)
+
+import matplotlib
+# matplotlib.use('Agg')
+
+# -------------------- Utility Functions --------------------
+
+def denormalize(img_tensor):
+    mean = torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(3, 1, 1)
+    return ((img_tensor * std + mean) * 255).clamp(0, 255).byte()
+
+def save_predictions_as_images(loader, model, folder, device="cuda", max_batches=1):
+    os.makedirs(folder, exist_ok=True)
+    model.eval()
+    to_pil = ToPILImage()
+
+    # Define normalization transform (same as training)
+    normalize = A.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+        max_pixel_value=255.0
+    )
+
+    with torch.no_grad():
+        for idx, (x_np, _) in enumerate(loader):  # x_np is [B, H, W, C], still numpy-based
+
+            batch_size = x_np.shape[0]
+            for j in range(batch_size):
+                raw_img = x_np[j].cpu().numpy()  # shape: [H, W, C], dtype: float32 or uint8
+
+                # Store original image before normalization
+                original_img = raw_img.astype(np.uint8).copy()
+
+                # Normalize using Albumentations
+                norm_result = normalize(image=raw_img)
+                norm_img = norm_result["image"]  # shape: [H, W, C]
+                norm_img_tensor = torch.tensor(norm_img).permute(2, 0, 1).unsqueeze(0).float().to(device)
+
+                # Model prediction
+                pred = model(norm_img_tensor)[0].detach().cpu().numpy().reshape(-1, 2)
+
+                # Overlay on original image (not normalized)
+                keypoints_img = overlay_points_on_image(image=original_img, pixel_points=pred, radius=1)
+
+                save_path = os.path.join(folder, f"pred_{idx * batch_size + j}.png")
+                plt.imshow(keypoints_img)
+                plt.axis('off')
+                plt.savefig(save_path)
+                plt.close()
+
+                wandb.log({f"predictions/image_{idx * batch_size + j}": wandb.Image(save_path)})
+
+            if idx + 1 >= max_batches:
+                break
+
+
+def train_one_epoch(loader, model, optimizer, loss_fn, scaler, device):
+    model.train()
+    loop = tqdm(loader, desc="Training")
+    for data, targets in loop:
+        data = data.to(device).float().permute(0, 3, 1, 2)
+        targets = targets.float().to(device)
+
+        with torch.amp.autocast(device_type=device):
+            predictions = model(data)
+            loss = loss_fn(predictions, targets)
+
+        optimizer.zero_grad()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        loop.set_postfix(loss=loss.item())
+        wandb.log({"train/loss": loss.item()})
+
+# -------------------- Main Training Function --------------------
+
+def main():
+    # ---------- Config Dictionary ----------
+    config = {
+        "learning_rate": 1e-4,
+        "batch_size": 128,
+        "num_epochs": 10000,
+        "num_workers": 24,
+        "image_height": 480,
+        "image_width": 640,
+        "test_frequency": 10,
+        "pin_memory": True,
+        "load_model": True,
+        "num_epoch_dont_save": 0,
+        "data_dir": "./segmentation_model/data/data_20250330-013534/",
+        "checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar",
+        "save_dir": "./keypoints_model/saved_images/",
+        "wandb_project": "keypoint-regression",
+        "wandb_run_name": "mobilenetv3-keypoints"
+    }
+
+    # ---------- WandB Init ----------
+    wandb.init(
+        project=config["wandb_project"],
+        name=config["wandb_run_name"],
+        config=config
+    )
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    train_transform = A.Compose([
+        A.Resize(height=config["image_height"], width=config["image_width"]),
+        A.Normalize(mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    max_pixel_value=255.0),
+        ToTensorV2(),
+    ])
+    val_transform = A.Compose([
+        A.Resize(height=config["image_height"], width=config["image_width"]),
+        A.Normalize(mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    max_pixel_value=255.0),
+        ToTensorV2(),
+    ])
+
+    train_loader, val_loader = get_loaders(
+        os.path.join(config["data_dir"], "train", "rgb"),
+        os.path.join(config["data_dir"], "train", "keypoints"),
+        os.path.join(config["data_dir"], "val", "rgb"),
+        os.path.join(config["data_dir"], "val", "keypoints"),
+        config["batch_size"],
+        train_transform,
+        val_transform,
+        config["num_workers"],
+        config["pin_memory"]
+    )
+
+    model = RegressorMobileNetV3().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"])
+    loss_fn = nn.MSELoss()
+    scaler = torch.amp.GradScaler()
+
+    if config["load_model"]:
+        load_checkpoint(torch.load(config["checkpoint_path"]), model)
+
+    best_mae = float("inf")
+
+    for epoch in range(config["num_epochs"]):
+        train_one_epoch(train_loader, model, optimizer, loss_fn, scaler, device)
+
+        val_mae = evaluate_l1_loss(val_loader, model, device=device)
+        print(f"[Epoch {epoch}] Val MAE: {val_mae:.4f}")
+        wandb.log({"val/mae": val_mae, "epoch": epoch})
+
+        if val_mae < best_mae and epoch > config["num_epoch_dont_save"]:
+            best_mae = val_mae
+            save_checkpoint({
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict()
+            }, config["checkpoint_path"])
+
+        if epoch % config["test_frequency"] == 0:
+            save_predictions_as_images(val_loader, model, folder=config["save_dir"], device=device)
+
+if __name__ == "__main__":
+    main()
