@@ -11,14 +11,14 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 
-from keypoints_model.model import RegressorMobileNetV3
+from keypoints_model.model import RegressorMobileNetV3_with_dropouts
 from keypoints_model.utils import (
     load_checkpoint, save_checkpoint, get_loaders,
     evaluate_l1_loss, overlay_points_on_image
 )
 
 import matplotlib
-# matplotlib.use('Agg')
+matplotlib.use('Agg')
 
 # -------------------- Utility Functions --------------------
 
@@ -71,10 +71,12 @@ def save_predictions_as_images(loader, model, folder, device="cuda", max_batches
             if idx + 1 >= max_batches:
                 break
 
-
 def train_one_epoch(loader, model, optimizer, loss_fn, scaler, device):
     model.train()
     loop = tqdm(loader, desc="Training")
+    total_loss = 0
+    total_samples = 0
+
     for data, targets in loop:
         data = data.to(device).float().permute(0, 3, 1, 2)
         targets = targets.float().to(device)
@@ -88,8 +90,31 @@ def train_one_epoch(loader, model, optimizer, loss_fn, scaler, device):
         scaler.step(optimizer)
         scaler.update()
 
+        total_loss += loss.item() * data.size(0)
+        total_samples += data.size(0)
+
         loop.set_postfix(loss=loss.item())
-        wandb.log({"train/loss": loss.item()})
+
+    avg_loss = total_loss / total_samples
+    return avg_loss
+
+
+def evaluate_loss(loader, model, loss_fn, device="cuda"):
+    model.eval()
+    total_loss = 0
+    total_samples = 0
+
+    with torch.no_grad():
+        for data, targets in loader:
+            data = data.to(device).float().permute(0, 3, 1, 2)
+            targets = targets.float().to(device)
+            predictions = model(data)
+            batch_loss = loss_fn(predictions, targets)
+            total_loss += batch_loss.item() * data.size(0)
+            total_samples += data.size(0)
+
+    return total_loss / total_samples
+
 
 # -------------------- Main Training Function --------------------
 
@@ -104,13 +129,15 @@ def main():
         "image_width": 640,
         "test_frequency": 10,
         "pin_memory": True,
-        "load_model": True,
+        "load_model": False,
         "num_epoch_dont_save": 0,
         "data_dir": "./segmentation_model/data/data_20250330-013534/",
         "checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar",
         "save_dir": "./keypoints_model/saved_images/",
         "wandb_project": "keypoint-regression",
-        "wandb_run_name": "mobilenetv3-keypoints"
+        "wandb_run_name": "mobilenetv3-keypoints",
+        "weight_decay": 1e-4,
+        "dropout_p": 0.2,
     }
 
     # ---------- WandB Init ----------
@@ -149,25 +176,26 @@ def main():
         config["pin_memory"]
     )
 
-    model = RegressorMobileNetV3().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"])
+    model = RegressorMobileNetV3_with_dropouts(dropout_p=config["dropout_p"]).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
     loss_fn = nn.MSELoss()
     scaler = torch.amp.GradScaler()
 
     if config["load_model"]:
         load_checkpoint(torch.load(config["checkpoint_path"]), model)
 
-    best_mae = float("inf")
+    best_loss = float("inf")
 
     for epoch in range(config["num_epochs"]):
-        train_one_epoch(train_loader, model, optimizer, loss_fn, scaler, device)
+        train_loss = train_one_epoch(train_loader, model, optimizer, loss_fn, scaler, device)
+        wandb.log({"train/loss": train_loss, "epoch": epoch})
 
-        val_mae = evaluate_l1_loss(val_loader, model, device=device)
-        print(f"[Epoch {epoch}] Val MAE: {val_mae:.4f}")
-        wandb.log({"val/mae": val_mae, "epoch": epoch})
+        val_loss = evaluate_loss(val_loader, model, loss_fn, device=device)
+        wandb.log({"val/loss": val_loss, "epoch": epoch})
+        print(f"Epoch {epoch+1}/{config['num_epochs']}, Validation Loss: {val_loss:.4f}")
 
-        if val_mae < best_mae and epoch > config["num_epoch_dont_save"]:
-            best_mae = val_mae
+        if val_loss < best_loss and epoch > config["num_epoch_dont_save"]:
+            best_loss = val_loss
             save_checkpoint({
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict()
