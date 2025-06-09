@@ -36,7 +36,7 @@ class MarkersDataset(Dataset):
         # keypoints_filename = img_filename.replace("_","_keypoints_").replace(".png",".json") 
         # keypoints_filename = keypoints_filename.replace('img', 'keypoints')  
 
-        keypoints_filename = img_filename.replace("img","keypoints").replace("_0.png",".json") 
+        keypoints_filename = img_filename.replace("img","keypoints").replace(".png",".json") 
         
         keypoints_path = os.path.join(
             self.keypoints_dir, 

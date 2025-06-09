@@ -20,3 +20,4 @@ real_data_processing/results
 hrnet/hrnet 
 eval_outputs
 hrnet_lite/inference_results 
+keypoints_model/checkpoints

@@ -74,7 +74,8 @@ class RegressorMobileNetV3_with_dropouts(nn.Module):
         self.prelu4 = nn.PReLU()
         self.dropout4 = nn.Dropout(p=dropout_p)
 
-        self.output_layer = nn.Linear(256, 2 * (11 ** 2))  # Output 2D keypoints
+        # self.output_layer = nn.Linear(256, 2 * (11 ** 2))  # Output 2D keypoints
+        self.output_layer = nn.Linear(256, 2 * (9 ** 2))  # Output 2D keypoints
 
     def forward(self, x):
         x = self.backbone(x)
@@ -85,4 +86,25 @@ class RegressorMobileNetV3_with_dropouts(nn.Module):
         x = self.dropout3(self.prelu3(self.fc3(x)))
         x = self.dropout4(self.prelu4(self.fc4(x)))
 
+        return self.output_layer(x)
+    
+
+class RegressorMobileNetV3_from_scratch(nn.Module):
+    def __init__(self):
+        super(RegressorMobileNetV3_from_scratch, self).__init__()
+        from torchvision.models import mobilenet_v3_small
+
+        # Load MobileNetV3Small backbone without pretrained weights
+        self.backbone = mobilenet_v3_small(weights=None)
+        self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])  # Remove classifier head
+
+        # Fully connected layers
+        self.fc1 = nn.Linear(576, 256)  # 576 is the output of the last conv layer in MobileNetV3Small
+        self.prelu1 = nn.PReLU()
+        self.output_layer = nn.Linear(256, 2 * (9 ** 2))  # Output 2D keypoints
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = x.view(x.size(0), -1)  # Flatten the features
+        x = self.prelu1(self.fc1(x))
         return self.output_layer(x)

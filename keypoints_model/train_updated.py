@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 
-from keypoints_model.model import RegressorMobileNetV3_with_dropouts
+from keypoints_model.model import RegressorMobileNetV3_from_scratch
 from keypoints_model.utils import (
     load_checkpoint, save_checkpoint, get_loaders,
     evaluate_l1_loss, overlay_points_on_image
@@ -121,18 +121,19 @@ def evaluate_loss(loader, model, loss_fn, device="cuda"):
 def main():
     # ---------- Config Dictionary ----------
     config = {
-        "learning_rate": 1e-4,
+        "learning_rate": 1e-3,
         "batch_size": 128,
         "num_epochs": 10000,
-        "num_workers": 24,
+        "num_workers": 32,
         "image_height": 480,
         "image_width": 640,
         "test_frequency": 10,
         "pin_memory": True,
-        "load_model": False,
+        "load_model": True,
         "num_epoch_dont_save": 0,
-        "data_dir": "./segmentation_model/data/data_20250330-013534/",
+        "data_dir": "./segmentation_model/data/data_20250607-214821/",
         "checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar",
+        "load_checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar_epoch_147.pth.tar",
         "save_dir": "./keypoints_model/saved_images/",
         "wandb_project": "keypoint-regression",
         "wandb_run_name": "mobilenetv3-keypoints",
@@ -176,13 +177,14 @@ def main():
         config["pin_memory"]
     )
 
-    model = RegressorMobileNetV3_with_dropouts(dropout_p=config["dropout_p"]).to(device)
+    # model = RegressorMobileNetV3_with_dropouts(dropout_p=config["dropout_p"]).to(device)
+    model = RegressorMobileNetV3_from_scratch().to(device)
     optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
     loss_fn = nn.MSELoss()
     scaler = torch.amp.GradScaler()
 
     if config["load_model"]:
-        load_checkpoint(torch.load(config["checkpoint_path"]), model)
+        load_checkpoint(torch.load(config["load_checkpoint_path"]), model)
 
     best_loss = float("inf")
 
@@ -200,6 +202,13 @@ def main():
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict()
             }, config["checkpoint_path"])
+
+        if epoch % 5 == 0:
+            # save checkpoint with epoch number
+            save_checkpoint({
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }, f"{config['checkpoint_path']}_epoch_{epoch}.pth.tar")
 
         if epoch % config["test_frequency"] == 0:
             save_predictions_as_images(val_loader, model, folder=config["save_dir"], device=device)
