@@ -48,6 +48,9 @@ def get_marker_segmentation(image, tf, square_length, K):
     """
     Segments the marker from the image using the pose and camera intrinsics.
     """
+    if tf is None or K is None:
+        logging.warning("Pose transformation or camera intrinsics are None.")
+        return np.zeros(image.shape[:2], dtype=np.uint8)
     # Define 3D square corners in marker frame
     square_corners_3d = np.array([
         [square_length/2, square_length/2, 0],
@@ -195,6 +198,9 @@ class DataPoint:
                 setattr(self, f"{method}_error", None)
                 continue
             tf_true = self.OPTK_tf 
+            if tf_true is None:
+                setattr(self, f"{method}_error", None)
+                continue
             error_tf = np.linalg.inv(tf_true) @ tf
             setattr(self, f"{method}_error_tf", error_tf)
             # compute the error in translation and rotation 
