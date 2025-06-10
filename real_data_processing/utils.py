@@ -568,19 +568,22 @@ def opencv_marker_pose(
     
     return tf, xyzabc, corners 
 
-def sanitize_for_json(obj):
-    if isinstance(obj, (np.integer, np.int32, np.int64)):
-        return int(obj)
-    elif isinstance(obj, (np.floating, np.float32, np.float64)):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, (list, tuple)):
-        return [sanitize_for_json(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: sanitize_for_json(v) for k, v in obj.items()}
+def sanitize_for_json(data):
+    if isinstance(data, list):
+        return [sanitize_for_json(item) for item in data]
+    elif isinstance(data, dict):
+        return {k: sanitize_for_json(v) for k, v in data.items()}
+    elif isinstance(data, np.ndarray):
+        return data.tolist()
+    elif isinstance(data, (np.float32, np.float64)):
+        return float(data)
+    elif isinstance(data, (np.int32, np.int64)):
+        return int(data)
+    elif isinstance(data, (np.bool_,)):
+        return bool(data)
     else:
-        return obj
+        return data
+
 
 
 def main(): 

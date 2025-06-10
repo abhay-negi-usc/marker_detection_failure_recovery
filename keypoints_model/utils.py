@@ -118,6 +118,13 @@ def rvectvec_to_xyzabc(rvec, tvec):
     xyzabc = np.concatenate((tvec, R.from_matrix(rot).as_euler("xyz",degrees=True))) 
     return xyzabc 
 
+def rvectvec_to_tf(rvec, tvec):
+    rot = cv2.Rodrigues(rvec)[0]
+    tf = np.eye(4)
+    tf[:3, :3] = rot
+    tf[:3, 3] = tvec.reshape(3)
+    return tf
+
 def xyzabc_to_tf(xyzabc): 
     tvec = xyzabc[:3] 
     rot = R.from_euler("xyz",xyzabc[3:],degrees=True).as_matrix()

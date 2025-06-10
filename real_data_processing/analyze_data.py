@@ -6,7 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # data_file = "./real_data_processing/results/marker_pose_summary.json"
-data_file = "./real_data_processing/results/dark_test_3.json"
+# data_file = "./real_data_processing/results/trial_6.json"
+data_file = "./real_data_processing/results/trial_6 (copy).json"
+# data_file = "./real_data_processing/results/dark_test_3.json"
 
 def tf_to_pose(tf):
     """
@@ -34,6 +36,7 @@ def pose_to_tf(pose):
 with open(data_file, 'r') as file: 
     data = json.load(file)
     
+data = np.concatenate((data[0:1000], data[1150:1700], data[1850:2200], data[2500:3600]), axis=0)
 n_datapoints = len(data) 
 
 tf_optk = [None] * n_datapoints
@@ -49,6 +52,12 @@ pose_optk_LBCV = [None] * n_datapoints
 tf_CCV_LBCV = [None] * n_datapoints
 pose_CCV_LBCV = [None] * n_datapoints
 
+# tf_correction = np.array([
+#     [-1,0,0,0],
+#     [0,-1,0,0],
+#     [0,0,1,0],
+#     [0,0,0,1]
+# ])
 
 for idx, datapoint in enumerate(data): 
     if datapoint['optk_tf'] is None:
@@ -58,12 +67,12 @@ for idx, datapoint in enumerate(data):
 
     # if tf_optk is None, skip this datapoint
     if datapoint['ccv_tf'] is not None: 
-        tf_CCV[idx] = np.array(datapoint['ccv_tf']).reshape((4, 4))  
+        tf_CCV[idx] = np.array(datapoint['ccv_tf']).reshape((4, 4)) 
         pose_CCV[idx] = tf_to_pose(tf_CCV[idx]) 
         tf_optk_CCV[idx] = np.linalg.inv(tf_optk[idx]) @ tf_CCV[idx]
         pose_optk_CCV[idx] = tf_to_pose(tf_optk_CCV[idx])
     if datapoint['lbcv_tf'] is not None: 
-        tf_LBCV[idx] = np.array(datapoint['lbcv_tf']).reshape((4, 4))  
+        tf_LBCV[idx] = np.array(datapoint['lbcv_tf']).reshape((4, 4))
         pose_LBCV[idx] = tf_to_pose(tf_LBCV[idx]) 
         tf_optk_LBCV[idx] = np.linalg.inv(tf_optk[idx]) @ tf_LBCV[idx]
         pose_optk_LBCV[idx] = tf_to_pose(tf_optk_LBCV[idx])
@@ -254,7 +263,7 @@ def pose_errors(pose_gt, pose_pred):
     
     return [t_in_plane, t_out_plane, r_in_plane, r_out_plane]
 
-def tf_errors(tf_gt, tf_pred):
+def tf_errors_plane(tf_gt, tf_pred):
     """
     Compute SE(3)-based pose error between ground truth and predicted transform.
     Returns: [in-plane trans error, out-of-plane trans error, in-plane rot error, out-of-plane rot error]
@@ -282,11 +291,11 @@ for i in range(len(tf_optk)):
         continue
 
     if tf_CCV[i] is not None:
-        err = tf_errors(tf_gt, tf_CCV[i])
+        err = tf_errors_plane(tf_gt, tf_CCV[i])
         errors_CCV.append(err)
 
     if tf_LBCV[i] is not None:
-        err = tf_errors(tf_gt, tf_LBCV[i])
+        err = tf_errors_plane(tf_gt, tf_LBCV[i])
         errors_LBCV.append(err)
 
         if tf_CCV[i] is not None:

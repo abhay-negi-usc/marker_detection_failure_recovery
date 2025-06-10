@@ -140,9 +140,9 @@ class DatasetProcessor:
                 pass 
             else: 
                 try:
-                    s = self.marker_length * (10/8) # scale to include border 
+                    s = self.marker_length * (10/8)  # scale to include border
                     tag_pts_3d = np.array([
-                        [0, 0, 0], [s, 0, 0], [s, s, 0], [0, s, 0]
+                        [+s/2, +s/2, 0], [-s/2, +s/2, 0], [-s/2, -s/2, 0], [+s/2, -s/2, 0]
                     ], dtype=np.float32).reshape(-1, 3)
 
                     rvec, _ = cv2.Rodrigues(tf_c_m[:3, :3])
@@ -150,6 +150,41 @@ class DatasetProcessor:
                     pts_2d, _ = cv2.projectPoints(tag_pts_3d, rvec, tvec, self.camera_matrix, self.dist_coeffs)
                     pts_2d = pts_2d.squeeze().astype(np.float32)
 
+                    # Get image dimensions
+                    image = dp.get_image()
+                    if image is None:
+                        continue
+                    H, W = image.shape[:2]
+
+                    # === Corner visibility checks ===
+                    inside_mask = (
+                        (pts_2d[:, 0] >= 0) & (pts_2d[:, 0] < W) &
+                        (pts_2d[:, 1] >= 0) & (pts_2d[:, 1] < H)
+                    )
+                    dp.marker_fully_inframe = np.all(inside_mask)
+
+                    # Original projected polygon
+                    marker_poly = pts_2d.astype(np.float32).reshape((-1, 1, 2))
+
+                    # Image boundary polygon (clockwise)
+                    image_poly = np.array([
+                        [[0, 0]], [[W - 1, 0]], [[W - 1, H - 1]], [[0, H - 1]]
+                    ], dtype=np.float32)
+
+                    # Compute intersection polygon (in-frame area)
+                    ret, clipped_poly = cv2.intersectConvexConvex(marker_poly, image_poly)
+                    inframe_area = ret
+
+                    # Compute total projected area (possibly partially out of frame)
+                    full_area = cv2.contourArea(marker_poly)
+
+                    if full_area > 0:
+                        dp.marker_inframe_fraction = inframe_area / full_area
+                    else:
+                        dp.marker_inframe_fraction = 0.0
+
+
+                    # === Area and brightness statistics ===
                     area = 0.5 * abs(
                         pts_2d[0, 0]*pts_2d[1, 1] + pts_2d[1, 0]*pts_2d[2, 1] +
                         pts_2d[2, 0]*pts_2d[3, 1] + pts_2d[3, 0]*pts_2d[0, 1] -
@@ -157,11 +192,9 @@ class DatasetProcessor:
                         pts_2d[3, 0]*pts_2d[2, 1] - pts_2d[0, 0]*pts_2d[3, 1]
                     )
 
-                    image = dp.get_image()
-                    if image is None:
-                        continue
                     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                     rgb = image.astype(np.float32).mean(axis=2)
+                    del image  # Free memory
 
                     mask = np.zeros(gray.shape, dtype=np.uint8)
                     cv2.fillConvexPoly(mask, pts_2d.astype(np.int32), 255)
@@ -212,6 +245,8 @@ class DatasetProcessor:
                 self.marker_length, show=False
             )
 
+            del frame # Free memory 
+
             if corners_tuple is not None:
                 corners = np.array([corner.reshape(-1, 2) for corner in corners_tuple])
 
@@ -247,6 +282,7 @@ class DatasetProcessor:
                     out_img = cv2.aruco.drawDetectedMarkers(out_img, corners_tuple, marker_ids)
                 outpath = output_dir / f"CCV_frame_{idx:05d}.png"
                 cv2.imwrite(str(outpath), out_img)
+                del out_img # Free memory 
 
         self.CCV_time = np.array(timestamps) - timestamps[0]
         self.CCV_tf_c_m = tf_c_m_all
@@ -468,6 +504,8 @@ class DatasetProcessor:
                 "marker_area": getattr(dp, 'marker_area', None),
                 "marker_pos_vel": marker_pos_velocities[i],
                 "marker_rot_vel": marker_rot_velocities[i],
+                "marker_inframe_fraction": getattr(dp, 'marker_inframe_fraction', None),
+                "marker_fully_inframe": getattr(dp, 'marker_fully_inframe', None),
                 "optk_tf": dp.OPTK_tf.flatten().tolist() if dp.OPTK_tf is not None else None,
                 "ccv_tf": dp.CCV_tf.flatten().tolist() if dp.CCV_tf is not None else None,
                 "ccv_corners": dp.CCV_corners.tolist() if dp.CCV_corners is not None else None,
@@ -514,7 +552,6 @@ def build_lbcv_predictor(
     from keypoints_model.utils import load_checkpoint as load_kp_ckpt
     import albumentations as A
     from albumentations.pytorch import ToTensorV2
-    from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -582,7 +619,7 @@ def build_lbcv_predictor(
         return roi_img, roi_coordinates
 
     def predict_pose_from_image(image: np.ndarray, method=method):
-        from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+        from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc, rvectvec_to_tf
 
         tf_marker = None
         seg_size = (640, 480)
@@ -674,8 +711,7 @@ def build_lbcv_predictor(
             if not success:
                 return None, None, seg_mask_img, seg_mask_img_full 
             
-            pose_marker = rvectvec_to_xyzabc(rvec, tvec)
-            tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+            tf_marker = rvectvec_to_tf(rvec, tvec) @ tf_W_Ccv 
 
             return tf_marker, keypoints_img, seg_mask_img, seg_mask_img_full 
 
@@ -715,8 +751,9 @@ def build_lbcv_predictor(
                 distCoeffs=dist_coeffs,
             )
             if success:
-                pose_marker = rvectvec_to_xyzabc(rvec, tvec)
-                tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+                # pose_marker = rvectvec_to_xyzabc(rvec, tvec)
+                # tf_marker = tf_W_Ccv @ xyzabc_to_tf(pose_marker)
+                tf_marker = rvectvec_to_tf(rvec, tvec)
 
             return tf_marker, keypoints_img, None, None
 
@@ -784,8 +821,11 @@ if __name__ == "__main__":
         "trial_idx": trial_idx,
         OPTITRACK_CSV_FILE: f"./test_data/optitrack/optitrack_{trial_idx}.csv",
         REALSENSE_VIDEO_FILE: f"./test_data/realsense/realsense_{trial_idx}.mp4",
+        "set_CCV_ground_truth":False,
+
         # OPTITRACK_CSV_FILE: None,
-        # REALSENSE_VIDEO_FILE: f"./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4",
+        # REALSENSE_VIDEO_FILE: f"./real_data_processing/raw_data/controlled_tests/bright_test_4.mp4",
+        # "set_CCV_ground_truth":True, 
 
         TF_TRACKMARK_FIDUMARK: tf_trackmark_fidumark,
         CAMERA_INTRINSIC_MATRIX: np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
@@ -794,10 +834,9 @@ if __name__ == "__main__":
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
         T_OFFSET_OPTK_CCV: 1.15,
-        MAX_FRAMES: 10000, #28782,
+        MAX_FRAMES: 3658, #3658,
         OUT_DIR: f"./real_data_processing/results",
         POSE_EST_METHOD: "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
-        "set_CCV_ground_truth":False, 
     }
 
     # Set marker params
@@ -821,4 +860,5 @@ if __name__ == "__main__":
     )
 
     out_path = os.path.join(config[OUT_DIR], "trial_6.csv")
+    # out_path = os.path.join(config[OUT_DIR], "bright_test.csv")
     run_full_analysis(config, predict_pose_from_image, out_path) 
