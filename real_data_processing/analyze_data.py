@@ -52,27 +52,28 @@ pose_optk_LBCV = [None] * n_datapoints
 tf_CCV_LBCV = [None] * n_datapoints
 pose_CCV_LBCV = [None] * n_datapoints
 
-# tf_correction = np.array([
-#     [-1,0,0,0],
-#     [0,-1,0,0],
-#     [0,0,1,0],
-#     [0,0,0,1]
-# ])
+# apply frame_correction to all tf_optk, tf_CCV, tf_LBCV such that euler angles are centered at 0 
+frame_correction = np.array([
+    [1,0,0,0],
+    [0,-1,0,0],
+    [0,0,-1,0],
+    [0,0,0,1]
+])
 
 for idx, datapoint in enumerate(data): 
     if datapoint['optk_tf'] is None:
         continue
-    tf_optk[idx] = np.array(datapoint['optk_tf']).reshape((4, 4))  
+    tf_optk[idx] = np.array(datapoint['optk_tf']).reshape((4, 4)) @ frame_correction
     pose_optk[idx] = tf_to_pose(tf_optk[idx])
 
     # if tf_optk is None, skip this datapoint
     if datapoint['ccv_tf'] is not None: 
-        tf_CCV[idx] = np.array(datapoint['ccv_tf']).reshape((4, 4)) 
+        tf_CCV[idx] = np.array(datapoint['ccv_tf']).reshape((4, 4)) @ frame_correction
         pose_CCV[idx] = tf_to_pose(tf_CCV[idx]) 
         tf_optk_CCV[idx] = np.linalg.inv(tf_optk[idx]) @ tf_CCV[idx]
         pose_optk_CCV[idx] = tf_to_pose(tf_optk_CCV[idx])
     if datapoint['lbcv_tf'] is not None: 
-        tf_LBCV[idx] = np.array(datapoint['lbcv_tf']).reshape((4, 4))
+        tf_LBCV[idx] = np.array(datapoint['lbcv_tf']).reshape((4, 4)) @ frame_correction 
         pose_LBCV[idx] = tf_to_pose(tf_LBCV[idx]) 
         tf_optk_LBCV[idx] = np.linalg.inv(tf_optk[idx]) @ tf_LBCV[idx]
         pose_optk_LBCV[idx] = tf_to_pose(tf_optk_LBCV[idx])

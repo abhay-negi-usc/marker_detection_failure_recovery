@@ -17,12 +17,6 @@ n = len(data)
 exclude_indices = set()
 valid_mask = np.array([i not in exclude_indices for i in range(n)])
 
-
-# Define exclusion list and build valid mask
-data = np.concatenate((data[0:1000], data[1150:1700], data[1850:2200], data[2500:3600]), axis=0)
-exclude_indices = set( )
-valid_mask = np.array([i not in exclude_indices for i in range(n)])
-
 # Initialize storage
 tf_optk, tf_CCV, tf_LBCV = [None]*n, [None]*n, [None]*n
 marker_fully_inframe = [None]*n
@@ -43,10 +37,10 @@ def compute_errors(mask, tf_gt_list, tf_pred_list):
             t = tf_rel[:3, 3] *1e3 # mm
             r = R.from_matrix(tf_rel[:3, :3]).as_euler("xyz", degrees=True)
             errors.append([
-                np.linalg.norm(t[:2]),
-                abs(t[2]),
-                np.linalg.norm(r[:2]),
-                abs(r[2])
+                np.linalg.norm(t[:2]), # in-plane translation error
+                abs(t[2]), # out-of-plane translation error
+                abs(r[2]), # in-plane rotation error 
+                np.linalg.norm(r[:2]) # out-of-plane rotation error 
             ])
     return np.array(errors)
 
