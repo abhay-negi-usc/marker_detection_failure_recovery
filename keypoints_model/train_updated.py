@@ -121,7 +121,7 @@ def evaluate_loss(loader, model, loss_fn, device="cuda"):
 def main():
     # ---------- Config Dictionary ----------
     config = {
-        "learning_rate": 1e-3,
+        "learning_rate": 1e-2,
         "batch_size": 128,
         "num_epochs": 10000,
         "num_workers": 32,
@@ -133,7 +133,7 @@ def main():
         "num_epoch_dont_save": 0,
         "data_dir": "./segmentation_model/data/data_20250607-214821/",
         "checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar",
-        "load_checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar_epoch_147.pth.tar",
+        "load_checkpoint_path": "./keypoints_model/checkpoints/my_checkpoint.pth.tar_epoch_85.pth.tar",
         "save_dir": "./keypoints_model/saved_images/",
         "wandb_project": "keypoint-regression",
         "wandb_run_name": "mobilenetv3-keypoints",

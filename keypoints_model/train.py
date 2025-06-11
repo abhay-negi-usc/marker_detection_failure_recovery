@@ -22,22 +22,26 @@ import matplotlib
 matplotlib.use('Agg')  # Use Agg backend (non-Qt)
 
 
-LEARNING_RATE = 1e-3 
+LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 1          
+BATCH_SIZE = 128          
 NUM_EPOCHS = 10000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 24 
-# FIXME: Change to 128 x 128 
-IMAGE_HEIGHT = 480 
-IMAGE_WIDTH = 640 
+IMAGE_HEIGHT = 128 
+IMAGE_WIDTH = 128 
 TEST_FREQUENCY = 10 
 PIN_MEMORY = True 
-LOAD_MODEL = False   
+LOAD_MODEL = True 
+# MAIN_DIR = "./segmentation_model/data/data_20250330-013534/" 
 MAIN_DIR = "./segmentation_model/data/data_20250330-013534/" 
-TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
+# TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
+# TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
+# VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
+# VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
+TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb_reaugmented") 
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
-VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
+VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb_reaugmented")  
 VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
     
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
@@ -139,7 +143,7 @@ def main():
     )
 
     if LOAD_MODEL: 
-        load_checkpoint(torch.load("./keypoints_model/models/my_checkpoint.pth.tar"), model)
+        load_checkpoint(torch.load("./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar"), model)
 
     save_count = 0 
 
@@ -167,7 +171,7 @@ def main():
             # best_mse_loss = new_mse_loss 
         if new_mae_loss < best_mae_loss and epoch > num_epoch_dont_save: 
             best_mae_loss = new_mae_loss 
-            save_checkpoint(checkpoint, "./keypoints_model/models/my_checkpoint.pth.tar") # update to save checkpoint with dice score in filename 
+            save_checkpoint(checkpoint, "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar") # update to save checkpoint with dice score in filename 
 
             if save_count > TEST_FREQUENCY: 
                 # print some examples to folder 

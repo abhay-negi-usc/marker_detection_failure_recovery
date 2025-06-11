@@ -921,7 +921,9 @@ class DataProcessor:
                 # A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
                 A.RandomSunFlare(flare_roi=(0,0,1,1), num_flare_circles_range=(10,50), src_radius=100, src_color=(150,150,150), method="physics_based", p=0.8),  # Apply random sun flare to the image, TODO: come back to this, get labels 
                 A.GaussNoise(var_limit=(0,0.001), per_channel=True, p=1),  # Add noise to the image 
-                A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                # A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                A.Blur(blur_limit=(7,15), p=0.5),  # Apply blur to the image 
+                A.MotionBlur(blur_limit=(7,15), p=0.9),  # Apply motion blur to the image
                 # A.RandomGamma(gamma_limit=(80, 120), p=0.8),  # Apply gamma correction to the image
                 # A.RandomBrightnessContrast(brightness_limit=(-0.25,0.25), contrast_limit=(-0.95,0.95), p=0.8),  # Adjust brightness and contrast
                 # A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=0.8),  # Apply ISO noise to the image 
@@ -938,9 +940,12 @@ class DataProcessor:
         for attempt in range(max_attempts_combined): 
             # apply albumentations augmentation 
             augmented_image = self.albumentations_transform(image=image)["image"] 
+            
+            # NOTE: commenting out lighting augmentation for now 
             # apply lighting augmentation
-            if attempt < max_attempts_lighting: 
-                augmented_image = lighting_augmentation(augmented_image) 
+            # if attempt < max_attempts_lighting: 
+            #     augmented_image = lighting_augmentation(augmented_image) 
+            
             if not self.check_image_okay(augmented_image, seg): 
                 # print(f"Augmentation attempt {attempt} failed, brightening image.") 
                 image = cv2.convertScaleAbs(image, alpha=1, beta=25) 
