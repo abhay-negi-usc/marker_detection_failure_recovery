@@ -12,12 +12,13 @@ from hrnet_lite.model import HRNetLiteKeypoint
 
 # ------------ DATASET ------------
 class MarkersDataset(Dataset):
-    def __init__(self, image_dir, keypoint_dir, input_width, input_height, transform=None, indices=None):
+    def __init__(self, image_dir, keypoint_dir, input_width, input_height, transform=None, indices=None, only_corners=False):
         self.image_paths = []
         self.keypoint_paths = []
         self.input_width = input_width
         self.input_height = input_height
         self.indices = indices
+        self.only_corners = only_corners
 
         for img_path in sorted(Path(image_dir).glob("*.png")):
             keypoints_filename = img_path.name.replace("img", "keypoints").replace("_0.png", ".json")
@@ -46,7 +47,13 @@ class MarkersDataset(Dataset):
             keypoints = keypoints[self.indices]
 
         keypoints[:, 0] /= w
-        keypoints[:, 1] /= h
+        keypoints[:, 1] /= h 
+
+        if self.only_corners:
+            n_keypoints = keypoints.shape[0] 
+            n_row = int(np.sqrt(n_keypoints)) 
+            corner_indices = [1-1, n_row-1, n_keypoints-n_row-1, n_keypoints-1]  
+            keypoints = keypoints[corner_indices,:] 
 
         keypoints = keypoints.flatten()
         keypoints = torch.tensor(keypoints, dtype=torch.float32)
@@ -60,20 +67,25 @@ def train(
     batch_size=32, num_epochs=100,
     learning_rate=1e-4, weight_decay=1e-4, dropout_p=0.2,
     save_dir="checkpoints", load_model_path=None,
-    input_width=256, input_height=192
+    input_width=256, input_height=192, only_corners=False
 ):  
     wandb.init(project="lite-hrnet-keypoint-normalized")
 
-    train_dataset = MarkersDataset(train_image_dir, train_keypoint_dir, input_width, input_height)
-    val_dataset = MarkersDataset(val_image_dir, val_keypoint_dir, input_width, input_height)
+    train_dataset = MarkersDataset(train_image_dir, train_keypoint_dir, input_width, input_height, only_corners=only_corners)
+    val_dataset = MarkersDataset(val_image_dir, val_keypoint_dir, input_width, input_height, only_corners=only_corners)
 
     if len(train_dataset) == 0:
         raise RuntimeError(f"No training data found in {train_image_dir} and {train_keypoint_dir}")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
     num_keypoints = train_dataset[0][1].shape[0] // 2
+
+    if only_corners:
+        num_keypoints = 4
+        print("ONLY CORNERS: Using 4 keypoints (corners only)")
+
     model = HRNetLiteKeypoint(num_keypoints, input_width, input_height, dropout_p=dropout_p).cuda()
 
     if load_model_path:
@@ -112,7 +124,11 @@ def train(
         wandb.log({"epoch": epoch + 1, "train_loss": avg_train_loss, "val_loss": avg_val_loss})
 
         if (epoch + 1) % 10 == 0:
-            torch.save(model.state_dict(), Path(save_dir) / f"lite_hrnet_epoch{epoch+1:03d}.pth")
+            if only_corners:
+                save_path = Path(save_dir) / f"lite_hrnet_corners_epoch{epoch+1:03d}.pth"
+            else:
+                save_path = Path(save_dir) / f"lite_hrnet_epoch{epoch+1:03d}.pth"
+            torch.save(model.state_dict(), save_path)
 
     wandb.finish()
 
@@ -130,8 +146,9 @@ if __name__ == "__main__":
         weight_decay=1e-4,
         dropout_p=0.2,
         save_dir="./hrnet_lite/checkpoints",
-        load_model_path="./hrnet_lite/checkpoints/lite_hrnet_epoch140.pth",
-        # load_model_path=None,
+        # load_model_path="./hrnet_lite/checkpoints/lite_hrnet_corners_epoch070.pth",
+        load_model_path=None,
         input_width=640,
-        input_height=480
+        input_height=480, 
+        only_corners=True 
     )

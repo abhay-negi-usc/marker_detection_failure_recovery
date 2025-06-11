@@ -113,10 +113,10 @@ def run_inference(
 
 if __name__ == "__main__":
     run_inference(
-        model_path="./hrnet_lite/checkpoints/lite_hrnet_epoch140.pth",
+        model_path="./hrnet_lite/checkpoints/lite_hrnet_corners_epoch300.pth",
         image_dir="./segmentation_model/data/data_20250603-201339/val/rgb",
         save_dir="./hrnet_lite/inference_results",
-        num_keypoints=(6+1)**2,  # Set according to your model
+        num_keypoints= 4, #(6+1)**2,  # Set according to your model
         input_width=640,
         input_height=480,
         device="cuda" if torch.cuda.is_available() else "cpu"
