@@ -1,3 +1,5 @@
+# NOTE: currently doesn't work as is, needs to be debugged. use compare_methods_updated instead (~15 minutes/1K images)
+
 import csv
 import json
 import logging
@@ -16,6 +18,14 @@ from keypoints_model.utils import overlay_points_on_image
 from real_data_processing.utils import *
 
 from keypoints_model.utils import compute_2D_gridpoints 
+from multiprocessing import Pool, cpu_count
+from tqdm import tqdm
+
+from multiprocessing import Pool, cpu_count, get_context
+from tqdm import tqdm
+import torch
+
+import PIL 
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -39,8 +49,7 @@ class DatasetProcessor:
     def __init__(self, config: dict):
         self.config = config
         self._load_parameters()
-        if config["set_CCV_ground_truth"] == False:
-            self._load_optitrack_data()
+        self._load_optitrack_data()
         self._load_realsense_data()
         self._set_datapoints()
         self.out_dir = self.config[OUT_DIR]
@@ -71,7 +80,6 @@ class DatasetProcessor:
         frames_dir = Path(self.realsense_video_file.replace('.mp4', '_frames'))
         if not frames_dir.exists() or not any(frames_dir.glob('*.png')):
             frames_dir.mkdir(parents=True, exist_ok=True)
-            print("[INFO] Splitting video to frames...")
             self.RLSN_time, self.realsense_frames_paths = split_video_to_frames(
                 self.realsense_video_file, str(frames_dir), get_timestamps=True
             )
@@ -129,6 +137,7 @@ class DatasetProcessor:
         self.OPTK_tf_c_m = np.array(tf_c_m)
 
         logger.info(f"[OptiTrack] Detection rate: {len(self.OPTK_time)}/{len(self.optitrack_data)}")
+
 
         optk_times = self.OPTK_time
         for dp in self.datapoints:
@@ -254,79 +263,43 @@ class DatasetProcessor:
         self.CCV_tf_mo_mi = np.array(tf_mo_mi)
         self.CCV_detected = detected
         self.CCV_corners = CCV_corners
-    def run_learning_based_detection(self, predict_fn, save_results=False, save_segmentation=False):
-        num_frames = len(self.datapoints)
-        tf_c_m_all = [None] * num_frames
-        LBCV_keypoints = [None] * num_frames
-        detected = [False] * num_frames
+    
+    def run_learning_based_detection(self, predict_config_dict, save_results=False, save_segmentation=False):
+        args_list = [(idx, dp, self.tf_w_c) for idx, dp in enumerate(self.datapoints)]
+        with get_context("spawn").Pool(cpu_count(), initializer=init_lbcv_predictor, initargs=(predict_config_dict,)) as pool:
+            results = list(tqdm(
+                pool.starmap(detect_lbcv_single_frame, args_list),
+                total=len(args_list),
+                desc="Running LBCV Detection"
+            ))
 
-        tf_w_m, tf_mo_mi, timestamps = [], [], []
+        tf_c_m_all = [None] * len(self.datapoints)
+        LBCV_keypoints = [None] * len(self.datapoints)
+        detected = [False] * len(self.datapoints)
+        tf_w_m_all = []
+        tf_mo_mi = []
+        timestamps = []
         tf_mo_w = None
 
-        output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_LBCV'))
-        if save_results:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            (output_dir / "keypoints_overlay").mkdir(exist_ok=True)
-            (output_dir / "keypoints_json").mkdir(exist_ok=True)
-        if save_segmentation:
-            (output_dir / "segmentation_masks").mkdir(parents=True, exist_ok=True)
-            (output_dir / "segmentation_masks_full").mkdir(parents=True, exist_ok=True)
-
-        for idx, dp in enumerate(self.datapoints):
-            image = dp.get_image()
-            if image is None:
-                continue
-
-            result = predict_fn(image)
-            if isinstance(result, tuple) and len(result) == 4:
-                tf_marker, keypoints, segmentation_mask, segmentation_mask_full = result
-            else:
-                tf_marker, keypoints, segmentation_mask, segmentation_mask_full = None, None, None, None
-
-            tf_c_m_all[idx] = tf_marker
+        for idx, tf_c_m, tf_w_m, keypoints, seg_mask, is_detected, ts in results:
+            tf_c_m_all[idx] = tf_c_m
             LBCV_keypoints[idx] = keypoints
+            detected[idx] = is_detected
+            timestamps.append(ts)
 
-            if tf_marker is not None:
-                detected[idx] = True
-                tf_w_m_i = self.tf_w_c @ tf_marker
-                tf_w_m.append(tf_w_m_i)
-
-                if tf_mo_w is None:
-                    tf_mo_w = np.linalg.inv(tf_w_m_i)
-                    tf_mo_mi.append(np.eye(4))
-                else:
-                    tf_mo_mi.append(tf_mo_w @ tf_w_m_i)
-
-                timestamps.append(dp.time)
-
-            dp.set_pose("LBCV", tf_marker)
+            dp = self.datapoints[idx]
+            dp.set_pose("LBCV", tf_c_m)
             dp.set_lbcv_keypoints(keypoints)
 
-            if save_results and keypoints is not None:
-                overlay = overlay_points_on_image(image.copy(), keypoints, radius=3)
-                overlay_path = output_dir / "keypoints_overlay" / f"LBCV_frame_{idx:05d}.png"
-                overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-                Image.fromarray(overlay).save(str(overlay_path))
-
-                json_path = output_dir / "keypoints_json" / f"LBCV_frame_{idx:05d}.json"
-                with open(json_path, "w") as f:
-                    json.dump(keypoints.tolist(), f)
-
-            if save_segmentation and segmentation_mask is not None:
-                seg_path = output_dir / "segmentation_masks" / f"LBCV_seg_{idx:05d}.png"
-                segmentation_mask.convert("L").save(str(seg_path))
-
-                seg_path_full = output_dir / "segmentation_masks_full" / f"LBCV_seg_{idx:05d}.png"
-                segmentation_mask_full.convert("L").save(str(seg_path_full))
-
-            # print progress every 5% 
-            if num_frames // 20 != 0: 
-                if idx % (num_frames // 20) == 0:
-                    logger.info(f"[LBCV] Processing frame {idx + 1}/{num_frames}")
+            if is_detected:
+                tf_w_m_all.append(tf_w_m)
+                tf_mo_mi.append(np.eye(4) if tf_mo_w is None else tf_mo_w @ tf_w_m)
+                if tf_mo_w is None:
+                    tf_mo_w = np.linalg.inv(tf_w_m)
 
         self.LBCV_time = np.array(timestamps) - timestamps[0] if timestamps else None
         self.LBCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
-        self.LBCV_tf_w_m = np.array(tf_w_m)
+        self.LBCV_tf_w_m = np.array(tf_w_m_all)
         self.LBCV_tf_mo_mi = np.array(tf_mo_mi)
         self.LBCV_detected = detected
         self.LBCV_keypoints = np.array(LBCV_keypoints, dtype=object)
@@ -399,8 +372,6 @@ class DatasetProcessor:
         self.LBCV_rotation_errors = []
 
         for dp in self.datapoints:
-            if self.config.get("set_CCV_ground_truth", False):
-                dp.set_pose("OPTK", dp.CCV_tf)
             CCV_error, LBCV_error = dp.compute_errors()
             self.CCV_translation_errors.append(CCV_error["translation"] if CCV_error else None)
             self.CCV_rotation_errors.append(CCV_error["rotation"] if CCV_error else None)
@@ -489,9 +460,160 @@ class DatasetProcessor:
         with open(f"{summary_base}.json", 'w') as f:
             json.dump(sanitize_for_json(rows), f, indent=2)
 
-    def set_OPTK_to_CCV(self): 
-        for dp in self.datapoints:
-            dp.set_pose("OPTK", dp.CCV_tf)
+# -----------------------
+# OpenCV helper function
+# -----------------------
+def detect_opencv_single_frame(args):
+    idx, frame_path, camera_matrix, dist_coeffs, aruco_dict, marker_length, tf_w_c, RLSN_time = args
+    try:
+        frame = cv2.imread(str(frame_path))
+        if frame is None:
+            return idx, None, None, None, False, RLSN_time[idx]
+
+        marker_ids, rvecs, tvecs, corners_tuple = marker_pose_estimation_estimatePoseSingleMarkers(
+            frame, camera_matrix, dist_coeffs, aruco_dict, marker_length, show=False)
+
+        if corners_tuple is not None:
+            corners = np.array([corner.reshape(-1, 2) for corner in corners_tuple])
+        else:
+            corners = None
+
+        if rvecs is not None and tvecs is not None:
+            tf = np.eye(4)
+            tf[:3, :3] = cv2.Rodrigues(rvecs[0])[0]
+            tf[:3, 3] = tvecs[0].reshape(3)
+            tf_w_m = tf_w_c @ tf
+            return idx, tf, tf_w_m, corners, True, RLSN_time[idx]
+    except Exception as e:
+        logging.warning(f"[CCV] Exception at frame {idx}: {e}")
+    return idx, None, None, None, False, RLSN_time[idx]
+
+# Global variable for lazy model loading
+_lbcv_predict_fn = None
+_device = None
+
+def init_lbcv_predictor(config_dict):
+    global _lbcv_predict_fn, _device
+    print(f"[init] Initializing model in subprocess PID {os.getpid()}")
+    _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config_dict["device"] = _device
+    _lbcv_predict_fn = build_lbcv_predictor(**config_dict)
+
+# -------------------------
+# LBCV helper function
+# -------------------------
+def detect_lbcv_single_frame(idx, dp, tf_w_c):
+    global _lbcv_predict_fn
+    image = dp.get_image()
+    if image is None or _lbcv_predict_fn is None:
+        return idx, None, None, None, None, False, dp.time
+
+    try:
+        result = _lbcv_predict_fn(image)
+        if isinstance(result, tuple) and len(result) == 4:
+            tf_marker, keypoints, segmentation_mask, segmentation_mask_full = result
+        else:
+            tf_marker, keypoints, segmentation_mask, segmentation_mask_full = None, None, None, None
+
+        tf_w_m = tf_w_c @ tf_marker if tf_marker is not None else None
+        detected = tf_marker is not None
+        return idx, tf_marker, tf_w_m, keypoints, segmentation_mask, detected, dp.time
+    except Exception as e:
+        logging.warning(f"[LBCV] Exception at frame {idx}: {e}")
+        return idx, None, None, None, None, False, dp.time
+
+# -----------------------
+# DatasetProcessor methods
+# -----------------------
+def run_opencv_fiducial_marker_detection(self, save_results=False):
+    args_list = [
+        (
+            idx,
+            self.realsense_frames_paths[idx],
+            self.camera_matrix,
+            self.dist_coeffs,
+            self.aruco_dict,
+            self.marker_length,
+            self.tf_w_c,
+            self.RLSN_time
+        )
+        for idx in range(len(self.realsense_frames_paths))
+    ]
+
+
+    with get_context("spawn").Pool(processes=2, initializer=init_lbcv_predictor, initargs=(predict_config_dict,)) as pool:
+        results = list(tqdm(pool.imap(detect_opencv_single_frame, args_list), total=len(args_list), desc="Running OpenCV Detection"))
+
+    num_frames = len(self.realsense_frames_paths)
+    tf_c_m_all = [None] * num_frames
+    tf_w_m_all, tf_mo_mi = [], []
+    CCV_corners = [None] * num_frames
+    detected = [False] * num_frames
+    timestamps = [None] * num_frames
+    tf_mo_w = None
+
+    for idx, tf, tf_w_m, corners, is_detected, ts in results:
+        tf_c_m_all[idx] = tf
+        timestamps[idx] = ts
+        CCV_corners[idx] = corners
+        detected[idx] = is_detected
+
+        if is_detected:
+            tf_w_m_all.append(tf_w_m)
+            tf_mo_mi.append(np.eye(4) if tf_mo_w is None else tf_mo_w @ tf_w_m)
+            if tf_mo_w is None:
+                tf_mo_w = np.linalg.inv(tf_w_m)
+
+    for idx, dp in enumerate(self.datapoints):
+        dp.set_pose("CCV", tf_c_m_all[idx])
+        dp.set_ccv_corners(CCV_corners[idx])
+
+    self.CCV_time = np.array(timestamps) - timestamps[0]
+    self.CCV_tf_c_m = tf_c_m_all
+    self.CCV_tf_w_m = np.array(tf_w_m_all)
+    self.CCV_tf_mo_mi = np.array(tf_mo_mi)
+    self.CCV_detected = detected
+    self.CCV_corners = CCV_corners
+
+def run_learning_based_detection(self, predict_config_dict, save_results=False, save_segmentation=False):
+    args_list = [(idx, dp, self.tf_w_c) for idx, dp in enumerate(self.datapoints)]
+    with get_context("fork").Pool(cpu_count(), initializer=init_lbcv_predictor, initargs=(predict_config_dict,)) as pool:
+        results = list(tqdm(
+            pool.starmap(detect_lbcv_single_frame, args_list),
+            total=len(args_list),
+            desc="Running LBCV Detection"
+        ))
+
+    tf_c_m_all = [None] * len(self.datapoints)
+    LBCV_keypoints = [None] * len(self.datapoints)
+    detected = [False] * len(self.datapoints)
+    tf_w_m_all = []
+    tf_mo_mi = []
+    timestamps = []
+    tf_mo_w = None
+
+    for idx, tf_c_m, tf_w_m, keypoints, seg_mask, is_detected, ts in results:
+        tf_c_m_all[idx] = tf_c_m
+        LBCV_keypoints[idx] = keypoints
+        detected[idx] = is_detected
+        timestamps.append(ts)
+
+        dp = self.datapoints[idx]
+        dp.set_pose("LBCV", tf_c_m)
+        dp.set_lbcv_keypoints(keypoints)
+
+        if is_detected:
+            tf_w_m_all.append(tf_w_m)
+            tf_mo_mi.append(np.eye(4) if tf_mo_w is None else tf_mo_w @ tf_w_m)
+            if tf_mo_w is None:
+                tf_mo_w = np.linalg.inv(tf_w_m)
+
+    self.LBCV_time = np.array(timestamps) - timestamps[0] if timestamps else None
+    self.LBCV_tf_c_m = np.array([t for t in tf_c_m_all if t is not None])
+    self.LBCV_tf_w_m = np.array(tf_w_m_all)
+    self.LBCV_tf_mo_mi = np.array(tf_mo_mi)
+    self.LBCV_detected = detected
+    self.LBCV_keypoints = np.array(LBCV_keypoints, dtype=object)
 
 def build_lbcv_predictor(
     seg_model_path: str,
@@ -722,25 +844,41 @@ def build_lbcv_predictor(
 
     return predict_pose_from_image
 
-# === Entry Function ===
 def run_full_analysis(config, predict_fn=None, summary_path=None):
     processor = DatasetProcessor(config)
+    print("defined processor")
     processor.set_marker_detector()
-    if config["set_CCV_ground_truth"] == False: 
-        processor.process_optitrack_data(save_overlay=False)
+    print("set marker detector")
+    processor.process_optitrack_data(save_overlay=False)
+    print("processed optitrack data")
     processor.run_opencv_fiducial_marker_detection(save_results=False)
-    if config["set_CCV_ground_truth"] == True: 
-        processor.set_OPTK_to_CCV() 
+    print("ran OpenCV detection")
     if predict_fn is not None:
-        processor.run_learning_based_detection(predict_fn, save_results=False, save_segmentation=False)
+        # Example config dictionary to initialize LBCV predictor
+        predict_config_dict = {
+            "checkpoint_path": "./models/lbcv_checkpoint.pth",
+            "num_keypoints": 16,
+            "input_width": 640,
+            "input_height": 480,
+            "normalize": True,
+            "device": "cuda"  # Optional, overridden in subprocess
+        }
+
+        processor.run_learning_based_detection(predict_config_dict)
+        # processor.run_learning_based_detection(predict_fn, save_results=False, save_segmentation=False)
+        print("ran LBCV detection")
     processor.compare_detection()
+    print("compared detection")
     processor.compare_pose_estimation()
+    print("compared pose estimation")
     if summary_path is None:
-        summary_path = os.path.join(config["OUT_DIR"], "marker_pose_summary.csv")
+        summary_path = os.path.join(config[OUT_DIR], "marker_pose_summary.csv")
     processor.save_summary_csv(summary_path)
+    print("saved summary CSV")
     logger.info(f"Analysis complete. Summary saved to {summary_path}")
 
 if __name__ == "__main__":
+
     # === Trial and Calibration Parameters ===
     trial_idx = 6
     calibration_name = "charuco_415"
@@ -759,8 +897,9 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown calibration: {calibration_name}")
     
     fx, fy, cx, cy, dist_coeffs = calibration_configs[calibration_name]
+    camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 
-    # # === Extrinsic Transforms ===
+    # === Extrinsics and Tag Transforms ===
     tf_w_c = np.array([
         [ 2.75948359e-02,  5.52790892e-04, -9.99538260e-01, -4.83132852e-04],
         [ 3.38597313e-03, -9.99963612e-01, -4.62774725e-04,  2.35655819e-02],
@@ -769,56 +908,55 @@ if __name__ == "__main__":
     ])  
 
     delta = np.array([[ 0.9984765 ,  0.00725654,  0.05533876,  0.00688403],
-       [-0.00747035,  0.99998515,  0.00279132, -0.00463532],
-       [-0.05531373, -0.00320403,  0.99851338,  0.00410505],
-       [ 0.        ,  0.        ,  0.        ,  1.        ]]) 
+                      [-0.00747035,  0.99998515,  0.00279132, -0.00463532],
+                      [-0.05531373, -0.00320403,  0.99851338,  0.00410505],
+                      [ 0.        ,  0.        ,  0.        ,  1.        ]]) 
 
     tf_trackmark_fidumark = np.array([
-        [-1,0,0,0],
-        [0,1,0,0],
-        [0,0,-1,0],
-        [0,0,0,1]
-    ]) @ np.linalg.inv(delta) 
+        [-1, 0, 0, 0],
+        [ 0, 1, 0, 0],
+        [ 0, 0,-1, 0],
+        [ 0, 0, 0, 1]
+    ]) @ np.linalg.inv(delta)
 
+    # === Config Dictionary ===
     config = {
         "trial_idx": trial_idx,
-        OPTITRACK_CSV_FILE: f"./test_data/optitrack/optitrack_{trial_idx}.csv",
-        REALSENSE_VIDEO_FILE: f"./test_data/realsense/realsense_{trial_idx}.mp4",
-        # OPTITRACK_CSV_FILE: None,
-        # REALSENSE_VIDEO_FILE: f"./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4",
-
-        TF_TRACKMARK_FIDUMARK: tf_trackmark_fidumark,
-        CAMERA_INTRINSIC_MATRIX: np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
-        CAMERA_DIST_COEFFS: dist_coeffs,
-        ARUCO_DICT: cv2.aruco.DICT_APRILTAG_36h11,
-        MARKER_LENGTH: 0.0798,
-        CAMERA_EXTRINSIC_MATRIX: tf_w_c,
-        T_OFFSET_OPTK_CCV: 1.15,
-        MAX_FRAMES: 10000, #28782,
-        OUT_DIR: f"./real_data_processing/results",
-        POSE_EST_METHOD: "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
-        "set_CCV_ground_truth":False, 
+        "optitrack_csv_file": f"./test_data/optitrack/optitrack_{trial_idx}.csv",
+        "realsense_video_file": f"./test_data/realsense/realsense_{trial_idx}.mp4",
+        "tf_trackmark_fidumark": tf_trackmark_fidumark,
+        "camera_intrinsic_matrix": camera_matrix,
+        "camera_dist_coeffs": dist_coeffs,
+        "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11,
+        "marker_length": 0.0798,
+        "camera_extrinsic_matrix": tf_w_c,
+        "t_offset_optk_ccv": 1.15,
+        "max_frames": 28782,
+        "out_dir": f"./real_data_processing/results",
+        "pose_est_method": "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
     }
 
-    # Set marker params
+    # === Load Marker and Keypoints ===
     marker_image_path = "./synthetic_data_generation/assets/tags/tag36h11_0.png"
     marker_image = Image.open(marker_image_path).convert("RGB")
-    marker_side_length = 0.0798  # meters
+    marker_side_length = config["marker_length"]
     marker_num_squares = 10
-    marker_side_length_with_border = marker_side_length * (marker_num_squares/(marker_num_squares-2))
+    marker_side_length_with_border = marker_side_length * (marker_num_squares / (marker_num_squares - 2))
     keypoints_tag_frame = np.array(compute_2D_gridpoints(N=marker_num_squares, s=marker_side_length_with_border))
 
+    # === Load Models and Construct Predictor ===
     predict_pose_from_image = build_lbcv_predictor(
         seg_model_path="./segmentation_model/models/my_checkpoint_20250329.pth.tar",
         kp_model_path="./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar",
         camera_matrix=config["camera_intrinsic_matrix"],
         dist_coeffs=config["camera_dist_coeffs"],
         marker_image=marker_image,
-        marker_side_length=MARKER_LENGTH,
+        marker_side_length=marker_side_length,
         keypoints_tag_frame=keypoints_tag_frame,
         method=config["pose_est_method"],
         kp_hrnet_model_path="./hrnet/checkpoints/hrnet_keypoint_best.pth",
     )
 
+    # === Run Full Analysis ===
     out_path = os.path.join(config[OUT_DIR], "trial_6.csv")
-    run_full_analysis(config, predict_pose_from_image, out_path) 
+    run_full_analysis(config, predict_pose_from_image, out_path)

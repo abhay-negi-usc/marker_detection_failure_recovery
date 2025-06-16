@@ -14,175 +14,152 @@ from keypoints_model.utils import (
     overlay_points_on_image,
 )
 import os 
+import wandb
 from PIL import Image
 import matplotlib.pyplot as plt 
 import numpy as np 
 from torchvision.transforms import ToPILImage
 import matplotlib
-matplotlib.use('Agg')  # Use Agg backend (non-Qt)
+matplotlib.use('Agg')
 
 
+# === Hyperparameters ===
 LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
 BATCH_SIZE = 128          
-NUM_EPOCHS = 10000 
+NUM_EPOCHS = 1000000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 24 
 IMAGE_HEIGHT = 128 
 IMAGE_WIDTH = 128 
-TEST_FREQUENCY = 10 
+TEST_FREQUENCY = 100 
 PIN_MEMORY = True 
 LOAD_MODEL = True 
-# MAIN_DIR = "./segmentation_model/data/data_20250330-013534/" 
-MAIN_DIR = "./segmentation_model/data/data_20250330-013534/" 
-# TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "rgb") 
-# TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
-# VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "rgb")  
-# VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
+# LOAD_PATH = "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar"
+LOAD_PATH = "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth (copy).tar"
+MAIN_DIR = "./segmentation_model/data/data_20250330-013534_reaugmented/" 
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb_reaugmented") 
-TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "keypoints")
+TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
 VAL_IMG_DIR = os.path.join(MAIN_DIR, "val", "roi_rgb_reaugmented")  
-VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "keypoints")
-    
+VAL_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "val", "roi_keypoints")
+
 def train_fn(loader, model, optimizer, loss_fn, scaler): 
-    loop = tqdm(loader) # progress bar 
+    loop = tqdm(loader)
+    running_loss = 0
 
     for batch_idx, (data, targets) in enumerate(loop): 
         data = data.to(device=DEVICE).to(torch.float32).permute(0,3,1,2) 
-        targets = targets.float().to(device=DEVICE) 
+        targets = targets.float().to(DEVICE) 
 
-        # forward 
         with torch.amp.autocast(device_type=DEVICE): 
             predictions = model(data) 
             loss = loss_fn(predictions, targets) 
 
-        # backward 
         optimizer.zero_grad() 
         scaler.scale(loss).backward() 
         scaler.step(optimizer)
         scaler.update() 
 
-        # update tqdm loop 
-        loop.set_postfix(loss=loss.item())         
+        running_loss += loss.item()
+        loop.set_postfix(loss=loss.item())  
 
-def save_predictions_as_imgs(
-    loader, model, folder="saved_images/", device="cuda"
-):
+    avg_loss = running_loss / len(loader)
+    return avg_loss
+
+def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda"):
     model.eval()
     to_pil = ToPILImage()
+    os.makedirs(folder, exist_ok=True)
     for idx, (x, y) in enumerate(loader):
         x = x.to(device=device).to(torch.float32).permute(0,3,1,2) 
         with torch.no_grad():
             preds = model(x)
 
-    for j in range(len(preds)): 
-        pred = preds[j]
+        for j in range(len(preds)): 
+            pred = preds[j].cpu().numpy().reshape(-1, 2)
+            # img_rgb = to_pil(x[j])
+            # keypoints_image = overlay_points_on_image(image=np.array(img_rgb), pixel_points=pred, radius=1)
+            img_array = (x[j].cpu().numpy().transpose(1, 2, 0) * 255).clip(0, 255).astype(np.uint8)
+            keypoints_image = overlay_points_on_image(image=img_array, pixel_points=pred, radius=1)
+            save_path = os.path.join(folder, f"pred_{idx}_{j}.png")
+            plt.imshow(keypoints_image)
+            plt.axis('off')
+            plt.title(f'Prediction {idx}_{j}')
+            plt.savefig(save_path)
+            plt.close()
+            wandb.log({f"predictions/pred_{idx}_{j}": wandb.Image(save_path)})
 
-        # prediction is a tensor, so convert it to a numpy array 
-        pred = pred.cpu().numpy()  # Move the prediction to the CPU and convert to a numpy array 
-        # pred = pred.squeeze(0)  # Remove the batch dimension
+def main():
+    wandb.init(project="fiducial-keypoints", name="mobilenetv3-reaugmented", config={
+        "learning_rate": LEARNING_RATE,
+        "batch_size": BATCH_SIZE,
+        "num_epochs": NUM_EPOCHS,
+        "image_size": (IMAGE_HEIGHT, IMAGE_WIDTH),
+        "train_data": TRAIN_IMG_DIR,
+        "val_data": VAL_IMG_DIR,
+        "loss": "L1Loss",
+        "resume":"auto", 
+    })
 
-        # reshape the prediction and true keypoints to (num_keypoints, 2)
-        pred = pred.reshape(-1, 2)
+    train_transform = A.Compose([
+        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], max_pixel_value=255.0),
+        ToTensorV2(),
+    ])
 
-        img_rgb = to_pil(x[j])  # Convert the j-th image in the batch to a PIL image
-        keypoints_image = overlay_points_on_image(image=np.array(img_rgb), pixel_points=pred, radius=1)
-        plt.imshow(keypoints_image)
-        plt.axis('off')  # Hide axes
-        plt.title(f'Keypoints Image {j}') 
-        plt.savefig(os.path.join(folder, f"pred_{j}.png")) 
-        plt.close() 
-        
-        # torchvision.utils.save_image(
-        #     preds, f"{folder}/pred_{idx}.png"
-        # )
-        # torchvision.utils.save_image(x, f"{folder}/rgb_{idx}.png", normalize=True)  
-        
+    val_transform = A.Compose([
+        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], max_pixel_value=255.0),
+        ToTensorV2(),
+    ])
 
-def main(): 
-    train_transform = A.Compose(
-        [
-            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
-            A.Normalize(
-                mean=[0.485, 0.456, 0.406],  # ImageNet mean values
-                std=[0.229, 0.224, 0.225],   # ImageNet std values
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ]
-    )
-
-    val_transform = A.Compose(
-        [
-            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
-            A.Normalize(
-                mean=[0.485, 0.456, 0.406],  # ImageNet mean values
-                std=[0.229, 0.224, 0.225],   # ImageNet std values
-                max_pixel_value=255.0,
-            ),
-            ToTensorV2(),
-        ]
-    )
-
-    model = RegressorMobileNetV3().to(DEVICE) 
-    
-    loss_fn = nn.MSELoss()  
-    # loss_fn = nn.L1Loss() 
+    model = RegressorMobileNetV3().to(DEVICE)
+    loss_fn = nn.L1Loss()  # Using L1 loss for keypoint regression
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(
-        TRAIN_IMG_DIR, 
-        TRAIN_KEYPOINTS_DIR,
-        VAL_IMG_DIR, 
-        VAL_KEYPOINTS_DIR,
-        BATCH_SIZE,
-        train_transform,
-        val_transform,
-        NUM_WORKERS,
-        PIN_MEMORY
+        TRAIN_IMG_DIR, TRAIN_KEYPOINTS_DIR,
+        VAL_IMG_DIR, VAL_KEYPOINTS_DIR,
+        BATCH_SIZE, train_transform, val_transform,
+        NUM_WORKERS, PIN_MEMORY
     )
 
-    if LOAD_MODEL: 
-        load_checkpoint(torch.load("./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar"), model)
+    if LOAD_MODEL:
+        checkpoint = torch.load(LOAD_PATH)
+        model.load_state_dict(checkpoint["state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        start_epoch = checkpoint.get("epoch", 0)
+        print(f"[INFO] Resuming from epoch {start_epoch}")
+    else:
+        start_epoch = 0
 
-    save_count = 0 
-
+    save_count = 0
+    best_mae_loss = float('inf')
     scaler = torch.amp.GradScaler()
-    for epoch in range(NUM_EPOCHS): 
-        train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-        # save model 
-        checkpoint = {
-            "state_dict": model.state_dict(),
-            "optimizer": optimizer.state_dict(), 
-        }
-
-        # new_mse_loss = evaluate_mse_loss(val_loader, model, device=DEVICE) 
-        # print(f"EPOCH: {epoch}. MSE: {new_mse_loss:.2f}") 
+    for epoch in range(start_epoch, NUM_EPOCHS):
+        train_loss = train_fn(train_loader, model, optimizer, loss_fn, scaler)
+        wandb.log({"train/epoch_loss": train_loss}, step=epoch)
 
         new_mae_loss = evaluate_l1_loss(val_loader, model, device=DEVICE)
-        print(f"EPOCH: {epoch}. MAE: {new_mae_loss:.2f}") 
+        wandb.log({"val/mae_loss": new_mae_loss}, step=epoch)
+        print(f"EPOCH: {epoch}. MAE: {new_mae_loss:.4f}") 
 
-        if epoch == 0: 
-            # best_mse_loss = new_mse_loss
-            best_mae_loss = new_mae_loss 
+        if new_mae_loss < best_mae_loss and epoch > num_epoch_dont_save:
+            best_mae_loss = new_mae_loss
+            save_checkpoint({
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch + 1,  # resume from next epoch
+            }, "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar")
 
-        # if new_mse_loss < best_mse_loss and epoch > num_epoch_dont_save: 
-            # best_mse_loss = new_mse_loss 
-        if new_mae_loss < best_mae_loss and epoch > num_epoch_dont_save: 
-            best_mae_loss = new_mae_loss 
-            save_checkpoint(checkpoint, "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar") # update to save checkpoint with dice score in filename 
+            # if save_count > TEST_FREQUENCY:
+            #     save_predictions_as_imgs(val_loader, model, folder="saved_images/", device=DEVICE)
+            #     save_count = 0
 
-            if save_count > TEST_FREQUENCY: 
-                # print some examples to folder 
-                saved_images_dir = "saved_images/"
-                os.makedirs(saved_images_dir, exist_ok=True)
-                save_predictions_as_imgs(
-                    val_loader, model, folder=saved_images_dir, device=DEVICE
-                )
-                save_count = 0 
-        
-        save_count += 1 
+        save_count += 1
+
+    wandb.finish()
 
 if __name__ == "__main__": 
-    main() 
+    main()
