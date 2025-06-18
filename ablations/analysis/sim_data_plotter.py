@@ -110,7 +110,7 @@ class Plotter():
         sns.scatterplot(x=ablation_variable, y='LBCV_IOU', data=self.df_data, label='LBCV', alpha=0.5)
 
         df_sorted = self.df_data.sort_values(by=ablation_variable)
-        window = max(5, len(df_sorted) // 50)
+        window = max(5, len(df_sorted) // 20)
         mean_var = df_sorted[ablation_variable].rolling(window).mean()
         roll_iou = df_sorted['LBCV_IOU'].rolling(window).mean()
         plt.plot(mean_var, roll_iou, label='LBCV IOU (Moving Mean)', linewidth=2)
@@ -159,6 +159,25 @@ class Plotter():
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_scatter.png"))
         plt.close()
     
+    def output_labeled_images(self, ablation_variable): 
+        # Create directory for labeled images
+        images_dir = self.config["results_path"].replace("results/results.csv", "rgb/")
+        dir_labeled = os.path.join(self.output_dir, "labeled_images")
+        os.makedirs(dir_labeled, exist_ok=True)
+
+        # Iterate through the DataFrame and save labeled images
+        for idx, row in self.df_data.iterrows():
+            image_path = row['image_path']
+            ablation_value = row[ablation_variable]
+            plt.figure(figsize=(10, 6))
+            img = plt.imread(image_path)
+            plt.imshow(img)
+            plt.title(f'{ablation_variable.replace("_", " ").title()}: {float(ablation_value):.4f}')
+            plt.axis('off')
+            output_path = os.path.join(dir_labeled, f"labeled_{idx}.png")
+            plt.savefig(output_path, bbox_inches='tight')
+            plt.close()
+
     def find_worst_performing(self, ablation_variable): 
         # find indices where LBCV detection is false 
         indices_undetected = self.df_data[self.df_data['detected_LBCV'] == 0].index
@@ -173,8 +192,16 @@ class Plotter():
             ablation_value = self.df_data.loc[idx, ablation_variable]
             plt.figure(figsize=(10, 6))
             img = plt.imread(image_path)
+            # add text showing the ablation variable and its value, and the IOU value, and the MAE translation error and MAE rotation error 
+            plt.text(10, 20, f'{ablation_variable.replace("_", " ").title()}: {ablation_value}', color='white', fontsize=12, bbox=dict(facecolor='black', alpha=0.5))
+            plt.text(10, 40, f'IOU: {self.df_data.loc[idx, "LBCV_IOU"]:.2f}', color='white', fontsize=12, bbox=dict(facecolor='black', alpha=0.5))
+            plt.text(10, 60, f'MAE Translation: {self.df_data.loc[idx, "pose_error_LBCV_x"]:.2f}, {self.df_data.loc[idx, "pose_error_LBCV_y"]:.2f}, {self.df_data.loc[idx, "pose_error_LBCV_z"]:.2f}', color='white', fontsize=12, bbox=dict(facecolor='black', alpha=0.5))
+            plt.text(10, 80, f'MAE Rotation: {self.df_data.loc[idx, "pose_error_LBCV_a"]:.2f}, {self.df_data.loc[idx, "pose_error_LBCV_b"]:.2f}, {self.df_data.loc[idx, "pose_error_LBCV_c"]:.2f}', color='white', fontsize=12, bbox=dict(facecolor='black', alpha=0.5))
+            # save the image with the text
+            plt.title(f'LBCV Undetected - {ablation_variable.replace("_", " ").title()}: {float(ablation_value):.4f}')
+            plt.tight_layout()
             plt.imshow(img)
-            plt.title(f'{ablation_variable.replace("_", " ").title()}: {ablation_value}')
+            # Hide axes 
             plt.axis('off')
             output_path = os.path.join(dir_undetected, f"LBCV_undetected_{idx}.png")
             plt.savefig(output_path, bbox_inches='tight')
@@ -189,7 +216,7 @@ class Plotter():
             plt.figure(figsize=(10, 6))
             img = plt.imread(image_path)
             plt.imshow(img)
-            plt.title(f'{ablation_variable.replace("_", " ").title()}: {ablation_value}')
+            plt.title(f'{ablation_variable.replace("_", " ").title()}: {float(ablation_value):.4f}')
             plt.axis('off')
             output_path = os.path.join(dir_lowest_iou, f"LBCV_lowest_IOU_{idx}.png")
             plt.savefig(output_path, bbox_inches='tight')
@@ -198,15 +225,21 @@ class Plotter():
 
 if __name__ == "__main__":
 
-    config = {
-        "results_path": "./ablations/data/exp_sdg_20250618-001509/results/results.csv", 
-        "output_path": "./ablations/data/exp_sdg_20250618-001509/results/plots",
-    }
+    # underexposure: exp_sdg_20250617-211257 
+    # truncation, fixed background: exp_sdg_20250618-102429 
+    # distance: exp_sdg_20250618-125218
+    # skew: exp_sdg_20250618-144529 
 
-    ablation_variable = "fraction_marker_visible"  
+    config = {
+        "results_path": "./ablations/data/exp_sdg_20250618-144529/results/results.csv", 
+        "output_path": "./ablations/data/exp_sdg_20250618-144529/results/plots",
+    } 
+
+    ablation_variable = "skew" # ambient_light_intensity, fraction_marker_visible, distance, skew 
 
     plotter_instance = Plotter(config) 
     plotter_instance.detection_plot(ablation_variable, n_bins=10)
     plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
     plotter_instance.error_plot(ablation_variable) 
     plotter_instance.find_worst_performing(ablation_variable) 
+    plotter_instance.output_labeled_images(ablation_variable) 

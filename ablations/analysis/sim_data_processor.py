@@ -178,13 +178,19 @@ class DataProcessor():
                     tf_marker[:3, :3] *= 10 
 
                 # apply correction, #FIXME: perhaps this should be defined as the camera extrinsic 
-                tf_correction = np.array([
-                    [-1,0,0,0],
-                    [0,1,0,0],
+                tf_camopencv_camisaac = np.array([
+                    [1,0,0,0],
+                    [0,-1,0,0],
                     [0,0,-1,0],
                     [0,0,0,1]
-                ]) 
-                tf_marker = tf_correction @ tf_marker  
+                ])
+                tf_markerisaac_markeropencv = np.array([
+                    [-1,0,0,0],
+                    [0,-1,0,0],
+                    [0,0,1,0],
+                    [0,0,0,1]
+                ])
+                tf_marker = tf_camopencv_camisaac @ tf_marker @ tf_markerisaac_markeropencv 
 
                 self.tf_marker.append(tf_marker)
                 self.datapoints[idx].set_true_pose(tf_marker) 
@@ -405,6 +411,7 @@ class DataProcessor():
                         [0,0,0,1] 
                     ])
                     tf_est = tf_est @ tf_correction 
+                    # tf_est = tf_est 
             else: 
                 keypoints_est = None 
                 tf_est = None 
@@ -449,14 +456,7 @@ class DataProcessor():
                 [ self.marker_length_without_border / 2, -self.marker_length_without_border / 2, 0]
             ])
 
-            # Transform to camera frame using tf_true
-            tf_correction = np.array([
-                    [-1,0,0,0],
-                    [0,-1,0,0],
-                    [0,0,1,0],
-                    [0,0,0,1]
-                ])
-            tf_true = tf_correction @ datapoint.tf_true # 4x4
+            tf_true = datapoint.tf_true # 4x4
             R = tf_true[:3, :3]
             t = tf_true[:3, 3].reshape(3, 1)
 
@@ -555,6 +555,7 @@ class DataProcessor():
             "pose_error_LBCV_c",
             "lateral",
             "fraction_marker_visible",
+            "skew", 
         ]) # for storing packed results in a pandas DataFrame format 
 
         for idx, datapoint in enumerate(self.datapoints): 
@@ -580,6 +581,7 @@ class DataProcessor():
             self.df_results.loc[idx, "distance_to_camera"] = datapoint.metadata.get("distance", None)
             self.df_results.loc[idx, "lateral"] = datapoint.metadata.get("lateral", None)
             self.df_results.loc[idx, "fraction_marker_visible"] = datapoint.fraction_marker_visible 
+            self.df_results.loc[idx, "skew"] = datapoint.metadata.get("skew", None) 
             self.df_results.loc[idx, "detected_CCV"] = datapoint.CCV_detected 
             self.df_results.loc[idx, "tf_true_Rxx"] = datapoint.tf_true[0, 0]
             self.df_results.loc[idx, "tf_true_Rxy"] = datapoint.tf_true[0, 1]
@@ -701,7 +703,7 @@ def main():
         "fx": width * focal_length / horiz_aperture,
         "fy": height * focal_length / vert_aperture,
         "cx": width / 2,
-        "cy": height /2 ,
+        "cy": height / 2,
         "distortion_coefficients": np.zeros(5),
     }
 
@@ -714,7 +716,10 @@ def main():
 
     config = {
         # "data_path": "./ablations/data/exp_sdg_20250617-211257/", # ambient lighting 
-        "data_path": "./ablations/data/exp_sdg_20250618-001509/", # lateral position 
+        # "data_path": "./ablations/data/exp_sdg_20250618-001509/", # lateral position 
+        # "data_path": "./ablations/data/exp_sdg_20250618-102429/", # lateral position - fixed background 
+        # "data_path": "./ablations/data/exp_sdg_20250618-125218/", # distance   
+        "data_path": "./ablations/data/exp_sdg_20250618-144529/", # skew 
         "max_num_datapoints": None, 
         "camera_parameters": camera_parameters,
         "marker_parameters": marker_parameters, 

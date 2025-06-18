@@ -1,5 +1,5 @@
-# ~/isaacsim/python.sh ablations/synthetic_data_generation/underexposure_sdg.py 
-# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh ablations/synthetic_data_generation/underexposure_sdg.py 
+# ~/isaacsim/python.sh ablations/synthetic_data_generation/skew_sdg.py 
+# ~/.local/share/ov/pkg/isaac-sim-4.5.0/python.sh ablations/synthetic_data_generation/skew_sdg.py 
 
 
 # DESCRIPTION: 
@@ -614,23 +614,28 @@ backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(di
 backgrounds = backgrounds_files_all[:N_backgrounds]  
 
 N_distances = 1 
-distance_min = 0.5 
+distance_min = 0.5
 distance_max = 0.5 
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
 N_intensity = 1 
-intensity_min = 150
-intensity_max = 150 
+intensity_min = 250
+intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
-N_lateral = 1001 
-lateral_min = 0.15
-lateral_max = 0.35
+N_lateral = 1 
+lateral_min = 0
+lateral_max = 0 
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()
+
+N_skew = 1001 
+skew_min = -45
+skew_max = +45 
+skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
 # create a test matrix 
 test_matrix = []
-num_frames = N_backgrounds * N_distances * N_intensity * N_lateral 
+num_frames = N_backgrounds * N_distances * N_intensity * N_lateral * N_skew
 for i in range(num_frames):
     background = backgrounds[i % N_backgrounds]
     distance = distances[i % N_distances]
@@ -651,12 +656,13 @@ random.shuffle(test_matrix)
 for i in range(num_frames):
 
     # randomize variables 
-    rand_background_idx = np.random.randint(0, len(backgrounds_files_all)) 
+    rand_background_idx = 0 # np.random.randint(0, len(backgrounds_files_all)) 
     # background_plane_texture = test_matrix[i]["background"] 
     background_plane_texture = backgrounds_files_all[rand_background_idx]
     distance = test_matrix[i]["distance"]
     intensity = test_matrix[i]["intensity"]
     lateral = test_matrix[i]["lateral"]
+    skew =  skew_range[i % N_skew]
 
     # set background plane texture 
     prim_path = "/World/background_plane"
@@ -671,7 +677,7 @@ for i in range(num_frames):
     
     # set marker pose 
     new_pos = (lateral, 0.0, -distance)  # XYZ position
-    new_rot = (0.0, 0.0, 0.0)   # Euler angles in degrees
+    new_rot = (skew, 0.0, 0.0)   # Euler angles in degrees
     set_transform_attributes(tag_prim, location=new_pos, rotation=new_rot)
     
     # set distant light intensity
@@ -724,6 +730,7 @@ for i in range(num_frames):
         "distance": distance,
         "intensity": intensity,
         "lateral": lateral,
+        "skew": skew,
     } 
 
     write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")

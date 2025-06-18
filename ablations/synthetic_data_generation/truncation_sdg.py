@@ -651,7 +651,7 @@ random.shuffle(test_matrix)
 for i in range(num_frames):
 
     # randomize variables 
-    rand_background_idx = np.random.randint(0, len(backgrounds_files_all)) 
+    rand_background_idx = 0 # np.random.randint(0, len(backgrounds_files_all)) 
     # background_plane_texture = test_matrix[i]["background"] 
     background_plane_texture = backgrounds_files_all[rand_background_idx]
     distance = test_matrix[i]["distance"]

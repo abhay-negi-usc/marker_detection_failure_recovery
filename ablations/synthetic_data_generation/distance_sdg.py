@@ -613,14 +613,14 @@ N_backgrounds = 1
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[:N_backgrounds]  
 
-N_distances = 10 
-distance_min = 2.0 
-distance_max = 2.0 
+N_distances = 1001 
+distance_min = 0.1 
+distance_max = 5.0 
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
 N_intensity = 1 
-intensity_min = 150
-intensity_max = 150 
+intensity_min = 250
+intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
 N_lateral = 1 
@@ -651,7 +651,7 @@ random.shuffle(test_matrix)
 for i in range(num_frames):
 
     # randomize variables 
-    rand_background_idx = np.random.randint(0, len(backgrounds_files_all)) 
+    rand_background_idx = 0 # np.random.randint(0, len(backgrounds_files_all)) 
     # background_plane_texture = test_matrix[i]["background"] 
     background_plane_texture = backgrounds_files_all[rand_background_idx]
     distance = test_matrix[i]["distance"]
