@@ -4,8 +4,8 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm 
 import torch.nn as nn 
 import torch.optim as optim 
-from model import UNET, UNETWithDropout
-from utils import (
+from segmentation_model.model import UNET, UNETWithDropout
+from segmentation_model.utils import (
     load_checkpoint, 
     save_checkpoint, 
     get_loaders, 
@@ -15,30 +15,13 @@ from utils import (
 import os 
 import wandb
 
-# Initialize wandb
-wandb.init(
-    # project="contact_classification", 
-    # entity="abhay-negi-usc", 
-    config={
-        # "wandb_key":"9336a0a286df1f392970fb1192519ef0191ba865",
-        "wandb_project": "contact_classification", 
-        "wandb_entity": "abhay-negi-usc", 
-        "wandb_key": "af3eeeb1c9d72d3a76a00b58af7e341d8540ed1b",
-        "learning_rate": 1e-4,
-        "batch_size": 8,
-        "epochs": 1000,
-        "image_height": 480,
-        "image_width": 640,
-        "num_workers": 8,
-        "pin_memory": True,
-        "train_img_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/rgb",
-        "train_mask_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/train/seg",
-        "val_img_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/rgb",
-        "val_mask_dir": "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/val/seg",
-    }
-)
+DATA_DIR = "./segmentation_model/data/data_20250607-214821/" 
+TRAIN_IMG_DIR = f"{DATA_DIR}/train/rgb"
+TRAIN_MASK_DIR = f"{DATA_DIR}/train/seg"
+VAL_IMG_DIR = f"{DATA_DIR}/val/rgb"
+VAL_MASK_DIR = f"{DATA_DIR}/val/seg"
 
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-5 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
 BATCH_SIZE = 8 
 NUM_EPOCHS = 1000 
@@ -47,7 +30,7 @@ NUM_WORKERS = 8
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = False                         
+LOAD_MODEL = True                          
 
 def train_fn(loader, model, optimizer, loss_fn, scaler, epoch): 
     loop = tqdm(loader) # progress bar 
@@ -71,10 +54,21 @@ def train_fn(loader, model, optimizer, loss_fn, scaler, epoch):
         # accumulate loss
         epoch_loss += loss.item()
 
+        # Log batch loss to wandb
+        wandb.log({"batch_loss": loss.item(), "epoch": epoch, "batch_idx": batch_idx})
+
         # update tqdm loop 
         loop.set_postfix(loss=loss.item())         
 
-    # Log training loss to wandb
+        # Save checkpoint every 100 batches
+        if batch_idx % 1000 == 0: 
+            save_checkpoint({
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar")
+            }, f"/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar")
+
+    # Log average training loss to wandb
     avg_loss = epoch_loss / len(loader)
     wandb.log({"train_loss": avg_loss, "epoch": epoch})
 
@@ -123,8 +117,9 @@ def main():
     )
 
     if LOAD_MODEL: 
-        load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint.pth.tar"), model)
-        accuracy = 0.96
+        # load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint_20250329.pth.tar"), model)
+        load_checkpoint(torch.load("/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_0_batch_20000.pth.tar"), model)
+        accuracy = 0.0
     else: 
         accuracy = 0.0 
 
@@ -148,7 +143,8 @@ def main():
             save_checkpoint({
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
-            }, f"./segmentation_model/models/my_checkpoint_epoch_{epoch}_dice_{new_accuracy:.4f}.pth.tar")  # Save with epoch and accuracy
+            # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}.pth.tar")  # Save with epoch and accuracy
+            }, f"/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_{epoch}.pth.tar")  # Save with epoch and accuracy
 
             # Optionally save some predictions
             # saved_images_dir = "saved_images/"
@@ -157,5 +153,25 @@ def main():
             #     val_loader, model, folder=saved_images_dir, device=DEVICE
             # )
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
+    # Initialize wandb
+    wandb.init(
+        config={
+            "wandb_key": "9336a0a286df1f392970fb1192519ef0191ba865",
+            "wandb_project": "multimarker_segmentation", 
+            "wandb_entity": "abhay-negi-usc-university-of-southern-california", 
+            "learning_rate": 1e-4,
+            "batch_size": 128,
+            "epochs": 1_000_000,
+            "image_height": 480,
+            "image_width": 640,
+            "num_workers": 8,
+            "pin_memory": True,
+            "train_img_dir": TRAIN_IMG_DIR,
+            "train_mask_dir": TRAIN_MASK_DIR,
+            "val_img_dir": VAL_IMG_DIR,
+            "val_mask_dir": VAL_MASK_DIR,
+        }
+    )
+
     main()

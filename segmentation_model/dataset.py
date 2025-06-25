@@ -32,8 +32,9 @@ class MarkersDataset(Dataset):
         img_path = os.path.join(self.image_dir, self.images[index])
         img_filename = os.path.basename(img_path) 
         # replace all characters after last underscore with '.png' 
-        mask_filename = img_filename[:img_filename.rfind('_')] + '.png' 
-        mask_filename = mask_filename.replace('img', 'seg')  
+        # mask_filename = img_filename[:img_filename.rfind('_')] + '.png' 
+        # mask_filename = mask_filename.replace('img', 'seg')  
+        mask_filename = img_filename.replace('img', 'seg')  
         mask_path = os.path.join(
             self.mask_dir, 
             mask_filename
