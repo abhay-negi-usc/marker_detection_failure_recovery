@@ -849,7 +849,8 @@ if __name__ == "__main__":
 
     predict_pose_from_image = build_lbcv_predictor(
         seg_model_path="./segmentation_model/models/my_checkpoint_20250329.pth.tar",
-        kp_model_path="./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar",
+        # kp_model_path="./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar",
+        kp_model_path="./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth (copy).tar",
         camera_matrix=config["camera_intrinsic_matrix"],
         dist_coeffs=config["camera_dist_coeffs"],
         marker_image=marker_image,
@@ -859,6 +860,6 @@ if __name__ == "__main__":
         kp_hrnet_model_path="./hrnet/checkpoints/hrnet_keypoint_best.pth",
     )
 
-    out_path = os.path.join(config[OUT_DIR], "trial_6.csv")
+    out_path = os.path.join(config[OUT_DIR], "trial_6_reaug_model.csv")
     # out_path = os.path.join(config[OUT_DIR], "bright_test.csv")
     run_full_analysis(config, predict_pose_from_image, out_path) 
