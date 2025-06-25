@@ -10,6 +10,7 @@ from PIL import Image
 import albumentations as A
 from albumentations import Compose, Normalize
 from albumentations.pytorch import ToTensorV2
+import yaml 
 
 from segmentation_model.model import UNETWithDropout
 from segmentation_model.utils import load_checkpoint as load_seg_ckpt
@@ -501,6 +502,7 @@ class DataProcessor():
         self.df_results = pd.DataFrame(columns=[
             "idx", 
             "image_path",
+            "background_id",
             "ambient_light_intensity", 
             "distance_to_camera", 
             "tf_true_Rxx",
@@ -577,6 +579,7 @@ class DataProcessor():
 
             self.df_results.loc[idx,"idx"] = datapoint.idx 
             self.df_results.loc[idx, "image_path"] = datapoint.image_path
+            self.df_results.loc[idx, "background_id"] = datapoint.metadata.get("background_id", None) 
             self.df_results.loc[idx, "ambient_light_intensity"] = datapoint.metadata.get("intensity", None) 
             self.df_results.loc[idx, "distance_to_camera"] = datapoint.metadata.get("distance", None)
             self.df_results.loc[idx, "lateral"] = datapoint.metadata.get("lateral", None)
@@ -714,12 +717,20 @@ def main():
         "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11, 
     }
 
+    # get ablation data path 
+    ablation = "background" 
+    data_yaml_path = "./ablations/data/data_description.yaml" 
+    with open(data_yaml_path, 'r') as f:
+        data_description = yaml.safe_load(f) 
+    data_path = data_description[ablation]["data_path"] 
+
     config = {
         # "data_path": "./ablations/data/exp_sdg_20250617-211257/", # ambient lighting 
         # "data_path": "./ablations/data/exp_sdg_20250618-001509/", # lateral position 
         # "data_path": "./ablations/data/exp_sdg_20250618-102429/", # lateral position - fixed background 
         # "data_path": "./ablations/data/exp_sdg_20250618-125218/", # distance   
-        "data_path": "./ablations/data/exp_sdg_20250618-144529/", # skew 
+        # "data_path": "./ablations/data/exp_sdg_20250618-144529/", # skew 
+        "data_path": data_path, 
         "max_num_datapoints": None, 
         "camera_parameters": camera_parameters,
         "marker_parameters": marker_parameters, 

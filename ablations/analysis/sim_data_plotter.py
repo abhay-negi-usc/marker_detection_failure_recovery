@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd 
 import os 
 import json 
-
+import yaml 
 
 class Plotter(): 
     def __init__(self, config):
@@ -230,12 +230,19 @@ if __name__ == "__main__":
     # distance: exp_sdg_20250618-125218
     # skew: exp_sdg_20250618-144529 
 
+    # get ablation data path 
+    ablation = "background" 
+    data_yaml_path = "./ablations/data/data_description.yaml" 
+    with open(data_yaml_path, 'r') as f:
+        data_description = yaml.safe_load(f) 
+    data_path = data_description[ablation]["data_path"] 
+
     config = {
-        "results_path": "./ablations/data/exp_sdg_20250618-144529/results/results.csv", 
-        "output_path": "./ablations/data/exp_sdg_20250618-144529/results/plots",
+        "results_path": os.path.join(data_path, "results/results.csv"),
+        "output_path": os.path.join(data_path, "results/plots"),
     } 
 
-    ablation_variable = "skew" # ambient_light_intensity, fraction_marker_visible, distance, skew 
+    ablation_variable = "background_id" # ambient_light_intensity, fraction_marker_visible, distance, skew 
 
     plotter_instance = Plotter(config) 
     plotter_instance.detection_plot(ablation_variable, n_bins=10)
