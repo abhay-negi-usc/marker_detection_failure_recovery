@@ -1,6 +1,8 @@
 from scipy.spatial.transform import Rotation as R
 import numpy as np 
 import cv2
+import seaborn as sns
+import pandas as pd
 
 def compute_tf_error(tf_ref, tf_est):
     tf_err = np.linalg.inv(tf_ref) @ tf_est 

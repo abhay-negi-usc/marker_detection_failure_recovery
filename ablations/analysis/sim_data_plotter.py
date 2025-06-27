@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd 
 import os 
 import yaml 
-import re 
+from scipy.stats import gaussian_kde
 
 class Plotter(): 
     def __init__(self, config):
@@ -211,90 +211,92 @@ class Plotter():
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_scatter.png"))
         plt.close()
 
-    def error_ridge_plots(self, ablation_variable, n_bins=10, plot_CCV=False): 
+    def error_ridge_plots(self, ablation_variable, n_ablation_bins=10, plot_CCV=True):
+
         ablation_variable_pretty = ablation_variable.replace("_", " ").title()
         bin_name = f"{ablation_variable}_bin"
-        
-        # Bin the ablation variable
-        self.df_data[bin_name] = pd.cut(self.df_data[ablation_variable], bins=n_bins)
 
-        # Error dimensions to plot
+        # Bin the ablation variable
+        self.df_data[bin_name] = pd.cut(self.df_data[ablation_variable], bins=n_ablation_bins)
+
+        # Error types
         error_types = ['x', 'y', 'z', 'a', 'b', 'c']
-        
+
+        # Methods (both shown if requested)
+        methods = []
+        if plot_CCV:
+            methods.append('CCV')
+        if self.config.get("plot_HCV", False):
+            methods.append('HCV')
+
+        colors = {'CCV': 'blue', 'HCV': 'orange'}
+
         for err_type in error_types:
             plt.figure(figsize=(10, 6))
-            df_plot = pd.DataFrame()
+            bin_labels = self.df_data[bin_name].cat.categories
+            n_bins = len(bin_labels)
 
-            # Add CCV data if enabled
-            if plot_CCV:
-                df_plot = pd.concat([
-                    df_plot,
-                    pd.DataFrame({
-                        'Error': self.df_data[f'pose_error_CCV_{err_type}'],
-                        'Method': 'CCV',
-                        'AblationBin': self.df_data[bin_name].astype(str)
-                    })
-                ])
+            # Determine global x-axis range (across all bins and methods)
+            all_vals = []
+            for method in methods:
+                all_vals.append(self.df_data[f'pose_error_{method}_{err_type}'].dropna())
+            all_errors = pd.concat(all_vals)
+            max_abs = max(abs(all_errors.min()), abs(all_errors.max()))
+            x_vals = np.linspace(-max_abs, max_abs, 500)
 
-            # Add HCV data if enabled
-            if self.config.get("plot_HCV", False):
-                df_plot = pd.concat([
-                    df_plot,
-                    pd.DataFrame({
-                        'Error': self.df_data[f'pose_error_HCV_{err_type}'],
-                        'Method': 'HCV',
-                        'AblationBin': self.df_data[bin_name].astype(str)
-                    })
-                ])
+            for i, bin_label in enumerate(bin_labels):  # Normal order
+                y_shift = i
 
-            # Remove rows with NaN values in 'Error' or 'AblationBin'
-            df_plot = df_plot.dropna(subset=['Error', 'AblationBin']) 
+                bin_data = self.df_data[self.df_data[bin_name] == bin_label]
 
-            # Extract and sort AblationBin values by lower bound
-            unique_bins = df_plot['AblationBin'].dropna().unique()
-            row_order = sorted(unique_bins, key=lambda s: float(s.strip('()[]').split(',')[0]), reverse=True)
+                for method in methods:
+                    col = f'pose_error_{method}_{err_type}'
+                    error_vals = bin_data[col].dropna().values
 
-            # Create FacetGrid ridge plot
-            g = sns.FacetGrid(
-                df_plot, 
-                row='AblationBin', 
-                hue='Method', 
-                aspect=8, 
-                height=0.8, 
-                palette='muted',
-                row_order=row_order,
-            )
+                    if len(error_vals) < 1:
+                        continue
 
-            g.map(sns.kdeplot, 'Error', bw_adjust=0.7, fill=True, alpha=0.6, linewidth=1.5)
-            g.map(sns.kdeplot, 'Error', bw_adjust=0.7, color='k', linewidth=0.5)
-            g.map(plt.axhline, y=0, lw=1, clip_on=False)
+                    unique_vals = np.unique(error_vals)
 
-            # Add labels for ablation variable values
-            # Use the exact row_order (in correct order) for axis labeling
-            for ax, bin_label in zip(g.axes.flat, row_order):
-                ax.text(0, 0.02, f"{bin_label}", transform=ax.transAxes, ha="center", va="bottom", fontsize=10)
+                    # If not enough unique values, plot vertical mean line
+                    if len(unique_vals) < 2:
+                        mean_val = np.mean(error_vals)
+                        plt.plot([mean_val, mean_val], [y_shift, y_shift + 1], color=colors[method], linestyle='-', linewidth=1, label=method if i == 0 else "")
+                        continue
 
-            # Format
-            g.set_titles("")
-            g.set(yticks=[], ylabel="")
-            g.despine(bottom=True, left=True)
+                    try:
+                        kde = gaussian_kde(error_vals)
+                        y_vals = kde(x_vals)
 
-            # Common x-axis label
+                        mean_val = np.mean(error_vals)
+                        plt.plot([mean_val, mean_val], [y_shift, y_shift + 1], color=colors[method], linestyle='-', linewidth=2, label=method if i == 0 else "")
+
+                        y_vals = y_vals / y_vals.max()  # normalize
+                        plt.fill_between(x_vals, y_shift, y_vals + y_shift, alpha=0.5, color=colors[method], label=method if i == 0 else "")
+                        plt.plot(x_vals, y_vals + y_shift, color=colors[method], linewidth=1)
+                    except np.linalg.LinAlgError:
+                        mean_val = np.mean(error_vals)
+                        plt.plot([mean_val, mean_val], [y_shift, y_shift + 1], color=colors[method], linestyle='-', linewidth=1, label=method if i == 0 else "")
+                        continue
+
+                # Bin label on left
+                plt.text(-max_abs * 1.05, y_shift + 0.2, str(bin_label), va='center', ha='right', fontsize=8)
+
+            # Axis formatting
             err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
             xlabel = f"{err_type_name} Error (m)" if err_type in ['x', 'y', 'z'] else f"{err_type_name} Error (deg)"
-            g.set_xlabels(xlabel)
-
-            # Center all ridge plots horizontally at 0
-            g.set(xlim=(-max(abs(df_plot['Error'].min()), abs(df_plot['Error'].max())), 
-                        max(abs(df_plot['Error'].min()), abs(df_plot['Error'].max()))))
-
-            plt.subplots_adjust(hspace=-0.8)
-            plt.suptitle(f"{err_type_name} Error Distribution by {ablation_variable_pretty}", y=1.02)
+            plt.xlabel(xlabel)
+            plt.yticks([])
+            plt.title(f"{err_type_name} Error Distribution by {ablation_variable_pretty}")
+            # plt.axvline(0, color='black', linestyle='--', linewidth=1)
+            plt.xlim(-max_abs, max_abs)
+            plt.legend(loc='upper right')
             plt.tight_layout()
 
-            save_path = os.path.join(self.output_dir, f"{ablation_variable}_ridgeplot_{err_type}.png")
+            save_path = os.path.join(self.output_dir, f"{ablation_variable}_ridgeplot_combined_{err_type}.png")
             plt.savefig(save_path, bbox_inches='tight')
             plt.close()
+
 
     def output_labeled_images(self, ablation_variable): 
         # Create directory for labeled images
@@ -388,32 +390,27 @@ class Plotter():
 
 if __name__ == "__main__":
 
-    # underexposure: exp_sdg_20250617-211257 
-    # truncation, fixed background: exp_sdg_20250618-102429 
-    # distance: exp_sdg_20250618-125218
-    # skew: exp_sdg_20250618-144529 
+    ablations = ["skew_background", "distance_background", "underexposure_background"] # "truncation_background" 
+    for ablation in ablations:  
+        data_yaml_path = "./ablations/data/data_description.yaml" 
+        with open(data_yaml_path, 'r') as f:
+            data_description = yaml.safe_load(f) 
+        data_path = data_description[ablation]["data_path"] 
+        ablation_variable = data_description[ablation]["ablation_variable"] 
 
-    # get ablation data path 
-    ablation = "skew_background" # distance_background_v3, skew_background, truncation_background, underexposure_background, 
-    data_yaml_path = "./ablations/data/data_description.yaml" 
-    with open(data_yaml_path, 'r') as f:
-        data_description = yaml.safe_load(f) 
-    data_path = data_description[ablation]["data_path"] 
-    ablation_variable = data_description[ablation]["ablation_variable"] 
+        config = {
+            "results_path": os.path.join(data_path, "results/results.csv"),
+            "output_path": os.path.join(data_path, "results/plots"),
+            "plot_HCV": True, 
+            "plot_LBCV": False,
+        } 
 
-    config = {
-        "results_path": os.path.join(data_path, "results/results.csv"),
-        "output_path": os.path.join(data_path, "results/plots"),
-        "plot_HCV": True, 
-        "plot_LBCV": False,
-    } 
-
-    plotter_instance = Plotter(config) 
-    plotter_instance.detection_plot(ablation_variable, n_bins=10)
-    plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
-    plotter_instance.error_plot(ablation_variable) 
-    plotter_instance.error_ridge_plots(ablation_variable, plot_CCV=False)
-    # plotter_instance.find_worst_performing(ablation_variable) 
-    # plotter_instance.find_best_performing(ablation_variable) 
-    # plotter_instance.output_labeled_images(ablation_variable)
+        plotter_instance = Plotter(config) 
+        plotter_instance.detection_plot(ablation_variable, n_bins=10)
+        plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
+        plotter_instance.error_plot(ablation_variable) 
+        plotter_instance.error_ridge_plots(ablation_variable, plot_CCV=True)
+        # plotter_instance.find_worst_performing(ablation_variable) 
+        # plotter_instance.find_best_performing(ablation_variable) 
+        # plotter_instance.output_labeled_images(ablation_variable)
 
