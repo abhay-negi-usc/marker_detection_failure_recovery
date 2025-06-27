@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
 import os 
-import json 
 import yaml 
+import re 
 
 class Plotter(): 
     def __init__(self, config):
@@ -211,55 +211,90 @@ class Plotter():
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_scatter.png"))
         plt.close()
 
-    def error_ridgeline_plots(self, ablation_variable): 
+    def error_ridge_plots(self, ablation_variable, n_bins=10, plot_CCV=False): 
         ablation_variable_pretty = ablation_variable.replace("_", " ").title()
-        fig, axs = plt.subplots(2, 3, figsize=(15, 10))
-        axs = axs.flatten()
-        error_types = ['x', 'y', 'z', 'a', 'b', 'c'] 
+        bin_name = f"{ablation_variable}_bin"
+        
+        # Bin the ablation variable
+        self.df_data[bin_name] = pd.cut(self.df_data[ablation_variable], bins=n_bins)
 
-        for i, err_type in enumerate(error_types):
-            col_CCV = f'pose_error_CCV_{err_type}'
-            col_LBCV = f'pose_error_LBCV_{err_type}'
+        # Error dimensions to plot
+        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
+        
+        for err_type in error_types:
+            plt.figure(figsize=(10, 6))
+            df_plot = pd.DataFrame()
 
-            # Prepare data for ridgeline plot
-            df_ridgeline = self.df_data[[ablation_variable, col_CCV, col_LBCV]].copy()
-            df_ridgeline = df_ridgeline.melt(
-                id_vars=ablation_variable, 
-                value_vars=[col_CCV, col_LBCV], 
-                var_name="Method", 
-                value_name="Error"
+            # Add CCV data if enabled
+            if plot_CCV:
+                df_plot = pd.concat([
+                    df_plot,
+                    pd.DataFrame({
+                        'Error': self.df_data[f'pose_error_CCV_{err_type}'],
+                        'Method': 'CCV',
+                        'AblationBin': self.df_data[bin_name].astype(str)
+                    })
+                ])
+
+            # Add HCV data if enabled
+            if self.config.get("plot_HCV", False):
+                df_plot = pd.concat([
+                    df_plot,
+                    pd.DataFrame({
+                        'Error': self.df_data[f'pose_error_HCV_{err_type}'],
+                        'Method': 'HCV',
+                        'AblationBin': self.df_data[bin_name].astype(str)
+                    })
+                ])
+
+            # Remove rows with NaN values in 'Error' or 'AblationBin'
+            df_plot = df_plot.dropna(subset=['Error', 'AblationBin']) 
+
+            # Extract and sort AblationBin values by lower bound
+            unique_bins = df_plot['AblationBin'].dropna().unique()
+            row_order = sorted(unique_bins, key=lambda s: float(s.strip('()[]').split(',')[0]), reverse=True)
+
+            # Create FacetGrid ridge plot
+            g = sns.FacetGrid(
+                df_plot, 
+                row='AblationBin', 
+                hue='Method', 
+                aspect=8, 
+                height=0.8, 
+                palette='muted',
+                row_order=row_order,
             )
 
-            # Create ridgeline plot
-            sns.violinplot(
-                x="Error", 
-                y=ablation_variable, 
-                hue="Method", 
-                data=df_ridgeline, 
-                ax=axs[i], 
-                split=True, 
-                scale="width", 
-                inner="quartile", 
-                alpha=0.7
-            )
+            g.map(sns.kdeplot, 'Error', bw_adjust=0.7, fill=True, alpha=0.6, linewidth=1.5)
+            g.map(sns.kdeplot, 'Error', bw_adjust=0.7, color='k', linewidth=0.5)
+            g.map(plt.axhline, y=0, lw=1, clip_on=False)
 
-            # Labels and title
-            err_type_name = err_type
-            if err_type == "a": 
-                err_type_name = "Pitch"
-            elif err_type == "b": 
-                err_type_name = "Yaw"
-            elif err_type == "c":
-                err_type_name = "Roll"
+            # Add labels for ablation variable values
+            # Use the exact row_order (in correct order) for axis labeling
+            for ax, bin_label in zip(g.axes.flat, row_order):
+                ax.text(0, 0.02, f"{bin_label}", transform=ax.transAxes, ha="center", va="bottom", fontsize=10)
 
-            axs[i].set_xlabel("Error")
-            axs[i].set_ylabel(ablation_variable_pretty)
-            axs[i].set_title(f'{err_type_name.upper()} Error Distribution vs {ablation_variable_pretty}')
-            axs[i].legend(title="Method", loc="upper right")
+            # Format
+            g.set_titles("")
+            g.set(yticks=[], ylabel="")
+            g.despine(bottom=True, left=True)
 
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_ridgeline.png"))
-        plt.close()
+            # Common x-axis label
+            err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
+            xlabel = f"{err_type_name} Error (m)" if err_type in ['x', 'y', 'z'] else f"{err_type_name} Error (deg)"
+            g.set_xlabels(xlabel)
+
+            # Center all ridge plots horizontally at 0
+            g.set(xlim=(-max(abs(df_plot['Error'].min()), abs(df_plot['Error'].max())), 
+                        max(abs(df_plot['Error'].min()), abs(df_plot['Error'].max()))))
+
+            plt.subplots_adjust(hspace=-0.8)
+            plt.suptitle(f"{err_type_name} Error Distribution by {ablation_variable_pretty}", y=1.02)
+            plt.tight_layout()
+
+            save_path = os.path.join(self.output_dir, f"{ablation_variable}_ridgeplot_{err_type}.png")
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
 
     def output_labeled_images(self, ablation_variable): 
         # Create directory for labeled images
@@ -359,7 +394,7 @@ if __name__ == "__main__":
     # skew: exp_sdg_20250618-144529 
 
     # get ablation data path 
-    ablation = "underexposure_background" 
+    ablation = "skew_background" # distance_background_v3, skew_background, truncation_background, underexposure_background, 
     data_yaml_path = "./ablations/data/data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -377,7 +412,8 @@ if __name__ == "__main__":
     plotter_instance.detection_plot(ablation_variable, n_bins=10)
     plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
     plotter_instance.error_plot(ablation_variable) 
-    plotter_instance.error_ridgeline_plots(ablation_variable)
+    plotter_instance.error_ridge_plots(ablation_variable, plot_CCV=False)
     # plotter_instance.find_worst_performing(ablation_variable) 
     # plotter_instance.find_best_performing(ablation_variable) 
     # plotter_instance.output_labeled_images(ablation_variable)
+
