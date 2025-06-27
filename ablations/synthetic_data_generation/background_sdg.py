@@ -609,26 +609,34 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 100
+N_backgrounds = 10
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[:N_backgrounds]  
 
 N_distances = 1 
 distance_min = 0.5
-distance_max = 0.5 
+distance_max = 0.5    
+# distance_min = 0.1
+# distance_max = 2.0
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
 N_intensity = 1 
+# intensity_min = 0.0
+# intensity_max = 20.0
 intensity_min = 250
 intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
-N_lateral = 100 
-lateral_min = 0
-lateral_max = 0 
+N_lateral = 10 
+lateral_min = -0.15
+lateral_max = +0.15 
+# lateral_min = 0.15
+# lateral_max = 0.35
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()
 
 N_skew = 1 
+# skew_min = -45 
+# skew_max = +45  
 skew_min = 0
 skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
@@ -678,8 +686,11 @@ for i in range(num_frames):
         rep.modify.material(bg_mat, background_plane) 
     
     # set marker pose 
-    new_pos = (lateral, 0.0, -distance)  # XYZ position
-    new_rot = (skew, 0.0, 0.0)   # Euler angles in degrees
+    # new_pos = (lateral, 0.0, -distance)  # XYZ position
+    # new_rot = (skew, 0.0, 0.0)   # Euler angles in degrees
+    # FIXME 
+    new_pos = (lateral, 0.1, -distance)  # XYZ position
+    new_rot = (30, 0.0, 0.0)   # Euler angles in degrees
     set_transform_attributes(tag_prim, location=new_pos, rotation=new_rot)
     
     # set distant light intensity

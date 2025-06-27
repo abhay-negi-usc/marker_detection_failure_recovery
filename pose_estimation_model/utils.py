@@ -437,10 +437,10 @@ class datapoint:
         """Custom representation for the datapoint object."""
         # return f"datapoint(metadata_filepath={self.metadata_filepath}, pose_filepath={self.pose_filepath}, rgb_filepath={self.rgb_filepath}, seg_png_filepath={self.seg_png_filepath}, seg_json_filepath={self.seg_json_filepath})"
         description = [
-            f"lighting_exposure={self.metadata["light"]["exposure"]:.2f}",
-            f"lighting_color=({self.metadata["light"]["color"][0]:.2f},{self.metadata["light"]["color"][1]:.2f},{self.metadata["light"]["color"][2]:.2f})", # FIXME: reduce to two decimal places 
-            f"diffuse reflection={self.diffuse_reflection:.2f}", 
-            f"specular reflection={self.specular_reflection:.2f}", 
+            f"""lighting_exposure={self.metadata["light"]["exposure"]:.2f}""",
+            f"""lighting_color=({self.metadata["light"]["color"][0]:.2f},{self.metadata["light"]["color"][1]:.2f},{self.metadata["light"]["color"][2]:.2f})""", # FIXME: reduce to two decimal places 
+            f"""diffuse reflection={self.diffuse_reflection:.2f}""", 
+            f"""specular reflection={self.specular_reflection:.2f}""", 
         ]
         return "\n".join(description) 
 
