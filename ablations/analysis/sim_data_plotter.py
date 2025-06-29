@@ -228,8 +228,10 @@ class Plotter():
             methods.append('CCV')
         if self.config.get("plot_HCV", False):
             methods.append('HCV')
+        if self.config.get("plot_LBCV", False):
+            methods.append('LBCV')
 
-        colors = {'CCV': 'blue', 'HCV': 'orange'}
+        colors = {'CCV': 'blue', 'LBCV': 'orange', 'HCV': 'green'}
 
         for err_type in error_types:
             plt.figure(figsize=(10, 6))
@@ -402,7 +404,7 @@ if __name__ == "__main__":
             "results_path": os.path.join(data_path, "results/results.csv"),
             "output_path": os.path.join(data_path, "results/plots"),
             "plot_HCV": True, 
-            "plot_LBCV": False,
+            "plot_LBCV": True,
         } 
 
         plotter_instance = Plotter(config) 
