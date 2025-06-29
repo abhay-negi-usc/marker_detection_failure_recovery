@@ -434,7 +434,7 @@ class DataProcessor():
         image_segmentation = np.all(np.array(image_segmentation) == tag0_rgb, axis=-1).astype(np.uint8)
         return image_segmentation 
 
-    def run_LBCV_fiducial_marker_detection(self, save_results=False): 
+    def run_LBCV_fiducial_marker_detection(self, save_results=False, run_corners_HCV=False): 
         self.setup_models() 
         # for idx, image_path in enumerate(self.image_paths):
         for idx, datapoint in enumerate(self.datapoints):
@@ -475,29 +475,30 @@ class DataProcessor():
             self.datapoints[idx].set_LBCV_IOU(IOU)
 
             # hybrid method 
-            if bool_detected: 
-                # check if no segmentation points within margin of border 
-                margin = 10 # units: pixels 
-                if np.any(image_seg_est_np[:margin, :]) or \
-                   np.any(image_seg_est_np[-margin:, :]) or \
-                   np.any(image_seg_est_np[:, :margin]) or \
-                   np.any(image_seg_est_np[:, -margin:]): 
-                    bool_detected_hybrid = False 
-                    self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
-                    self.datapoints[idx].set_corners_HCV(None) 
-                    self.datapoints[idx].set_tf_HCV(None) 
-                else: 
-                    bool_detected_hybrid = True
-                    # fit quadrilateral and find corners of segmentation mask 
+            if run_corners_HCV: 
+                if bool_detected: 
+                    # check if no segmentation points within margin of border 
+                    margin = 10 # units: pixels 
+                    if np.any(image_seg_est_np[:margin, :]) or \
+                    np.any(image_seg_est_np[-margin:, :]) or \
+                    np.any(image_seg_est_np[:, :margin]) or \
+                    np.any(image_seg_est_np[:, -margin:]): 
+                        bool_detected_hybrid = False 
+                        self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
+                        self.datapoints[idx].set_corners_HCV(None) 
+                        self.datapoints[idx].set_tf_HCV(None) 
+                    else: 
+                        bool_detected_hybrid = True
+                        # fit quadrilateral and find corners of segmentation mask 
 
-                    corners_est = find_segmentation_four_corners(image_seg_est_np)
-                    # solve for pose using the corners 
-                    tf_est_hcv = self.estimate_tf_from_keypoints(self.corners_ref, corners_est)
-                    tf_est_corrected = tf_est 
-                    tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
-                    self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
-                    self.datapoints[idx].set_corners_HCV(corners_est) 
-                    self.datapoints[idx].set_tf_HCV(tf_est_hcv) 
+                        corners_est = find_segmentation_four_corners(image_seg_est_np)
+                        # solve for pose using the corners 
+                        tf_est_hcv = self.estimate_tf_from_keypoints(self.corners_ref, corners_est)
+                        tf_est_corrected = tf_est 
+                        tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
+                        self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
+                        self.datapoints[idx].set_corners_HCV(corners_est) 
+                        self.datapoints[idx].set_tf_HCV(tf_est_hcv) 
 
             if save_results:
                 output_dir = os.path.join(self.directory, "LBCV_keypoints_results")
@@ -509,14 +510,15 @@ class DataProcessor():
                 outpath = os.path.join(output_dir, f"LBCV_{idx:05d}.png")
                 cv2.imwrite(str(outpath), out_img)
 
-                output_dir = os.path.join(self.directory, "HCV_corners_results")
-                os.makedirs(output_dir, exist_ok=True)
-                out_img = image.copy()
-                if bool_detected:
-                    for kp in corners_est:
-                        cv2.circle(out_img, tuple(kp.astype(int)), 3, (0, 255, 0), -1)
-                outpath = os.path.join(output_dir, f"HCV_{idx:05d}.png")
-                cv2.imwrite(str(outpath), out_img)
+                if run_corners_HCV:
+                    output_dir = os.path.join(self.directory, "HCV_corners_results")
+                    os.makedirs(output_dir, exist_ok=True)
+                    out_img = image.copy()
+                    if bool_detected:
+                        for kp in corners_est:
+                            cv2.circle(out_img, tuple(kp.astype(int)), 3, (0, 255, 0), -1)
+                    outpath = os.path.join(output_dir, f"HCV_{idx:05d}.png")
+                    cv2.imwrite(str(outpath), out_img)
 
                 output_dir = os.path.join(self.directory, "LBCV_segmentation_results") 
                 os.makedirs(output_dir, exist_ok=True)
@@ -764,25 +766,26 @@ class DataProcessor():
                 self.df_results.loc[idx, "pose_error_LBCV_b"] = datapoint.pose_error_LBCV[4]
                 self.df_results.loc[idx, "pose_error_LBCV_c"] = datapoint.pose_error_LBCV[5]
                 self.df_results.loc[idx, "LBCV_IOU"] = datapoint.LBCV_IOU if hasattr(datapoint, 'LBCV_IOU') else None
-                if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
-                    self.df_results.loc[idx, "tf_error_HCV_Rxx"] = datapoint.tf_error_HCV[0, 0]
-                    self.df_results.loc[idx, "tf_error_HCV_Rxy"] = datapoint.tf_error_HCV[0, 1]
-                    self.df_results.loc[idx, "tf_error_HCV_Rxz"] = datapoint.tf_error_HCV[0, 2]
-                    self.df_results.loc[idx, "tf_error_HCV_Ryx"] = datapoint.tf_error_HCV[1, 0]
-                    self.df_results.loc[idx, "tf_error_HCV_Ryy"] = datapoint.tf_error_HCV[1, 1]
-                    self.df_results.loc[idx, "tf_error_HCV_Ryz"] = datapoint.tf_error_HCV[1, 2]
-                    self.df_results.loc[idx, "tf_error_HCV_Rzx"] = datapoint.tf_error_HCV[2, 0]
-                    self.df_results.loc[idx, "tf_error_HCV_Rzy"] = datapoint.tf_error_HCV[2, 1]
-                    self.df_results.loc[idx, "tf_error_HCV_Rzz"] = datapoint.tf_error_HCV[2, 2]
-                    self.df_results.loc[idx, "tf_error_HCV_tx"] = datapoint.tf_error_HCV[0, 3]
-                    self.df_results.loc[idx, "tf_error_HCV_ty"] = datapoint.tf_error_HCV[1, 3]
-                    self.df_results.loc[idx, "tf_error_HCV_tz"] = datapoint.tf_error_HCV[2, 3]
-                    self.df_results.loc[idx, "pose_error_HCV_x"] = datapoint.pose_error_HCV[0]
-                    self.df_results.loc[idx, "pose_error_HCV_y"] = datapoint.pose_error_HCV[1]
-                    self.df_results.loc[idx, "pose_error_HCV_z"] = datapoint.pose_error_HCV[2]
-                    self.df_results.loc[idx, "pose_error_HCV_a"] = datapoint.pose_error_HCV[3]
-                    self.df_results.loc[idx, "pose_error_HCV_b"] = datapoint.pose_error_HCV[4]
-                    self.df_results.loc[idx, "pose_error_HCV_c"] = datapoint.pose_error_HCV[5]
+                if hasattr(datapoint, 'tf_error_HCV'): 
+                    if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
+                        self.df_results.loc[idx, "tf_error_HCV_Rxx"] = datapoint.tf_error_HCV[0, 0]
+                        self.df_results.loc[idx, "tf_error_HCV_Rxy"] = datapoint.tf_error_HCV[0, 1]
+                        self.df_results.loc[idx, "tf_error_HCV_Rxz"] = datapoint.tf_error_HCV[0, 2]
+                        self.df_results.loc[idx, "tf_error_HCV_Ryx"] = datapoint.tf_error_HCV[1, 0]
+                        self.df_results.loc[idx, "tf_error_HCV_Ryy"] = datapoint.tf_error_HCV[1, 1]
+                        self.df_results.loc[idx, "tf_error_HCV_Ryz"] = datapoint.tf_error_HCV[1, 2]
+                        self.df_results.loc[idx, "tf_error_HCV_Rzx"] = datapoint.tf_error_HCV[2, 0]
+                        self.df_results.loc[idx, "tf_error_HCV_Rzy"] = datapoint.tf_error_HCV[2, 1]
+                        self.df_results.loc[idx, "tf_error_HCV_Rzz"] = datapoint.tf_error_HCV[2, 2]
+                        self.df_results.loc[idx, "tf_error_HCV_tx"] = datapoint.tf_error_HCV[0, 3]
+                        self.df_results.loc[idx, "tf_error_HCV_ty"] = datapoint.tf_error_HCV[1, 3]
+                        self.df_results.loc[idx, "tf_error_HCV_tz"] = datapoint.tf_error_HCV[2, 3]
+                        self.df_results.loc[idx, "pose_error_HCV_x"] = datapoint.pose_error_HCV[0]
+                        self.df_results.loc[idx, "pose_error_HCV_y"] = datapoint.pose_error_HCV[1]
+                        self.df_results.loc[idx, "pose_error_HCV_z"] = datapoint.pose_error_HCV[2]
+                        self.df_results.loc[idx, "pose_error_HCV_a"] = datapoint.pose_error_HCV[3]
+                        self.df_results.loc[idx, "pose_error_HCV_b"] = datapoint.pose_error_HCV[4]
+                        self.df_results.loc[idx, "pose_error_HCV_c"] = datapoint.pose_error_HCV[5]
                 else:
                     for col in [
                         "tf_error_HCV_Rxx", "tf_error_HCV_Rxy", "tf_error_HCV_Rxz",
@@ -867,7 +870,7 @@ def main():
     }
 
     # get ablation data path 
-    ablation = "underexposure_background" 
+    ablation = "truncation_background" 
     data_yaml_path = "./ablations/data/data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -885,7 +888,7 @@ def main():
 
     processor = DataProcessor(config)
     processor.run_opencv_fiducial_marker_detection(save_results=True) 
-    processor.run_LBCV_fiducial_marker_detection(save_results=True) 
+    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=False) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
 

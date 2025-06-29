@@ -609,7 +609,7 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 10
+N_backgrounds = 100
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[:N_backgrounds]  
 
@@ -628,8 +628,8 @@ intensity_max = 250
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
 N_lateral = 10 
-lateral_min = -0.15
-lateral_max = +0.15 
+lateral_min = +0.15
+lateral_max = +0.225  
 # lateral_min = 0.15
 # lateral_max = 0.35
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()

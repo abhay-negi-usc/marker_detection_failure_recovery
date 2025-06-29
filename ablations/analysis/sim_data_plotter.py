@@ -6,12 +6,34 @@ import os
 import yaml 
 from scipy.stats import gaussian_kde
 
-class Plotter(): 
-    def __init__(self, config):
-        self.config = config 
+class Plotter():
+    def __init__(self, config, global_ranges):
+        self.config = config
         self.output_dir = config.get("output_path", "./ablations/analysis/plots")
         os.makedirs(self.output_dir, exist_ok=True)
-        self.df_data = pd.read_csv(self.config["results_path"])  
+        self.df_data = pd.read_csv(self.config["results_path"])
+        self.global_ranges = global_ranges
+
+    @staticmethod
+    def calculate_global_max_ranges(dataframes, plot_LBCV=True, plot_HCV=False):
+        """Calculate the global max range for each pose variable across all ablations."""
+        pose_variables = ['x', 'y', 'z', 'a', 'b', 'c']
+        max_ranges = {var: 0 for var in pose_variables}
+
+        for df_data in dataframes:
+            for var in pose_variables:
+                max_ranges[var] = max(
+                    max_ranges[var],
+                    df_data[f'pose_error_CCV_{var}'].abs().max(),
+                    df_data[f'pose_error_LBCV_{var}'].abs().max() if plot_LBCV else 0,
+                    df_data[f'pose_error_HCV_{var}'].abs().max() if plot_HCV else 0
+                )
+
+        # Ensure x and y share the same range, and a and b share the same range
+        max_ranges['x'] = max_ranges['y'] = max(max_ranges['x'], max_ranges['y'])
+        max_ranges['a'] = max_ranges['b'] = max(max_ranges['a'], max_ranges['b'])
+
+        return max_ranges
 
     def detection_plot(self, ablation_variable, n_bins=10):    
         ablation_variable_pretty = ablation_variable.replace("_", " ").title()
@@ -123,25 +145,11 @@ class Plotter():
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_IOU_scatter.png"))
         plt.close()
 
-    def error_plot(self, ablation_variable): 
+    def error_plot(self, ablation_variable):
         ablation_variable_pretty = ablation_variable.replace("_", " ").title()
         fig, axs = plt.subplots(2, 3, figsize=(15, 10))
         axs = axs.flatten()
-        error_types = ['x', 'y', 'z', 'a', 'b', 'c'] 
-
-        # Calculate shared scales for x/y and a/b plots
-        max_abs_xy = max(
-            self.df_data[f'pose_error_CCV_x'].abs().max(),
-            self.df_data[f'pose_error_LBCV_x'].abs().max() if self.config.get("plot_LBCV", True) else 0,
-            self.df_data[f'pose_error_CCV_y'].abs().max(),
-            self.df_data[f'pose_error_LBCV_y'].abs().max() if self.config.get("plot_LBCV", True) else 0
-        )
-        max_abs_ab = max(
-            self.df_data[f'pose_error_CCV_a'].abs().max(),
-            self.df_data[f'pose_error_LBCV_a'].abs().max() if self.config.get("plot_LBCV", True) else 0,
-            self.df_data[f'pose_error_CCV_b'].abs().max(),
-            self.df_data[f'pose_error_LBCV_b'].abs().max() if self.config.get("plot_LBCV", True) else 0
-        )
+        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
 
         for i, err_type in enumerate(error_types):
             col_CCV = f'pose_error_CCV_{err_type}'
@@ -176,39 +184,75 @@ class Plotter():
                 axs[i].plot(x_rolling, roll_hcv, label='HCV (Moving Mean)', linewidth=2)
 
             # Labels and title
-            err_type_name = err_type
-            if err_type == "a": 
-                err_type_name = "Pitch"
-            elif err_type == "b": 
-                err_type_name = "Yaw"
-            elif err_type == "c":
-                err_type_name = "Roll"
+            err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
+            axs[i].set_xlabel(ablation_variable_pretty, fontsize=14)
+            ylabel = f'{err_type_name.upper()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.upper()} Error (deg)'
+            axs[i].set_ylabel(ylabel, fontsize=14)
+            axs[i].set_title(f'{err_type_name.upper()} Error vs {ablation_variable_pretty}', fontsize=16)
+            axs[i].legend(fontsize=12)
 
-            axs[i].set_xlabel(ablation_variable_pretty)
-            ylabel = f'{err_type_name.upper()} Error (m)' if err_type_name in ['x', 'y', 'z'] else f'{err_type_name.upper()} Error (deg)'
-            axs[i].set_ylabel(ylabel)
-            axs[i].set_title(f'{err_type_name.upper()} Error vs {ablation_variable_pretty}')
-            axs[i].legend()
-
-            # Center y-axis at zero and add grid
             axs[i].axhline(0, color='black', linestyle='--', linewidth=1)
             axs[i].grid(True)
 
-            # Dynamically set scale based on shared scales for x/y and a/b
-            if err_type in ['x', 'y']:
-                axs[i].set_ylim(-max_abs_xy, max_abs_xy)
-            elif err_type in ['a', 'b']:
-                axs[i].set_ylim(-max_abs_ab, max_abs_ab)
-            else:
-                max_abs_value = max(
-                    self.df_data[col_CCV].abs().max(),
-                    self.df_data[col_LBCV].abs().max() if self.config.get("plot_LBCV", True) else 0,
-                    self.df_data[col_HCV].abs().max() if self.config.get("plot_HCV", False) else 0
-                )
-                axs[i].set_ylim(-max_abs_value, max_abs_value)
+            # Use global ranges for y-axis
+            axs[i].set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
 
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_scatter.png"))
+        plt.close()
+
+    def err_mean_std_plot(self, ablation_variable):
+        ablation_variable_pretty = ablation_variable.replace("_", " ").title()
+        fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+        axs = axs.flatten()
+        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
+
+        for i, err_type in enumerate(error_types):
+            ax = axs[i]
+            err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
+
+            col_CCV = f'pose_error_CCV_{err_type}'
+            col_LBCV = f'pose_error_LBCV_{err_type}'
+
+            # Group by ablation_variable
+            grouped_CCV = self.df_data.groupby(ablation_variable, observed=False)[col_CCV].agg(['mean', 'std']).reset_index()
+            ax.plot(grouped_CCV[ablation_variable], grouped_CCV['mean'], label='CCV Mean', linewidth=2)
+            ax.fill_between(grouped_CCV[ablation_variable],
+                            grouped_CCV['mean'] - grouped_CCV['std'],
+                            grouped_CCV['mean'] + grouped_CCV['std'],
+                            alpha=0.3, label='CCV ±1 Std')
+
+            if self.config.get("plot_LBCV", True):
+                grouped_LBCV = self.df_data.groupby(ablation_variable, observed=False)[col_LBCV].agg(['mean', 'std']).reset_index()
+                ax.plot(grouped_LBCV[ablation_variable], grouped_LBCV['mean'], label='LBCV Mean', linewidth=2)
+                ax.fill_between(grouped_LBCV[ablation_variable],
+                                grouped_LBCV['mean'] - grouped_LBCV['std'],
+                                grouped_LBCV['mean'] + grouped_LBCV['std'],
+                                alpha=0.3, label='LBCV ±1 Std')
+
+            if self.config.get("plot_HCV", False):
+                col_HCV = f'pose_error_HCV_{err_type}'
+                grouped_HCV = self.df_data.groupby(ablation_variable, observed=False)[col_HCV].agg(['mean', 'std']).reset_index()
+                ax.plot(grouped_HCV[ablation_variable], grouped_HCV['mean'], label='HCV Mean', linewidth=2)
+                ax.fill_between(grouped_HCV[ablation_variable],
+                                grouped_HCV['mean'] - grouped_HCV['std'],
+                                grouped_HCV['mean'] + grouped_HCV['std'],
+                                alpha=0.3, label='HCV ±1 Std')
+
+            ax.set_xlabel(ablation_variable_pretty, fontsize=14)
+            ylabel = f'{err_type_name.upper()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.upper()} Error (deg)'
+            ax.set_ylabel(ylabel, fontsize=14)
+            ax.set_title(f'{err_type_name.upper()} Error vs {ablation_variable_pretty}', fontsize=16)
+            ax.legend(fontsize=12)
+
+            ax.axhline(0, color='black', linestyle='--', linewidth=1)
+            ax.grid(True)
+
+            # Dynamically set scale based on global ranges
+            ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_mean_std.png"))
         plt.close()
 
     def error_ridge_plots(self, ablation_variable, n_ablation_bins=10, plot_CCV=True):
@@ -391,26 +435,36 @@ class Plotter():
             plt.close()     
 
 if __name__ == "__main__":
+    ablations = ["skew_background", "distance_background", "underexposure_background", "truncation_background"]
+    data_yaml_path = "./ablations/data/data_description.yaml"
+    with open(data_yaml_path, 'r') as f:
+        data_description = yaml.safe_load(f)
 
-    ablations = ["skew_background", "distance_background", "underexposure_background"] # "truncation_background" 
-    for ablation in ablations:  
-        data_yaml_path = "./ablations/data/data_description.yaml" 
-        with open(data_yaml_path, 'r') as f:
-            data_description = yaml.safe_load(f) 
-        data_path = data_description[ablation]["data_path"] 
-        ablation_variable = data_description[ablation]["ablation_variable"] 
+    # Load all dataframes to calculate global ranges
+    dataframes = []
+    for ablation in ablations:
+        data_path = data_description[ablation]["data_path"]
+        results_path = os.path.join(data_path, "results/results.csv")
+        dataframes.append(pd.read_csv(results_path))
+
+    global_ranges = Plotter.calculate_global_max_ranges(dataframes)
+
+    for ablation in ablations:
+        data_path = data_description[ablation]["data_path"]
+        ablation_variable = data_description[ablation]["ablation_variable"]
 
         config = {
             "results_path": os.path.join(data_path, "results/results.csv"),
             "output_path": os.path.join(data_path, "results/plots"),
-            "plot_HCV": True, 
+            "plot_HCV": False,
             "plot_LBCV": True,
-        } 
+        }
 
-        plotter_instance = Plotter(config) 
+        plotter_instance = Plotter(config, global_ranges)
         plotter_instance.detection_plot(ablation_variable, n_bins=10)
         plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
         plotter_instance.error_plot(ablation_variable) 
+        plotter_instance.err_mean_std_plot(ablation_variable) 
         plotter_instance.error_ridge_plots(ablation_variable, plot_CCV=True)
         # plotter_instance.find_worst_performing(ablation_variable) 
         # plotter_instance.find_best_performing(ablation_variable) 
