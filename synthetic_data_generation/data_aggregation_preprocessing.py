@@ -68,13 +68,17 @@ def save_single_datapoint(dp, idx, dataset_type, out_dir, save_rgb, save_seg, sa
             aug_img = augment_fn(rgb_img, seg_img)
             if aug_img is not None:
                 aug_img_pil = Image.fromarray(aug_img.astype(np.uint8))
-                aug_img_pil.save(os.path.join(dataset_dir, "rgb", f"img_{idx}.png"))
+                aug_img_path = os.path.join(dataset_dir, "rgb", f"img_{idx}.png")
+                aug_img_pil.save(aug_img_path)
+                dp.rgb_filepath = aug_img_path  # Update the rgb_filepath in dp
         elif num_augmentations > 1 and augment_fn is not None:
             for j in range(num_augmentations):
                 aug_img = augment_fn(rgb_img, seg_img)
                 if aug_img is not None:
                     aug_img_pil = Image.fromarray(aug_img.astype(np.uint8))
-                    aug_img_pil.save(os.path.join(dataset_dir, "rgb", f"img_{idx}_{j+1}.png"))
+                    aug_img_path = os.path.join(dataset_dir, "rgb", f"img_{idx}_{j+1}.png")
+                    aug_img_pil.save(aug_img_path)
+                    dp.rgb_filepath = aug_img_path  # Update the rgb_filepath in dp    
 
     if save_seg:
         os.makedirs(os.path.join(dataset_dir, "seg"), exist_ok=True)
@@ -185,14 +189,14 @@ if __name__ == "__main__":
     # -------------------- Configuration --------------------
     data_folders = [
         # aruco 6x6 library 
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191220/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191357/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191716/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191924/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191220/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191357/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191716/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191924/",
 
         # apriltag 36h11 tag 0 
-        "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250401-123254/",
-        "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250402-152243/",
+        # "/home/nom4d/marker_ws/output/sdg_markers_20250401-123254/",
+        # "/home/nom4d/marker_ws/output/sdg_markers_20250402-152243/",
     ]
 
     OUT_DIR = f"./segmentation_model/data/data_{time.strftime('%Y%m%d-%H%M%S')}"
@@ -204,8 +208,10 @@ if __name__ == "__main__":
     processor.set_marker(
         # image_path="./synthetic_data_generation/assets/tags/4x4_1000-31.png",
         # num_squares=8,
-        image_path="./synthetic_data_generation/assets/tags/tag36h11_0.png",
-        num_squares=10,  # For apriltag 36h11 tag 0  
+        # image_path="./synthetic_data_generation/assets/tags/tag36h11_0.png",
+        image_path="./synthetic_data_generation/assets/tags/aruco dictionary 6x6 png/6x6_1000-0.png",
+        # num_squares=10,  # For apriltag 36h11 tag 0
+        num_squares=8,  # For aruco6x6  
         side_length=0.100
     )
 
@@ -214,7 +220,7 @@ if __name__ == "__main__":
     print(f"[INFO] Total datapoints loaded: {len(processor.datapoints)}")
 
     # # Optional truncation for fast testing
-    # MAX_DATAPOINTS = 100
+    # MAX_DATAPOINTS = 10
     # processor.datapoints = processor.datapoints[:MAX_DATAPOINTS]
     # print(f"[INFO] Truncated to {len(processor.datapoints)} datapoints for debugging.")
 

@@ -441,6 +441,12 @@ class datapoint:
         seg_center_x = (seg_tag_min_x + seg_tag_max_x) // 2
         seg_center_y = (seg_tag_min_y + seg_tag_max_y) // 2 
 
+        # add noise to seg_center_x and seg_center_y
+        # noise_x = np.random.randint(-padding//2, padding//2+1)
+        # noise_y = np.random.randint(-padding//2, padding//2+1)
+        # seg_center_x += noise_x
+        # seg_center_y += noise_y
+
         # get pixel info of rgb 
         rgb = np.array(Image.open(self.rgb_filepath))
         rgb = cv2.copyMakeBorder(rgb, image_border_size, image_border_size, image_border_size, image_border_size, cv2.BORDER_CONSTANT, value=0) 
@@ -853,7 +859,8 @@ class DataProcessor:
                 # A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
                 A.RandomSunFlare(flare_roi=(0,0,1,1), num_flare_circles_range=(10,50), src_radius=100, src_color=(150,150,150), method="physics_based", p=0.8),  # Apply random sun flare to the image, TODO: come back to this, get labels 
                 A.GaussNoise(var_limit=(0,0.01), per_channel=True, p=1),  # Add noise to the image 
-                A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                # A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                A.MotionBlur(blur_limit=(3,13), p=0.4),  # Apply motion blur to the image
                 # A.RandomGamma(gamma_limit=(80, 120), p=0.8),  # Apply gamma correction to the image
                 # A.RandomBrightnessContrast(brightness_limit=(-0.25,0.25), contrast_limit=(-0.95,0.95), p=0.8),  # Adjust brightness and contrast
                 # A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=0.8),  # Apply ISO noise to the image 
@@ -922,8 +929,8 @@ class DataProcessor:
                 A.RandomSunFlare(flare_roi=(0,0,1,1), num_flare_circles_range=(10,50), src_radius=100, src_color=(150,150,150), method="physics_based", p=0.8),  # Apply random sun flare to the image, TODO: come back to this, get labels 
                 A.GaussNoise(var_limit=(0,0.001), per_channel=True, p=1),  # Add noise to the image 
                 # A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
-                A.Blur(blur_limit=(7,15), p=0.5),  # Apply blur to the image 
-                A.MotionBlur(blur_limit=(7,15), p=0.9),  # Apply motion blur to the image
+                # A.Blur(blur_limit=(7,15), p=0.5),  # Apply blur to the image 
+                A.MotionBlur(blur_limit=(3,13), p=0.4),  # Apply motion blur to the image
                 # A.RandomGamma(gamma_limit=(80, 120), p=0.8),  # Apply gamma correction to the image
                 # A.RandomBrightnessContrast(brightness_limit=(-0.25,0.25), contrast_limit=(-0.95,0.95), p=0.8),  # Adjust brightness and contrast
                 # A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=0.8),  # Apply ISO noise to the image 
@@ -943,8 +950,8 @@ class DataProcessor:
             
             # NOTE: commenting out lighting augmentation for now 
             # apply lighting augmentation
-            # if attempt < max_attempts_lighting: 
-            #     augmented_image = lighting_augmentation(augmented_image) 
+            if attempt < max_attempts_lighting: 
+                augmented_image = lighting_augmentation(augmented_image) 
             
             if not self.check_image_okay(augmented_image, seg): 
                 # print(f"Augmentation attempt {attempt} failed, brightening image.") 
