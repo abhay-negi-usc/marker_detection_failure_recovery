@@ -623,11 +623,11 @@ distance_max = 0.5
 # distance_max = 1.2
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
-N_intensity = 100
-intensity_min = 10.0
-intensity_max = 20.0
-# intensity_min = 250
-# intensity_max = 250 
+N_intensity = 1
+# intensity_min = 10.0
+# intensity_max = 20.0
+intensity_min = 250
+intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
 N_lateral = 1 
@@ -637,11 +637,11 @@ lateral_max = 0
 # lateral_max = 0.225 
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()
 
-N_skew = 1
-# skew_min = -45 
-# skew_max = +45  
-skew_min = 0
-skew_max = 0
+N_skew = 100
+skew_min = -45 
+skew_max = +45  
+# skew_min = 0
+# skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
 # create a test matrix 
@@ -652,11 +652,13 @@ for i in range(num_frames):
     distance = distances[i % N_distances]
     intensity = intensities[i % N_intensity]
     lateral = lateral_range[i % N_lateral] 
+    skew = skew_range[i % N_skew] 
     test_matrix.append({
         "background": background, 
         "distance": distance, 
         "intensity": intensity, 
         "lateral": lateral,
+        "skew": skew,
     })
 # shuffle the test matrix to randomize the order of frames
 random.shuffle(test_matrix)
@@ -698,7 +700,7 @@ with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar
                 distance = test_matrix[i]["distance"]
                 intensity = test_matrix[i]["intensity"]
                 lateral = test_matrix[i]["lateral"]
-                skew =  skew_range[i % N_skew]
+                skew =  test_matrix[i]["skew"]
 
                 # set background plane texture 
                 prim_path = "/World/background_plane"

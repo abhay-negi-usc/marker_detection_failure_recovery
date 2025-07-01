@@ -667,6 +667,7 @@ class DataProcessor():
             "lateral",
             "fraction_marker_visible",
             "skew", 
+            "glare"
         ]) # for storing packed results in a pandas DataFrame format 
 
         for idx, datapoint in enumerate(self.datapoints): 
@@ -694,6 +695,7 @@ class DataProcessor():
             self.df_results.loc[idx, "lateral"] = datapoint.metadata.get("lateral", None)
             self.df_results.loc[idx, "fraction_marker_visible"] = datapoint.fraction_marker_visible 
             self.df_results.loc[idx, "skew"] = datapoint.metadata.get("skew", None) 
+            self.df_results.loc[idx, "glare"] = datapoint.metadata.get("glare", None)
             self.df_results.loc[idx, "detected_CCV"] = datapoint.CCV_detected 
             self.df_results.loc[idx, "tf_true_Rxx"] = datapoint.tf_true[0, 0]
             self.df_results.loc[idx, "tf_true_Rxy"] = datapoint.tf_true[0, 1]
@@ -875,7 +877,8 @@ def main():
 
     # get ablation data path 
     # ablations = ["underexposure_blank_background","distance_blank_background","truncation_blank_background","skew_blank_background"]
-    ablations = ["underexposure_blank_background","distance_blank_background","skew_blank_background"]
+    # ablations = ["underexposure_blank_background","distance_blank_background","skew_blank_background"]
+    ablations = ["glare_corner_blank_background"]
     for ablation in ablations:  
         data_yaml_path = "./ablations/data/data_description.yaml" 
         with open(data_yaml_path, 'r') as f:
@@ -898,7 +901,7 @@ def main():
 
         processor = DataProcessor(config)
         processor.run_opencv_fiducial_marker_detection(save_results=False) 
-        processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=False) 
+        processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True) 
         processor.compute_values() 
         processor.compile_results(save_results=True)
 

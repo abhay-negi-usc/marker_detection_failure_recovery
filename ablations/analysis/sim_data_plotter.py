@@ -470,7 +470,8 @@ class Plotter():
 
 if __name__ == "__main__":
     # ablations = ["truncation_blank_background","distance_blank_background","skew_blank_background","underexposure_blank_background"]
-    ablations = ["distance_blank_background","skew_blank_background","underexposure_blank_background"]
+    # ablations = ["distance_blank_background","skew_blank_background","underexposure_blank_background"]
+    ablations = ["glare_corner_blank_background"]
     data_yaml_path = "./ablations/data/data_description.yaml"
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
@@ -491,7 +492,7 @@ if __name__ == "__main__":
         config = {
             "results_path": os.path.join(data_path, "results/results.csv"),
             "output_path": os.path.join(data_path, "results/plots"),
-            "plot_HCV": False,
+            "plot_HCV": True,
             "plot_LBCV": True,
         }
 

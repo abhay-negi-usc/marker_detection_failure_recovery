@@ -99,7 +99,8 @@ sys.path.append(cwd)
     
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    dir_backgrounds = "/home/anegi/Downloads/test2017" 
+    # dir_backgrounds = "/home/anegi/Downloads/test2017" 
+    dir_backgrounds = "/home/anegi/Downloads/blank_background" # FIXME 
 else: # CAM machine 
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
@@ -214,7 +215,7 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
         timeline.play()
 
     # Capture the frame by advancing the simulation for the given duration and combining the sub samples
-    rep.orchestrator.step(delta_time=duration, pause_timeline=False, rt_subframes=3)
+    rep.orchestrator.step(delta_time=duration, pause_timeline=False, rt_subframes=5)
 
     # Restore the original physics FPS
     if target_physics_fps > orig_physics_fps:
@@ -405,19 +406,31 @@ glare_light = rep.create.light(
     color=(1, 1, 1),
     # temperature=rep.distribution.normal(6500, 500),
     # intensity=100.0, 
-    exposure=8, 
+    exposure=100, 
     rotation=(0,0,0),
-    position=(0,0,3),
+    position=(0.1/2,0.1/2,0),
     # color_temperature=rep.distribution.uniform(2500, 10000),
 )
 glare_light_prim = glare_light.get_output_prims()["prims"][0] 
 glare_light_lighting_prim = glare_light_prim.GetChildren()[0]
-# import pdb; pdb.set_trace() # DEBUGGING
-# glare_light_prim.GetAttribute("inputs:radius").Set(0.01)  # Example radius
+
+attr = glare_light_lighting_prim.GetAttribute("inputs:shaping:cone:angle")
+if not attr or not attr.IsAuthored():
+    print("Creating 'inputs:shaping:cone:angle' attribute for glare light.")
+    attr = glare_light_lighting_prim.CreateAttribute("inputs:shaping:cone:angle", Sdf.ValueTypeNames.Float)
+attr.Set(1.0)
+
 attr = glare_light_lighting_prim.GetAttribute("inputs:radius")
 if not attr or not attr.IsAuthored():
+    print("Creating 'inputs:radius' attribute for glare light.")
     attr = glare_light_lighting_prim.CreateAttribute("inputs:radius", Sdf.ValueTypeNames.Float)
-attr.Set(0.01)
+attr.Set(0.0005)
+
+attr = glare_light_lighting_prim.GetAttribute("inputs:shaping:cone:softness")
+if not attr or not attr.IsAuthored():
+    print("Creating 'inputs:shaping:cone:softness' attribute for glare light.")
+    attr = glare_light_lighting_prim.CreateAttribute("inputs:shaping:cone:softness", Sdf.ValueTypeNames.Float)
+attr.Set(1.0)
 
 print("Lights set up.")
 
@@ -630,7 +643,7 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 10 
+N_backgrounds = 1 
 idx_start_backgrounds = 0 
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[idx_start_backgrounds:idx_start_backgrounds+N_backgrounds]  
@@ -663,19 +676,28 @@ skew_min = 0
 skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
+N_glare = 100 
+glare_min = 0.0 
+glare_max = 8.0 # 4.0 
+glare_range = np.linspace(glare_min, glare_max, N_glare).tolist()
+
 # create a test matrix 
 test_matrix = []
-num_frames = N_backgrounds * N_distances * N_intensity * N_lateral * N_skew
+num_frames = N_backgrounds * N_distances * N_intensity * N_lateral * N_skew * N_glare
 for i in range(num_frames):
     background = backgrounds[i % N_backgrounds]
     distance = distances[i % N_distances]
     intensity = intensities[i % N_intensity]
-    lateral = lateral_range[i % N_lateral] 
+    lateral = lateral_range[i % N_lateral]
+    skew = skew_range[i % N_skew]
+    glare = glare_range[i % N_glare]  
     test_matrix.append({
         "background": background, 
         "distance": distance, 
         "intensity": intensity, 
         "lateral": lateral,
+        "skew": skew,
+        "glare": glare,
     })
 # shuffle the test matrix to randomize the order of frames
 random.shuffle(test_matrix)
@@ -717,7 +739,8 @@ with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar
                 distance = test_matrix[i]["distance"]
                 intensity = test_matrix[i]["intensity"]
                 lateral = test_matrix[i]["lateral"]
-                skew =  skew_range[i % N_skew]
+                skew =  test_matrix[i]["skew"]
+                glare = test_matrix[i]["glare"]
 
                 # set background plane texture 
                 prim_path = "/World/background_plane"
@@ -738,8 +761,11 @@ with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar
                 # set distant light intensity
                 dome_light_intensity_attr.Set(intensity)
 
+                # set glare cone angle 
+                attr = glare_light_lighting_prim.GetAttribute("inputs:shaping:cone:angle").Set(glare)
+
                 # update the app to apply the randomization 
-                rep.orchestrator.step(delta_time=0.0, rt_subframes=2, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
+                rep.orchestrator.step(delta_time=1.0, rt_subframes=4, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
 
                 # Enable render products only at capture time
                 if disable_render_products_between_captures:
@@ -749,7 +775,7 @@ with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar
                 # print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
                 if i % 1 == 0:
                     # capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
-                    capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=128, apply_blur=False) 
+                    capture_with_motion_blur_and_pathtracing(duration=10.0, num_samples=100, spp=1024, apply_blur=False) 
                     # rep.orchestrator.step(delta_time=0.0, rt_subframes=1, pause_timeline=False)
                 else:
                     rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
@@ -787,6 +813,7 @@ with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar
                     "intensity": intensity,
                     "lateral": lateral,
                     "skew": skew,
+                    "glare": glare,
                 } 
 
                 write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")
