@@ -14,9 +14,9 @@ class Plotter():
         self.df_data = pd.read_csv(self.config["results_path"])
         # self.global_ranges = global_ranges
         self.global_ranges = {
-            'x': 0.30,
-            'y': 0.30,
-            'z': 0.30,
+            'x': 0.10,
+            'y': 0.10,
+            'z': 0.10,
             'a': 30.0,
             'b': 30.0,
             'c': 30.0
@@ -194,9 +194,9 @@ class Plotter():
             # Labels and title
             err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
             axs[i].set_xlabel(ablation_variable_pretty, fontsize=14)
-            ylabel = f'{err_type_name.upper()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.upper()} Error (deg)'
+            ylabel = f'{err_type_name.title()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.title()} Error (deg)'
             axs[i].set_ylabel(ylabel, fontsize=14)
-            axs[i].set_title(f'{err_type_name.upper()} Error vs {ablation_variable_pretty}', fontsize=16)
+            axs[i].set_title(f'{err_type_name.title()} Error vs {ablation_variable_pretty}', fontsize=16)
             axs[i].legend(fontsize=12)
 
             axs[i].axhline(0, color='black', linestyle='--', linewidth=1)
@@ -248,9 +248,9 @@ class Plotter():
                                 alpha=0.3, label='HCV ±1 Std')
 
             ax.set_xlabel(ablation_variable_pretty, fontsize=14)
-            ylabel = f'{err_type_name.upper()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.upper()} Error (deg)'
+            ylabel = f'{err_type_name.title()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.title()} Error (deg)'
             ax.set_ylabel(ylabel, fontsize=14)
-            ax.set_title(f'{err_type_name.upper()} Error vs {ablation_variable_pretty}', fontsize=16)
+            ax.set_title(f'{err_type_name.title()} Error vs {ablation_variable_pretty}', fontsize=16)
             ax.legend(fontsize=12)
 
             ax.axhline(0, color='black', linestyle='--', linewidth=1)
@@ -469,8 +469,8 @@ class Plotter():
             plt.close()     
 
 if __name__ == "__main__":
-    # ablations = ["skew_background", "distance_background", "underexposure_background", "truncation_background"]
-    ablations = ["skew_v4"]
+    # ablations = ["truncation_blank_background","distance_blank_background","skew_blank_background","underexposure_blank_background"]
+    ablations = ["distance_blank_background","skew_blank_background","underexposure_blank_background"]
     data_yaml_path = "./ablations/data/data_description.yaml"
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)

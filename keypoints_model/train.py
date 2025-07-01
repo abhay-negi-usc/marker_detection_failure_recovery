@@ -24,15 +24,15 @@ matplotlib.use('Agg')
 
 
 # === Hyperparameters ===
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 128          
+BATCH_SIZE = 2**4           
 NUM_EPOCHS = 1000000 
 num_epoch_dont_save = 0 
-NUM_WORKERS = 24 
+NUM_WORKERS = 16 
 IMAGE_HEIGHT = 128 
 IMAGE_WIDTH = 128 
-TEST_FREQUENCY = 100 
+TEST_FREQUENCY = 1000 
 PIN_MEMORY = True 
 LOAD_MODEL = True 
 # LOAD_PATH = "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar"
@@ -79,7 +79,7 @@ def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda
             pred = preds[j].cpu().numpy().reshape(-1, 2)
             # img_rgb = to_pil(x[j])
             # keypoints_image = overlay_points_on_image(image=np.array(img_rgb), pixel_points=pred, radius=1)
-            img_array = (x[j].cpu().numpy().transpose(1, 2, 0) * 255).clip(0, 255).astype(np.uint8)
+            img_array = (x[j].cpu().numpy().transpose(1, 2, 0)).clip(0, 255).astype(np.uint8)
             keypoints_image = overlay_points_on_image(image=img_array, pixel_points=pred, radius=1)
             save_path = os.path.join(folder, f"pred_{idx}_{j}.png")
             plt.imshow(keypoints_image)
@@ -153,9 +153,9 @@ def main():
                 "epoch": epoch + 1,  # resume from next epoch
             }, "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth.tar")
 
-            # if save_count > TEST_FREQUENCY:
-            #     save_predictions_as_imgs(val_loader, model, folder="saved_images/", device=DEVICE)
-            #     save_count = 0
+            if save_count > TEST_FREQUENCY:
+                save_predictions_as_imgs(val_loader, model, folder="./keypoints_model/checkpoints/saved_images/", device=DEVICE)
+                save_count = 0
 
         save_count += 1
 

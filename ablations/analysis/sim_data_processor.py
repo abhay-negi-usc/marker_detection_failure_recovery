@@ -874,28 +874,33 @@ def main():
     }
 
     # get ablation data path 
-    ablation = "skew_v4" 
-    data_yaml_path = "./ablations/data/data_description.yaml" 
-    with open(data_yaml_path, 'r') as f:
-        data_description = yaml.safe_load(f) 
-    data_path = data_description[ablation]["data_path"] 
+    # ablations = ["underexposure_blank_background","distance_blank_background","truncation_blank_background","skew_blank_background"]
+    ablations = ["underexposure_blank_background","distance_blank_background","skew_blank_background"]
+    for ablation in ablations:  
+        data_yaml_path = "./ablations/data/data_description.yaml" 
+        with open(data_yaml_path, 'r') as f:
+            data_description = yaml.safe_load(f) 
+        data_path = data_description[ablation]["data_path"] 
 
-    config = {
-        "data_path": data_path, 
-        "max_num_datapoints": None, 
-        "camera_parameters": camera_parameters,
-        "marker_parameters": marker_parameters, 
-        "seg_model_path":"./segmentation_model/models/my_checkpoint_20250329.pth.tar",
-        # "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar", 
-        "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar", 
-        "device": "cuda" if torch.cuda.is_available() else "cpu", 
-    }
+        config = {
+            "data_path": data_path, 
+            "max_num_datapoints": None, 
+            "camera_parameters": camera_parameters,
+            "marker_parameters": marker_parameters, 
+            "seg_model_path":"./segmentation_model/models/my_checkpoint_20250329.pth.tar",
 
-    processor = DataProcessor(config)
-    processor.run_opencv_fiducial_marker_detection(save_results=False) 
-    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=False) 
-    processor.compute_values() 
-    processor.compile_results(save_results=True)
+            # "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar", 
+            # "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar", 
+            "kp_model_path": "./keypoints_model/checkpoints/keypoints_model_reaugmented_training.pth (copy).tar", 
+            
+            "device": "cuda" if torch.cuda.is_available() else "cpu", 
+        }
+
+        processor = DataProcessor(config)
+        processor.run_opencv_fiducial_marker_detection(save_results=False) 
+        processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=False) 
+        processor.compute_values() 
+        processor.compile_results(save_results=True)
 
 if __name__ == "__main__":
     main() 

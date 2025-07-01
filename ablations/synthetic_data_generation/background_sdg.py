@@ -100,7 +100,8 @@ sys.path.append(cwd)
     
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    dir_backgrounds = "/home/anegi/Downloads/test2017" 
+    # dir_backgrounds = "/home/anegi/Downloads/test2017"
+    dir_backgrounds = "/home/anegi/Downloads/blank_background" # FIXME 
 else: # CAM machine 
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
@@ -610,7 +611,7 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 100 
+N_backgrounds = 1 
 idx_start_backgrounds = 0 
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[idx_start_backgrounds:idx_start_backgrounds+N_backgrounds]  
@@ -622,11 +623,11 @@ distance_max = 0.5
 # distance_max = 1.2
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
-N_intensity = 1
-# intensity_min = 10.0
-# intensity_max = 20.0
-intensity_min = 250
-intensity_max = 250 
+N_intensity = 100
+intensity_min = 10.0
+intensity_max = 20.0
+# intensity_min = 250
+# intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
 N_lateral = 1 
@@ -636,11 +637,11 @@ lateral_max = 0
 # lateral_max = 0.225 
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()
 
-N_skew = 10
-skew_min = -45 
-skew_max = +45  
-# skew_min = 0
-# skew_max = 0
+N_skew = 1
+# skew_min = -45 
+# skew_max = +45  
+skew_min = 0
+skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
 # create a test matrix 
