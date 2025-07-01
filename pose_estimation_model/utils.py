@@ -8,6 +8,320 @@ from PIL import Image
 import random 
 import math 
 from scipy.spatial.transform import Rotation as R
+from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+
+def crop_rgb_using_seg(img_rgb, img_seg):
+    mask = img_seg > 0  # Assuming the segmentation mask is binary (0 for background, 1 for foreground)
+    img_rgb_masked = np.zeros_like(img_rgb)
+    img_rgb_masked[mask] = img_rgb[mask]
+    # make list of pixel coordinates of the mask boundary
+    return img_rgb_masked
+
+def find_keypoints(img_rgb, img_seg=None): 
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+    if img_seg is None:
+        keypoints = cv2.goodFeaturesToTrack(gray, maxCorners=100, qualityLevel=0.01, minDistance=10, blockSize=7)
+    else: 
+        # If img_seg is 3-channel, convert it
+        if len(img_seg.shape) == 3 and img_seg.shape[2] == 3:
+            img_seg_gray = cv2.cvtColor(img_seg, cv2.COLOR_BGR2GRAY)
+        else:
+            img_seg_gray = img_seg.copy()
+        _, mask_binary = cv2.threshold(img_seg_gray, 127, 255, cv2.THRESH_BINARY)
+        keypoints = cv2.goodFeaturesToTrack(gray, maxCorners=100, qualityLevel=0.01, minDistance=10, blockSize=7, mask=mask_binary)
+    if keypoints is not None:
+        keypoints = keypoints.reshape(-1, 2)  # Reshape to (N, 2) where N is the number of keypoints
+    return keypoints
+
+def find_segmentation_four_corners(segmentation):
+    # Convert to grayscale if needed
+    if len(segmentation.shape) == 3:
+        segmentation_gray = cv2.cvtColor(segmentation, cv2.COLOR_BGR2GRAY)
+    else:
+        segmentation_gray = segmentation
+
+    # Ensure binary mask
+    _, segmentation_bin = cv2.threshold(segmentation_gray, 127, 255, cv2.THRESH_BINARY)
+
+    # Find contours
+    contours, _ = cv2.findContours(
+        segmentation_bin,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if len(contours) == 0:
+        return None
+
+    # Choose the largest contour by area
+    contour = max(contours, key=cv2.contourArea)
+
+    # Approximate polygon
+    epsilon = 0.02 * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+
+    if len(approx) == 4:
+        corners = approx.reshape(4, 2)
+    elif len(approx) > 4:
+        # Use convex hull and select 4 corners via bounding box
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        corners = box.astype(np.intp)
+    else:
+        # Fall back to bounding box if not enough corners
+        x, y, w, h = cv2.boundingRect(contour)
+        corners = np.array([
+            [x, y],
+            [x + w, y],
+            [x + w, y + h],
+            [x, y + h]
+        ], dtype=np.int32)
+
+    # Ensure corners are in a consistent order (counterclockwise)
+    corners = corners[np.argsort(np.arctan2(corners[:, 1] - np.mean(corners[:, 1]), 
+                                             corners[:, 0] - np.mean(corners[:, 0])))]
+    corners = corners.reshape(4, 2).astype(np.float32)
+    return corners
+
+
+def estimate_tf_from_keypoints(keypoints_ref, keypoints_est, camera_matrix, dist_coeffs=np.zeros((5, 1))): 
+    keypoints_ref = keypoints_ref.astype(np.float64)
+    keypoints_est = keypoints_est.astype(np.float64)
+    success, rvec, tvec = cv2.solvePnP(
+        objectPoints=keypoints_ref,
+        imagePoints=keypoints_est,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+    )
+    if not success:
+        return None 
+    else: 
+        pose_marker = rvectvec_to_xyzabc(rvec, tvec)
+        tf_marker = xyzabc_to_tf(pose_marker)
+        return tf_marker 
+
+def convert_marker_keypoints_to_cartesian(keypoints_image_space, image_size, marker_size=(0.1, 0.1)): 
+    """
+    Convert keypoints from image space to Cartesian coordinates based on the marker size and image dimensions.
+    
+    Args:
+        keypoints_image_space (list): List of keypoints in image space (2D coordinates).
+        image_size (tuple): Size of the image (height, width).
+        marker_size (tuple): Size of the marker in meters (width, height).
+    
+    Returns:
+        list: List of keypoints in Cartesian coordinates (3D coordinates).
+    """
+    height, width = image_size
+    cartesian_keypoints = []
+    for kp in keypoints_image_space:
+        # Normalize the keypoint coordinates to the range [-1, 1]
+        kp = kp.reshape(2)
+        x_norm = (kp[0] / width) * 2 - 1
+        y_norm = (kp[1] / height) * 2 - 1
+        # Convert normalized coordinates to Cartesian space
+        x_cartesian = x_norm * marker_size[0] / 2
+        y_cartesian = y_norm * marker_size[1] / 2
+        cartesian_keypoints.append([x_cartesian, y_cartesian, 0])  # Z-coordinate is set to 0 for a flat marker
+    cartesian_keypoints = np.array(cartesian_keypoints, dtype=np.float64)
+    return cartesian_keypoints
+
+def overlay_3D_points_on_image(image, points_3d, camera_matrix, tf_est, color=(0, 255, 0), radius=5):
+    """
+    Overlay 3D points on an image using the estimated transformation matrix and camera intrinsic parameters.
+    
+    Args:
+        image (numpy.ndarray): The input image (BGR format).
+        points_3d (list): List of 3D points to overlay on the image.
+        camera_matrix (numpy.ndarray): Camera intrinsic matrix (3x3).
+        tf_est (numpy.ndarray): Estimated transformation matrix (4x4).
+        color (tuple): Color for the overlay points in BGR format.
+        radius (int): Radius of the overlay points.
+    
+    Returns:
+        numpy.ndarray: The image with 3D points overlaid.
+    """
+    # Transform 3D points to camera space
+    points_3d_homogeneous = np.hstack((points_3d, np.ones((len(points_3d), 1))))
+    points_camera_space = tf_est @ points_3d_homogeneous.T
+    points_camera_space = points_camera_space[:3, :].T  # Convert back to 3D coordinates
+
+    # Project 3D points to 2D image space
+    projected_points = cv2.projectPoints(points_camera_space, np.zeros(3), np.zeros(3), camera_matrix, None)[0].reshape(-1, 2)
+
+    # Overlay points on the image
+    for point in projected_points:
+        cv2.circle(image, tuple(point.astype(int)), radius, color, -1)
+
+    return image
+
+def compute_tf_candidates_from_corners(corners_est, marker_size, camera_matrix):
+    corners_ref = np.array([
+        [+marker_size[0]/2, +marker_size[1]/2, 0],
+        [-marker_size[0]/2, +marker_size[1]/2, 0],
+        [-marker_size[0]/2, -marker_size[1]/2, 0],
+        [+marker_size[0]/2, -marker_size[1]/2, 0],
+    ])
+    tf_est = estimate_tf_from_keypoints(corners_ref, corners_est, camera_matrix) 
+    if tf_est is None:
+        return None 
+    else: 
+        tf_z_rot_90deg = np.array([
+            [0, -1, 0, 0],
+            [1, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        tf_est_0 = tf_est.copy()
+        # right-multiply tf_est by 90 degree rotations around local Z-axis
+        tf_est_1 = tf_est @ tf_z_rot_90deg
+        tf_est_2 = tf_est @ tf_z_rot_90deg @ tf_z_rot_90deg
+        tf_est_3 = tf_est @ tf_z_rot_90deg @ tf_z_rot_90deg @ tf_z_rot_90deg
+        tf_candidates = [tf_est_0, tf_est_1, tf_est_2, tf_est_3]
+        return tf_candidates
+
+def transform_points_image_space_to_cartesian_space(keypoints_image_space, tf_est, camera_matrix): 
+    """
+    Transform keypoints from image space to Cartesian space using the estimated transformation matrix.
+    
+    Args:
+        keypoints_image_space (list): List of keypoints in image space (2D coordinates).
+        tf_est (numpy.ndarray): Estimated transformation matrix (4x4).
+        camera_matrix (numpy.ndarray): Camera intrinsic matrix (3x3).
+    
+    Returns:
+        list: List of transformed keypoints in Cartesian space (3D coordinates).
+    """
+    keypoints_cartesian_space = []
+    for kp in keypoints_image_space:
+        # Convert 2D keypoint to homogeneous coordinates
+        kp_homogeneous = np.array([kp[0], kp[1], 1.0])
+        # Project the point into 3D space using the camera matrix
+        kp_3d = np.linalg.inv(camera_matrix) @ kp_homogeneous
+        # Apply the transformation matrix
+        kp_transformed = tf_est @ np.array([kp_3d[0], kp_3d[1], kp_3d[2], 1.0])
+        keypoints_cartesian_space.append(kp_transformed[:3])  # Take only the first three coordinates (x, y, z)
+    return keypoints_cartesian_space
+
+def refine_pose_icp_3d2d_auto_match(
+    keypoints_ref_3d, keypoints_est_2d, camera_matrix, tf_init=None, dist_coeffs=None, 
+    max_iterations=20, max_keypoints_est_2d=100, outlier_percentile=90,
+    show_iteration_images=False, plot_residual=False, plot_estimate=False
+):
+    """
+    Refine camera pose using 3D points and 2D image points, with optional outlier removal.
+    """
+
+    # --- Initial estimate ---
+    if tf_init is not None:
+        R_init = tf_init[:3, :3]
+        t_init = tf_init[:3, 3]
+        rvec, _ = cv2.Rodrigues(R_init)
+        tvec = t_init.reshape(3, 1).astype(np.float32)
+    else:
+        rvec = np.zeros((3, 1), dtype=np.float32)
+        tvec = np.zeros((3, 1), dtype=np.float32)
+
+    if dist_coeffs is None:
+        dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+    camera_matrix = np.asarray(camera_matrix, dtype=np.float32)
+    keypoints_ref_3d = np.array(keypoints_ref_3d).reshape(-1, 3)
+
+    # --- Clean and filter 2D points ---
+    keypoints_est_2d = np.asarray(keypoints_est_2d, dtype=np.float32).reshape(-1, 2)
+    if len(keypoints_est_2d) > max_keypoints_est_2d:
+        center = np.mean(keypoints_est_2d, axis=0)
+        distances = np.linalg.norm(keypoints_est_2d - center, axis=1)
+        sorted_indices = np.argsort(distances)
+        keypoints_est_2d = keypoints_est_2d[sorted_indices[:max_keypoints_est_2d]]
+
+    residual_history, eul_history, tvec_history = [], [], []
+
+    for i in range(max_iterations):
+        projected_points, _ = cv2.projectPoints(keypoints_ref_3d, rvec.copy(), tvec.copy(), camera_matrix, dist_coeffs)
+        projected_points = projected_points.reshape(-1, 2)
+
+        # Find nearest neighbors
+        distances = np.linalg.norm(projected_points[:, None, :] - keypoints_est_2d[None, :, :], axis=2)
+        nearest_indices = np.argmin(distances, axis=1)
+
+        matched_3d = keypoints_ref_3d
+        matched_2d = keypoints_est_2d[nearest_indices]
+
+        # Compute residuals
+        residuals = np.linalg.norm(projected_points - matched_2d, axis=1)
+
+        # Outlier rejection
+        threshold = np.percentile(residuals, outlier_percentile)
+        inlier_mask = residuals <= threshold
+
+        matched_3d_inliers = matched_3d[inlier_mask]
+        matched_2d_inliers = matched_2d[inlier_mask]
+
+        if matched_3d_inliers.shape[0] >= 4:
+            success, rvec_new, tvec_new = cv2.solvePnP(
+                matched_3d_inliers, matched_2d_inliers, camera_matrix, dist_coeffs,
+                rvec.copy(), tvec.copy(), useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            if not success:
+                print(f"Iteration {i}: solvePnP failed, stopping early.")
+                break
+
+            rvec, tvec = rvec_new, tvec_new
+
+            rot_matrix, _ = cv2.Rodrigues(rvec)
+            tf_est = np.eye(4)
+            tf_est[:3, :3] = rot_matrix
+            tf_est[:3, 3] = tvec.flatten()
+
+            mean_residual = np.mean(residuals[inlier_mask])
+            residual_history.append(mean_residual)
+
+            eul = R.from_matrix(rot_matrix).as_euler('xyz', degrees=True)
+            eul_history.append(eul)
+            tvec_history.append(tvec.flatten())
+
+            if show_iteration_images:
+                img_overlay = overlay_3D_points_on_image(
+                    np.zeros((480, 640, 3), dtype=np.uint8), matched_3d_inliers, camera_matrix, tf_est,
+                    color=(0, 255, 0), radius=5
+                )
+                plt.imshow(cv2.cvtColor(img_overlay, cv2.COLOR_BGR2RGB))
+                plt.title(f'Iteration {i}, Residual: {mean_residual:.4f}')
+                plt.axis('off')
+                plt.show()
+
+        else:
+            print(f"Iteration {i}: Not enough inlier points to solvePnP.")
+            break
+
+    # --- Plots ---
+    if plot_residual and residual_history:
+        plt.figure()
+        plt.plot(residual_history, marker='o')
+        plt.xlabel('Iteration')
+        plt.ylabel('Mean Residual')
+        plt.title('ICP Residuals Over Iterations')
+        plt.grid(True)
+        plt.show()
+
+    if plot_estimate and eul_history:
+        fig, axs = plt.subplots(2, 3, figsize=(15, 8))
+        eul_history = np.array(eul_history)
+        tvec_history = np.array(tvec_history)
+        axs[0, 0].plot(eul_history[:, 0], marker='o'); axs[0, 0].set_title('Rotation X')
+        axs[0, 1].plot(eul_history[:, 1], marker='o'); axs[0, 1].set_title('Rotation Y')
+        axs[0, 2].plot(eul_history[:, 2], marker='o'); axs[0, 2].set_title('Rotation Z')
+        axs[1, 0].plot(tvec_history[:, 0], marker='o'); axs[1, 0].set_title('Translation X')
+        axs[1, 1].plot(tvec_history[:, 1], marker='o'); axs[1, 1].set_title('Translation Y')
+        axs[1, 2].plot(tvec_history[:, 2], marker='o'); axs[1, 2].set_title('Translation Z')
+        for ax in axs.flat:
+            ax.set_xlabel('Iteration')
+            ax.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    return tf_est, residual_history[-1] if residual_history else None
 
 # HELPER FUNCTIONS 
 def project_point_to_image(C,T,P): 

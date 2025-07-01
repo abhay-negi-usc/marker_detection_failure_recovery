@@ -14,6 +14,16 @@ from pathlib import Path
 from typing import Optional
 import logging
 
+def tf_to_pose(tf):
+    """
+    Convert a transformation matrix to a pose (position and orientation).
+    """
+    position = tf[:3, 3]
+    rot = tf[:3, :3]
+    euler_angles = R.from_matrix(rot).as_euler('xyz', degrees=True)  # Convert rotation matrix to Euler angles
+    pose = np.concatenate((position, euler_angles))
+    return pose 
+
 def draw_overlay_square(image: np.ndarray, tf: np.ndarray, square_length: float, K: np.ndarray) -> np.ndarray:
     """
     Projects and overlays a square of known size on the image using a 4x4 pose matrix and camera intrinsics.
@@ -232,7 +242,9 @@ class DataPoint:
 
     def get_lbcv_keypoints(self) -> Optional[np.ndarray]:
         return getattr(self, "LBCV_keypoints", None)
-
+    
+    def set_hcv_residual(self, residual: float):
+        self.HCV_residual = residual
 
     def __repr__(self):
         return f"DataPoint(path={self.image_path.name}, time={self.time})"
