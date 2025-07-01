@@ -29,6 +29,7 @@ import random
 from itertools import chain
 import sys  
 import re 
+from tqdm import tqdm
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # CONFIG 
@@ -191,7 +192,7 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
     orig_physics_fps = physx_scene.GetTimeStepsPerSecondAttr().Get()
     target_physics_fps = 1 / duration * num_samples
     if target_physics_fps > orig_physics_fps:
-        print(f"[SDG] Changing physics FPS from {orig_physics_fps} to {target_physics_fps}")
+        # print(f"[SDG] Changing physics FPS from {orig_physics_fps} to {target_physics_fps}")
         physx_scene.GetTimeStepsPerSecondAttr().Set(target_physics_fps)
 
     if apply_blur: 
@@ -218,13 +219,13 @@ def capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=6
 
     # Restore the original physics FPS
     if target_physics_fps > orig_physics_fps:
-        print(f"[SDG] Restoring physics FPS from {target_physics_fps} to {orig_physics_fps}")
+        # print(f"[SDG] Restoring physics FPS from {target_physics_fps} to {orig_physics_fps}")
         physx_scene.GetTimeStepsPerSecondAttr().Set(orig_physics_fps)
 
     # Restore the previous render and motion blur  settings
     if apply_blur: 
         carb.settings.get_settings().set("/omni/replicator/captureMotionBlur", is_motion_blur_enabled)
-    print(f"[SDG] Restoring render mode from 'PathTracing' to '{prev_render_mode}'")
+    # print(f"[SDG] Restoring render mode from 'PathTracing' to '{prev_render_mode}'")
     carb.settings.get_settings().set("/rtx/rendermode", prev_render_mode)
 
 def get_world_transform_xform_as_np_tf(prim: Usd.Prim):
@@ -285,12 +286,12 @@ def run_simulation_loop(duration):
         elapsed_time += timeline.get_current_time() - previous_time
         previous_time = timeline.get_current_time()
         app_updates_counter += 1
-        print(
-            f"\t Simulation loop at {timeline.get_current_time():.2f}, current elapsed time: {elapsed_time:.2f}, counter: {app_updates_counter}"
-        )
-    print(
-        f"[SDG] Simulation loop finished in {elapsed_time:.2f} seconds at {timeline.get_current_time():.2f} with {app_updates_counter} app updates."
-    )
+    #     print(
+    #         f"\t Simulation loop at {timeline.get_current_time():.2f}, current elapsed time: {elapsed_time:.2f}, counter: {app_updates_counter}"
+    #     )
+    # print(
+    #     f"[SDG] Simulation loop finished in {elapsed_time:.2f} seconds at {timeline.get_current_time():.2f} with {app_updates_counter} app updates."
+    # )
 
 def quatf_to_eul(quatf): 
     qw = quatf.real 
@@ -609,36 +610,37 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 100
+N_backgrounds = 100 
+idx_start_backgrounds = 0 
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
-backgrounds = backgrounds_files_all[:N_backgrounds]  
+backgrounds = backgrounds_files_all[idx_start_backgrounds:idx_start_backgrounds+N_backgrounds]  
 
 N_distances = 1 
 distance_min = 0.5
-distance_max = 0.5    
-# distance_min = 0.1
-# distance_max = 2.0
+distance_max = 0.5     
+# distance_min = 0.2
+# distance_max = 1.2
 distances = np.linspace(distance_min, distance_max, N_distances).tolist() 
 
-N_intensity = 1 
-# intensity_min = 0.0
+N_intensity = 1
+# intensity_min = 10.0
 # intensity_max = 20.0
 intensity_min = 250
 intensity_max = 250 
 intensities = np.linspace(intensity_min, intensity_max, N_intensity).tolist()
 
-N_lateral = 10 
-lateral_min = +0.15
-lateral_max = +0.225  
+N_lateral = 1 
+lateral_min = 0
+lateral_max = 0
 # lateral_min = 0.15
-# lateral_max = 0.35
+# lateral_max = 0.225 
 lateral_range = np.linspace(lateral_min, lateral_max, N_lateral).tolist()
 
-N_skew = 1 
-# skew_min = -45 
-# skew_max = +45  
-skew_min = 0
-skew_max = 0
+N_skew = 10
+skew_min = -45 
+skew_max = +45  
+# skew_min = 0
+# skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
 # create a test matrix 
@@ -658,106 +660,134 @@ for i in range(num_frames):
 # shuffle the test matrix to randomize the order of frames
 random.shuffle(test_matrix)
 
+chunk_size = 100 
+total_chunks = (num_frames + chunk_size - 1) // chunk_size
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
+with tqdm(total=num_frames, desc="Overall Progress", position=0) as overall_pbar:
 
-# SIMULATION LOOP 
-for i in range(num_frames):
+    for chunk_idx in range(total_chunks):
+        start_idx = chunk_idx * chunk_size
+        end_idx = min((chunk_idx + 1) * chunk_size, num_frames)
 
-    # randomize variables 
-    # rand_background_idx = 0 # np.random.randint(0, len(backgrounds_files_all)) 
-    rand_background_idx = i % N_backgrounds # vary the background 
-    background_plane_texture = backgrounds_files_all[rand_background_idx]
-    # background_plane_texture = test_matrix[i]["background"] 
+        # print(f"[SDG] Starting chunk {chunk_idx + 1}/{total_chunks}, frames {start_idx} to {end_idx - 1}")
 
-    distance = test_matrix[i]["distance"]
-    intensity = test_matrix[i]["intensity"]
-    lateral = test_matrix[i]["lateral"]
-    skew =  skew_range[i % N_skew]
-
-    # set background plane texture 
-    prim_path = "/World/background_plane"
-    if stage.GetPrimAtPath(prim_path).IsValid():
-        stage.RemovePrim(prim_path)
-    with background_plane:
-        bg_mat = rep.create.material_omnipbr(
-            diffuse_texture=background_plane_texture,
-            emissive_intensity=0.0,
-        )
-        rep.modify.material(bg_mat, background_plane) 
-    
-    # set marker pose 
-    # new_pos = (lateral, 0.0, -distance)  # XYZ position
-    # new_rot = (skew, 0.0, 0.0)   # Euler angles in degrees
-    # FIXME 
-    new_pos = (lateral, 0.1, -distance)  # XYZ position
-    new_rot = (30, 0.0, 0.0)   # Euler angles in degrees
-    set_transform_attributes(tag_prim, location=new_pos, rotation=new_rot)
-    
-    # set distant light intensity
-    dome_light_intensity_attr.Set(intensity)
-
-    # update the app to apply the randomization 
-    rep.orchestrator.step(delta_time=0.0, rt_subframes=2, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
-
-    # Enable render products only at capture time
-    if disable_render_products_between_captures:
-        object_based_sdg_utils.set_render_products_updates(render_products, True, include_viewport=False)
-
-    # Capture the current frame
-    print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
-    if i % 1 == 0:
-        # capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
-        capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=128, apply_blur=False) 
-        # rep.orchestrator.step(delta_time=0.0, rt_subframes=1, pause_timeline=False)
-    else:
-        rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
-
-    cam_tf = get_world_transform_xform_as_np_tf(cam_prim)
-    tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
-    plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
-    # light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
-    # shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
-
-    pose_data = {
-        "cam": cam_tf.tolist(), 
-        "tag": tag_tf.tolist(), 
-        "plane": plane_tf.tolist(), 
-        # "light": light_tf.tolist(), 
-    } 
-    write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
-    write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
-    write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
-
-    # parse number from the path 
-    match = re.search(r"-(\d+)\.png$", tag_textures_sequence[i+1]) # off by one because randomizer runs once at initialization 
-    if match:
-        tag_id = int(match.group(1))
-
-    metadata = {
-        # "light": {
-        #     "exposure": distant_light_lighting_prim.GetAttribute("inputs:exposure").Get(), 
-        #     "color": serialize_vec3f(distant_light_lighting_prim.GetAttribute("inputs:color").Get()), 
-        # },
-        "tag_id": tag_id, 
-        "background": os.path.basename(background_plane_texture),
-        "background_id": rand_background_idx,
-        "distance": distance,
-        "intensity": intensity,
-        "lateral": lateral,
-        "skew": skew,
-    } 
-
-    write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")
-
-    # Disable render products between captures
-    if disable_render_products_between_captures:
-        object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
-
-    # Run the simulation for a given duration between frame captures
-    if sim_duration_between_captures > 0:
-        run_simulation_loop(duration=sim_duration_between_captures)
-    else:
+        # Reset environment between chunks
+        timeline.stop()
         simulation_app.update()
+
+        # Optionally: reset positions, reset physics states, or recreate assets if needed
+        timeline.set_current_time(0)
+        timeline.play()
+        timeline.commit()
+        simulation_app.update()
+
+
+        # SIMULATION LOOP 
+        # for i in range(num_frames):   
+        with tqdm(total=(end_idx - start_idx), desc=f"Chunk {chunk_idx + 1}/{total_chunks}", leave=False, position=1) as chunk_pbar:
+            for i in range(start_idx, end_idx):
+
+                # randomize variables 
+                # rand_background_idx = 0 # np.random.randint(0, len(backgrounds_files_all)) 
+                rand_background_idx = i % N_backgrounds # vary the background 
+                background_plane_texture = backgrounds_files_all[rand_background_idx]
+                # background_plane_texture = test_matrix[i]["background"] 
+
+                distance = test_matrix[i]["distance"]
+                intensity = test_matrix[i]["intensity"]
+                lateral = test_matrix[i]["lateral"]
+                skew =  skew_range[i % N_skew]
+
+                # set background plane texture 
+                prim_path = "/World/background_plane"
+                if stage.GetPrimAtPath(prim_path).IsValid():
+                    stage.RemovePrim(prim_path)
+                with background_plane:
+                    bg_mat = rep.create.material_omnipbr(
+                        diffuse_texture=background_plane_texture,
+                        emissive_intensity=0.0,
+                    )
+                    rep.modify.material(bg_mat, background_plane) 
+                
+                # set marker pose 
+                new_pos = (lateral, 0.0, -distance)  # XYZ position
+                new_rot = (skew, 0.0, 0.0)   # Euler angles in degrees
+                set_transform_attributes(tag_prim, location=new_pos, rotation=new_rot)
+                
+                # set distant light intensity
+                dome_light_intensity_attr.Set(intensity)
+
+                # update the app to apply the randomization 
+                rep.orchestrator.step(delta_time=0.0, rt_subframes=2, pause_timeline=False) # NOTE: reducing rt_subframes from 5 for speed 
+
+                # Enable render products only at capture time
+                if disable_render_products_between_captures:
+                    object_based_sdg_utils.set_render_products_updates(render_products, True, include_viewport=False)
+
+                # Capture the current frame
+                # print(f"[SDG] Capturing frame {i}/{num_frames}, at simulation time: {timeline.get_current_time():.2f}")
+                if i % 1 == 0:
+                    # capture_with_motion_blur_and_pathtracing(duration=0.025, num_samples=8, spp=128)
+                    capture_with_motion_blur_and_pathtracing(duration=0.05, num_samples=8, spp=128, apply_blur=False) 
+                    # rep.orchestrator.step(delta_time=0.0, rt_subframes=1, pause_timeline=False)
+                else:
+                    rep.orchestrator.step(delta_time=0.0, rt_subframes=rt_subframes, pause_timeline=False)
+
+                cam_tf = get_world_transform_xform_as_np_tf(cam_prim)
+                tag_tf = get_world_transform_xform_as_np_tf(tag_prim)
+                plane_tf = get_world_transform_xform_as_np_tf(background_plane_prim)
+                # light_tf = get_world_transform_xform_as_np_tf(distant_light_prim) 
+                # shadower_tf = get_world_transform_xform_as_np_tf(shadower_plane_prim) 
+
+                pose_data = {
+                    "cam": cam_tf.tolist(), 
+                    "tag": tag_tf.tolist(), 
+                    "plane": plane_tf.tolist(), 
+                    # "light": light_tf.tolist(), 
+                } 
+                write_rgb_data(rgb_annot.get_data(), f"{OUT_DIR}/rgb/rgb_{i}")
+                write_sem_data(sem_annot.get_data(), f"{OUT_DIR}/seg/seg_{i}")
+                write_pose_data(pose_data, f"{OUT_DIR}/pose/pose_{i}") 
+
+                # parse number from the path 
+                match = re.search(r"-(\d+)\.png$", tag_textures_sequence[i+1]) # off by one because randomizer runs once at initialization 
+                if match:
+                    tag_id = int(match.group(1))
+
+                metadata = {
+                    # "light": {
+                    #     "exposure": distant_light_lighting_prim.GetAttribute("inputs:exposure").Get(), 
+                    #     "color": serialize_vec3f(distant_light_lighting_prim.GetAttribute("inputs:color").Get()), 
+                    # },
+                    "tag_id": tag_id, 
+                    "background": os.path.basename(background_plane_texture),
+                    "background_id": rand_background_idx,
+                    "distance": distance,
+                    "intensity": intensity,
+                    "lateral": lateral,
+                    "skew": skew,
+                } 
+
+                write_metadata(metadata, f"{OUT_DIR}/metadata/metadata_{i}")
+
+                # Disable render products between captures
+                if disable_render_products_between_captures:
+                    object_based_sdg_utils.set_render_products_updates(render_products, False, include_viewport=False)
+
+                # Run the simulation for a given duration between frame captures
+                if sim_duration_between_captures > 0:
+                    run_simulation_loop(duration=sim_duration_between_captures)
+                else:
+                    simulation_app.update()
+
+                chunk_pbar.update(1)
+                overall_pbar.update(1)  
+
+            # print(f"[SDG] Finished chunk {chunk_idx + 1}/{total_chunks}")
+
+
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------#
 
 # CLEANUP 

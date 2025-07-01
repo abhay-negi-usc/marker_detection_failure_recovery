@@ -306,6 +306,10 @@ class DataProcessor():
 
         seg = np.array(seg)
         seg = cv2.copyMakeBorder(seg, image_border_size, image_border_size, image_border_size, image_border_size, cv2.BORDER_CONSTANT, value=0)
+        # only keep largest blob in seg
+        num_labels, labels_im = cv2.connectedComponents(seg.astype(np.uint8), connectivity=8)
+        largest_label = 1 + np.argmax(np.bincount(labels_im.flat)[1:])
+        seg = (labels_im == largest_label).astype(np.uint8) * 255
         tag_pixels = np.argwhere(seg == 255)
         if tag_pixels.size < 1000: # min number of pixels to consider a tag, value from training data filtering 
             return None, None
@@ -870,7 +874,7 @@ def main():
     }
 
     # get ablation data path 
-    ablation = "truncation_background" 
+    ablation = "skew_v4" 
     data_yaml_path = "./ablations/data/data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -882,12 +886,13 @@ def main():
         "camera_parameters": camera_parameters,
         "marker_parameters": marker_parameters, 
         "seg_model_path":"./segmentation_model/models/my_checkpoint_20250329.pth.tar",
-        "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar", 
+        # "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250330.pth.tar", 
+        "kp_model_path": "./keypoints_model/models/my_checkpoint_keypoints_20250401.pth.tar", 
         "device": "cuda" if torch.cuda.is_available() else "cpu", 
     }
 
     processor = DataProcessor(config)
-    processor.run_opencv_fiducial_marker_detection(save_results=True) 
+    processor.run_opencv_fiducial_marker_detection(save_results=False) 
     processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=False) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
