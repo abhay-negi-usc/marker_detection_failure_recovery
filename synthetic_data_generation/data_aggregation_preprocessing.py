@@ -10,6 +10,7 @@ from functools import partial
 from random import shuffle
 import matplotlib.pyplot as plt
 from synthetic_data_generation.data_preprocessing_utils import DataProcessor  # Assuming the DataProcessor class is stored separately
+# from synthetic_data_generation.data_preprocessing_utils_updated import DataProcessor  # Assuming the DataProcessor class is stored separately
 from keypoints_model.utils import overlay_points_on_image  # Assuming this is defined externally
 
 # -------------------- Parallel Filter Helper (Must be top-level) --------------------
@@ -22,7 +23,8 @@ def filter_datapoint_worker(dp, min_tag_area=1000, min_tag_pix_mean=70, max_tag_
         dp.tag_pix_area = np.sum(seg_img == 255)
 
         marker_pixels = np.argwhere(seg_img == 255)
-        rgb_img = np.array(Image.open(dp.rgb_filepath))
+        rgb_img_image = Image.open(dp.rgb_filepath) 
+        rgb_img = np.array(rgb_img_image)
         marker_rgb_values = rgb_img[marker_pixels[:, 0], marker_pixels[:, 1]]
         marker_grey_values = np.mean(marker_rgb_values, axis=1)
 
@@ -37,9 +39,14 @@ def filter_datapoint_worker(dp, min_tag_area=1000, min_tag_pix_mean=70, max_tag_
             min_tag_pix_mean < dp.tag_pix_mean < max_tag_pix_mean
         )
 
+        rgb_img_image.close()
+        del rgb_img_image
+
         return dp, is_valid
     except Exception as e:
         print(f"[ERROR] Filtering failed for {dp.rgb_filepath}: {e}")
+        rgb_img.close()
+        del rgb_img
         return dp, False
 
 # -------------------- Parallel Split Helper (Must be top-level) --------------------
@@ -68,13 +75,19 @@ def save_single_datapoint(dp, idx, dataset_type, out_dir, save_rgb, save_seg, sa
             aug_img = augment_fn(rgb_img, seg_img)
             if aug_img is not None:
                 aug_img_pil = Image.fromarray(aug_img.astype(np.uint8))
-                aug_img_pil.save(os.path.join(dataset_dir, "rgb", f"img_{idx}.png"))
+            else:
+                aug_img_pil = rgb_img
+            aug_img_path = os.path.join(dataset_dir, "rgb", f"img_{idx}.png")
+            aug_img_pil.save(aug_img_path)
+            dp.rgb_filepath = aug_img_path  # Update the rgb_filepath in dp
         elif num_augmentations > 1 and augment_fn is not None:
             for j in range(num_augmentations):
                 aug_img = augment_fn(rgb_img, seg_img)
                 if aug_img is not None:
                     aug_img_pil = Image.fromarray(aug_img.astype(np.uint8))
-                    aug_img_pil.save(os.path.join(dataset_dir, "rgb", f"img_{idx}_{j+1}.png"))
+                    aug_img_path = os.path.join(dataset_dir, "rgb", f"img_{idx}_{j+1}.png")
+                    aug_img_pil.save(aug_img_path)
+                    dp.rgb_filepath = aug_img_path  # Update the rgb_filepath in dp    
 
     if save_seg:
         os.makedirs(os.path.join(dataset_dir, "seg"), exist_ok=True)
@@ -166,6 +179,12 @@ def save_single_datapoint(dp, idx, dataset_type, out_dir, save_rgb, save_seg, sa
         except Exception as e:
             print(f"[ERROR] Failed to generate summary image for {idx}: {e}")
 
+    rgb_img.close()
+    del rgb_img
+    del seg 
+    del aug_img_pil
+
+
 # -------------------- Parallel Save Helper --------------------
 def save_datapoint_wrapper(args):
     dp, idx, dataset_type, config = args
@@ -185,14 +204,17 @@ if __name__ == "__main__":
     # -------------------- Configuration --------------------
     data_folders = [
         # aruco 6x6 library 
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191220/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191357/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191716/",
-        # "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250423-191924/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191220/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191357/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191716/",
+        "/home/nom4d/marker_ws/output/sdg_markers_20250423-191924/",
+
+        # small directory for fast testing 
+        # "/home/nom4d/marker_ws/output/sdg_markers_20250323-033133/",
 
         # apriltag 36h11 tag 0 
-        "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250401-123254/",
-        "/home/anegi/abhay_ws/marker_detection_failure_recovery/output/sdg_markers_20250402-152243/",
+        # "/home/nom4d/marker_ws/output/sdg_markers_20250401-123254/",
+        # "/home/nom4d/marker_ws/output/sdg_markers_20250402-152243/",
     ]
 
     OUT_DIR = f"./segmentation_model/data/data_{time.strftime('%Y%m%d-%H%M%S')}"
@@ -204,8 +226,10 @@ if __name__ == "__main__":
     processor.set_marker(
         # image_path="./synthetic_data_generation/assets/tags/4x4_1000-31.png",
         # num_squares=8,
-        image_path="./synthetic_data_generation/assets/tags/tag36h11_0.png",
-        num_squares=10,  # For apriltag 36h11 tag 0  
+        # image_path="./synthetic_data_generation/assets/tags/tag36h11_0.png",
+        image_path="./synthetic_data_generation/assets/tags/aruco dictionary 6x6 png/6x6_1000-0.png",
+        # num_squares=10,  # For apriltag 36h11 tag 0
+        num_squares=8,  # For aruco6x6  
         side_length=0.100
     )
 
@@ -214,7 +238,7 @@ if __name__ == "__main__":
     print(f"[INFO] Total datapoints loaded: {len(processor.datapoints)}")
 
     # # Optional truncation for fast testing
-    # MAX_DATAPOINTS = 100
+    # MAX_DATAPOINTS = 10
     # processor.datapoints = processor.datapoints[:MAX_DATAPOINTS]
     # print(f"[INFO] Truncated to {len(processor.datapoints)} datapoints for debugging.")
 

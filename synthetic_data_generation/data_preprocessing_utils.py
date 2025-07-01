@@ -259,15 +259,15 @@ def lighting_augmentation(image):
     if np.random.rand() < 0.5: 
         lines_effect = lines(width, height) 
         augmented_image *= np.repeat(lines_effect[:,:,np.newaxis],image_dim3,-1)
-    if np.random.rand() < 0.1: 
-        perlin_effect = perlin(width, height) 
-        augmented_image *= np.repeat(perlin_effect[:,:,np.newaxis],image_dim3,-1)
+    # if np.random.rand() < 0.1: 
+    #     perlin_effect = perlin(width, height) 
+    #     augmented_image *= np.repeat(perlin_effect[:,:,np.newaxis],image_dim3,-1)
     if np.random.rand() < 0.5: 
         gradient_effect = gradient(width, height) 
         augmented_image *= np.repeat(gradient_effect[:,:,np.newaxis],image_dim3,-1)  
-    if np.random.rand() < 0.2: 
-        circular_effect = circular(width, height) 
-        augmented_image *= np.repeat(circular_effect[:,:,np.newaxis],image_dim3,-1) 
+    # if np.random.rand() < 0.2: 
+    #     circular_effect = circular(width, height) 
+    #     augmented_image *= np.repeat(circular_effect[:,:,np.newaxis],image_dim3,-1) 
     
     # augmented_image = np.repeat(lines_effect[:,:,np.newaxis],image_dim3,-1) * np.repeat(perlin_effect[:,:,np.newaxis],image_dim3,-1) * np.repeat(gradient_effect[:,:,np.newaxis],image_dim3,-1) * np.repeat(circular_effect[:,:,np.newaxis],image_dim3,-1) * image 
     if (augmented_image.max() < 0.4) or augmented_image.max() > 1.0: # NOTE: HYPERPARAMETER 
@@ -420,6 +420,9 @@ class datapoint:
         # Convert the binary mask back to an image
         seg_img_resized = Image.fromarray(seg_img_resized)
 
+        seg_img.close() 
+        del seg_img
+
         return seg_img_resized
     
     def get_roi_image(self, seg=None, roi_size=128, padding=5): 
@@ -441,8 +444,15 @@ class datapoint:
         seg_center_x = (seg_tag_min_x + seg_tag_max_x) // 2
         seg_center_y = (seg_tag_min_y + seg_tag_max_y) // 2 
 
+        # add noise to seg_center_x and seg_center_y
+        # noise_x = np.random.randint(-padding//2, padding//2+1)
+        # noise_y = np.random.randint(-padding//2, padding//2+1)
+        # seg_center_x += noise_x
+        # seg_center_y += noise_y
+
         # get pixel info of rgb 
-        rgb = np.array(Image.open(self.rgb_filepath))
+        rgb_image = Image.open(self.rgb_filepath)
+        rgb = np.array(rgb_image)
         rgb = cv2.copyMakeBorder(rgb, image_border_size, image_border_size, image_border_size, image_border_size, cv2.BORDER_CONSTANT, value=0) 
         rgb_side = max(seg_height, seg_width) + 2*padding 
         rgb_tag_min_x = seg_center_x - rgb_side // 2
@@ -467,6 +477,10 @@ class datapoint:
         self.W_img = W 
         self.H_img = H 
         self.img_center = np.array([W/2,H/2])
+
+        del rgb 
+        rgb_image.close()
+        del rgb_image
 
         return self.roi_img, self.roi_coordinates, self.roi_center 
     
@@ -493,7 +507,8 @@ class datapoint:
     
     def generate_summary_image(self):
 
-        rgb_img = np.array(Image.open(self.rgb_filepath).convert("RGB"))
+        rgb_img_image = Image.open(self.rgb_filepath) 
+        rgb_img = np.array(rgb_img_image.convert("RGB"))
         seg_img = np.array(self.preprocess_seg_img())
 
         summary = rgb_img.copy()
@@ -507,6 +522,7 @@ class datapoint:
         plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
         plt.close(fig)
         buf.seek(0)
+        rgb_img_image.close()  # Close the RGB image to free memory
         return Image.open(buf)
 
 
@@ -542,7 +558,7 @@ class DataProcessor:
     
     def set_marker(self, image_path, num_squares, side_length): 
         self.marker_path = image_path 
-        self.marker_image = Image.open(image_path) 
+        # self.marker_image = Image.open(image_path) 
         self.marker_num_squares = num_squares 
         self.marker_side_length = side_length 
         self.keypoints_tag_frame = compute_2D_gridpoints(N=self.marker_num_squares, s=self.marker_side_length) 
@@ -719,7 +735,8 @@ class DataProcessor:
 
             # Contrast + mean
             marker_pixels = np.argwhere(seg_img == 255)
-            rgb_img = np.array(Image.open(dp.rgb_filepath))
+            rgb_img_image = Image.open(dp.rgb_filepath) 
+            rgb_img = np.array(rgb_img_image)
             marker_rgb_values = rgb_img[marker_pixels[:, 0], marker_pixels[:, 1]]
             marker_grey_values = np.mean(marker_rgb_values, axis=1)
 
@@ -734,6 +751,9 @@ class DataProcessor:
                 dp.tag_pix_area > min_tag_area and
                 min_tag_pix_mean < dp.tag_pix_mean < max_tag_pix_mean
             )
+
+            rgb_img_image.close() 
+            del rgb_img_image 
 
             return dp, is_valid
         except Exception as e:
@@ -786,6 +806,8 @@ class DataProcessor:
         img = Image.open(img_path)
         # img_resized = img.resize(new_size)
         img_resized = img 
+        img.close()
+        del img 
         return img_resized
 
     def preprocess_seg_img(self, seg_img_path, seg_json_path, tag_seg_color=None):
@@ -842,6 +864,9 @@ class DataProcessor:
         # Convert the binary mask back to an image
         seg_img_resized = Image.fromarray(seg_img_resized)
 
+        seg_img.close()
+        del seg_img
+
         return seg_img_resized
 
     def save_preprocessed_images(self, frac_train=0.8, augmentation=True, n_augmentations=0):
@@ -850,13 +875,14 @@ class DataProcessor:
 
         if augmentation: 
             transform = A.Compose([
-                # A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
+                A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
                 A.RandomSunFlare(flare_roi=(0,0,1,1), num_flare_circles_range=(10,50), src_radius=100, src_color=(150,150,150), method="physics_based", p=0.8),  # Apply random sun flare to the image, TODO: come back to this, get labels 
                 A.GaussNoise(var_limit=(0,0.01), per_channel=True, p=1),  # Add noise to the image 
-                A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                # A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
+                A.MotionBlur(blur_limit=(3,13), p=0.4),  # Apply motion blur to the image
                 # A.RandomGamma(gamma_limit=(80, 120), p=0.8),  # Apply gamma correction to the image
                 # A.RandomBrightnessContrast(brightness_limit=(-0.25,0.25), contrast_limit=(-0.95,0.95), p=0.8),  # Adjust brightness and contrast
-                # A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=0.8),  # Apply ISO noise to the image 
+                A.ISONoise(intensity=(0.01, 0.05), color_shift=(0.001, 0.005), p=0.8),  # Apply ISO noise to the image 
             ]) 
 
         for i, dp in enumerate(self.datapoints_train): 
@@ -869,14 +895,14 @@ class DataProcessor:
             if augmentation: 
                 for j in range(n_augmentations): 
                     augmented_img = transform(image=np.array(img)[:,:,:3])['image']
-                    augmented_img = lighting_augmentation(augmented_img) 
+                    # augmented_img = lighting_augmentation(augmented_img) 
                     retry = 0 
                     while not self.check_image_okay(augmented_img, seg, min_tag_area=1000, min_tag_pix_mean=25, max_tag_pix_mean=250): 
                         # print(f"Retry: {retry}")
                         augmented_img = transform(image=np.array(img)[:,:,:3])['image']
-                        if retry < 5: 
-                            augmented_img = lighting_augmentation(augmented_img) 
-                        if retry > 25: 
+                        # if retry < 5: 
+                        #     augmented_img = lighting_augmentation(augmented_img) 
+                        if retry > 10: 
                             print(f"Exceeded retry limit. Skipping image.")
                             continue 
                         retry += 1
@@ -904,7 +930,7 @@ class DataProcessor:
                         augmented_img = transform(image=np.array(img)[:,:,:3])['image']
                         if retry < 5: 
                             augmented_img = lighting_augmentation(augmented_img) 
-                        if retry > 25:
+                        if retry > 10:
                             print(f"Exceeded retry limit. Skipping image.")
                             continue  
                         retry += 1 
@@ -916,21 +942,24 @@ class DataProcessor:
             if i % (len(self.datapoints_val)/100) == 0: 
                 print(f"Processed training data: {i}/{len(self.datapoints_val)}")
 
+            del img
+            del seg
+
     def set_augmentation_transforms(self): 
         transform = A.Compose([
-                # A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
+                A.RandomShadow(shadow_roi=(0,0,1,1), num_shadows_limit=(1,10), shadow_dimension=4, shadow_intensity_range =(0.5, 0.8), p=0.8),  # Apply random shadows to the image
                 A.RandomSunFlare(flare_roi=(0,0,1,1), num_flare_circles_range=(10,50), src_radius=100, src_color=(150,150,150), method="physics_based", p=0.8),  # Apply random sun flare to the image, TODO: come back to this, get labels 
                 A.GaussNoise(var_limit=(0,0.001), per_channel=True, p=1),  # Add noise to the image 
                 # A.AdvancedBlur(blur_limit=(5,25), p=0.8),  # Apply blur to the image 
-                A.Blur(blur_limit=(7,15), p=0.5),  # Apply blur to the image 
-                A.MotionBlur(blur_limit=(7,15), p=0.9),  # Apply motion blur to the image
+                # A.Blur(blur_limit=(7,15), p=0.5),  # Apply blur to the image 
+                A.MotionBlur(blur_limit=(3,13), p=0.4),  # Apply motion blur to the image
                 # A.RandomGamma(gamma_limit=(80, 120), p=0.8),  # Apply gamma correction to the image
                 # A.RandomBrightnessContrast(brightness_limit=(-0.25,0.25), contrast_limit=(-0.95,0.95), p=0.8),  # Adjust brightness and contrast
-                # A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=0.8),  # Apply ISO noise to the image 
+                A.ISONoise(intensity=(0.01, 0.05), color_shift=(0.001, 0.005), p=0.8),  # Apply ISO noise to the image 
             ])
         self.albumentations_transform = transform 
 
-    def augment_image(self, image, seg, max_attempts_lighting=5, max_attempts_combined=10):  
+    def augment_image(self, image, seg, max_attempts_lighting=1, max_attempts_combined=10):  
         image = np.array(image)[:,:,:3]  
         # check if image is okay 
         if not self.check_image_okay(image, seg, min_tag_area=1000, min_tag_pix_mean=50, max_tag_pix_mean=250): 
@@ -954,7 +983,8 @@ class DataProcessor:
                 break
         if attempt == max_attempts_combined: 
             print("Failed to augment image after max attempts.")
-            return None
+            # return None
+            return image 
         return augmented_image 
     
     def save_train_val_data(self, 
@@ -1114,3 +1144,8 @@ class DataProcessor:
                 # Print progress every 10%
                 if i % (len(datapoints) / 10) == 0:
                     print(f"Processed {dataset_type} data: {i}/{len(datapoints)}") 
+
+                # Free up memory
+                rgb_img.close()
+                del rgb_img
+                del seg_img

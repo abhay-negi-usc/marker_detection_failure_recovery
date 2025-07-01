@@ -20,17 +20,20 @@ TRAIN_IMG_DIR = f"{DATA_DIR}/train/rgb"
 TRAIN_MASK_DIR = f"{DATA_DIR}/train/seg"
 VAL_IMG_DIR = f"{DATA_DIR}/val/rgb"
 VAL_MASK_DIR = f"{DATA_DIR}/val/seg"
+SAVE_DIR = "./segmentation_model/models/"
+LOAD_DIR = "/home/nom4d/marker_ws/segmentation_checkpoints/"
+SAVE_FREQ = 10000 
 
 LEARNING_RATE = 1e-5 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 8 
+BATCH_SIZE = 4 
 NUM_EPOCHS = 1000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = True                          
+LOAD_MODEL = True                            
 
 def train_fn(loader, model, optimizer, loss_fn, scaler, epoch): 
     loop = tqdm(loader) # progress bar 
@@ -61,12 +64,12 @@ def train_fn(loader, model, optimizer, loss_fn, scaler, epoch):
         loop.set_postfix(loss=loss.item())         
 
         # Save checkpoint every 100 batches
-        if batch_idx % 1000 == 0: 
+        if batch_idx % SAVE_FREQ == 0: 
             save_checkpoint({
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar")
-            }, f"/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar")
+            }, os.path.join(SAVE_DIR, f"my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar"))
 
     # Log average training loss to wandb
     avg_loss = epoch_loss / len(loader)
@@ -118,7 +121,7 @@ def main():
 
     if LOAD_MODEL: 
         # load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint_20250329.pth.tar"), model)
-        load_checkpoint(torch.load("/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_0_batch_20000.pth.tar"), model)
+        load_checkpoint(torch.load(os.path.join(LOAD_DIR,"my_checkpoint_multimarker_epoch_0_batch_10000.pth.tar")), model)
         accuracy = 0.0
     else: 
         accuracy = 0.0 
@@ -144,14 +147,14 @@ def main():
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}.pth.tar")  # Save with epoch and accuracy
-            }, f"/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_{epoch}.pth.tar")  # Save with epoch and accuracy
+            }, os.path.join(SAVE_DIR, f"my_checkpoint_multimarker_epoch_{epoch}.pth.tar"))  # Save with epoch and accuracy
 
             # Optionally save some predictions
-            # saved_images_dir = "saved_images/"
-            # os.makedirs(saved_images_dir, exist_ok=True)
-            # save_predictions_as_imgs(
-            #     val_loader, model, folder=saved_images_dir, device=DEVICE
-            # )
+            saved_images_dir = "./segmentation_model/training_validation_images/" 
+            os.makedirs(saved_images_dir, exist_ok=True)
+            save_predictions_as_imgs(
+                val_loader, model, folder=saved_images_dir, device=DEVICE, num_datapoints=10
+            )
 
 if __name__ == "__main__":
     # Initialize wandb
@@ -160,9 +163,9 @@ if __name__ == "__main__":
             "wandb_key": "9336a0a286df1f392970fb1192519ef0191ba865",
             "wandb_project": "multimarker_segmentation", 
             "wandb_entity": "abhay-negi-usc-university-of-southern-california", 
-            "learning_rate": 1e-4,
-            "batch_size": 128,
-            "epochs": 1_000_000,
+            "learning_rate": LEARNING_RATE,
+            "batch_size": BATCH_SIZE,
+            "epochs": NUM_EPOCHS,
             "image_height": 480,
             "image_width": 640,
             "num_workers": 8,
