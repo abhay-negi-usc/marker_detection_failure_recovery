@@ -16,6 +16,7 @@ from keypoints_model.utils import overlay_points_on_image
 from real_data_processing.utils import *
 
 from keypoints_model.utils import compute_2D_gridpoints 
+from pose_estimation_model.utils import * 
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 OPTITRACK_CSV_FILE = "optitrack_csv_file"
 REALSENSE_VIDEO_FILE = "realsense_video_file"
 CAMERA_INTRINSIC_MATRIX = "camera_intrinsic_matrix"
+CAMERA_INTRINSIC_MATRIX_RESIZED = "camera_intrinsic_matrix_resized"
 CAMERA_DIST_COEFFS = "camera_dist_coeffs"
 CAMERA_EXTRINSIC_MATRIX = "camera_extrinsic_matrix"
 ARUCO_DICT = "aruco_dict"
@@ -52,6 +54,7 @@ class DatasetProcessor:
         self.t_offset_optk_ccv = self.config[T_OFFSET_OPTK_CCV]
         self.tf_trackmark_fidumark = self.config[TF_TRACKMARK_FIDUMARK]
         self.camera_matrix = self.config[CAMERA_INTRINSIC_MATRIX]
+        self.camera_matrix_resized = self.config.get(CAMERA_INTRINSIC_MATRIX_RESIZED, self.camera_matrix)
         assert self.camera_matrix.shape == (3, 3), "Camera matrix must be 3x3"
         self.dist_coeffs = self.config[CAMERA_DIST_COEFFS]
         self.aruco_dict = self.config[ARUCO_DICT]
@@ -331,6 +334,67 @@ class DatasetProcessor:
         self.LBCV_detected = detected
         self.LBCV_keypoints = np.array(LBCV_keypoints, dtype=object)
 
+    def run_hybrid_detection(self): 
+        img_marker_path = "./synthetic_data_generation/assets/tags/tag36h11_0.png"
+        for dp in self.datapoints:
+            # get filename from dp.image_path 
+            img_path = str(dp.image_path) 
+            seg_path = str(dp.image_path).replace("_frames/realsense_6_frame","_frames_LBCV/segmentation_masks/LBCV_seg") 
+            # read segmentation mask
+            img_rgb = cv2.imread(img_path, cv2.IMREAD_COLOR)
+            img_seg = cv2.imread(seg_path, cv2.IMREAD_GRAYSCALE)
+            img_rgb = cv2.resize(img_rgb, (640, 480))
+            img_seg = cv2.resize(img_seg, (640, 480))
+            img_rgb_masked = crop_rgb_using_seg(img_rgb, img_seg)
+            corners = find_segmentation_four_corners(img_seg)
+            if corners is None or img_rgb is None or img_seg is None:
+                # print("No corners found in the segmentation image.")
+                # # show image with no corners found
+                # plt.imshow(cv2.cvtColor(img_rgb_masked, cv2.COLOR_BGR2RGB))
+                # plt.title("No Corners Found")
+                # plt.axis('off')
+                # plt.show()
+                dp.set_pose("HCV", None)
+                continue  
+            tf_candidates = compute_tf_candidates_from_corners(corners, marker_size=(0.1, 0.1), camera_matrix=self.camera_matrix_resized)
+
+            keypoints_rgb_image_space = find_keypoints(img_rgb, img_seg)
+            img_marker = cv2.imread(img_marker_path)
+            keypoints_marker_image_space = find_keypoints(img_marker)
+            keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
+                keypoints_marker_image_space, image_size=(img_marker.shape[0], img_marker.shape[1]), marker_size=(0.1, 0.1)
+            )
+
+            refined_tf_candidates = []
+            residuals = []
+
+            for i, tf in enumerate(tf_candidates):
+                if keypoints_rgb_image_space is None or keypoints_marker_cartesian_space is None:
+                    logger.warning(f"[HCV] No keypoints found for frame {dp.image_path}. Skipping refinement.")
+                    continue
+                refined_tf, residual = refine_pose_icp_3d2d_auto_match(
+                    keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix_resized,
+                    tf, max_iterations=100, show_iteration_images=False
+                )
+                refined_tf_candidates.append(refined_tf)
+                residuals.append(residual)
+
+                # eul_init = R.from_matrix(tf[:3, :3]).as_euler('xyz', degrees=True)
+                # eul_refined = R.from_matrix(refined_tf[:3, :3]).as_euler('xyz', degrees=True)
+                # print(f"Initial Euler: {np.round(eul_init, 1)}, Refined Euler: {np.round(eul_refined, 1)}")
+
+            # if residuals is empty, set to None
+            if not residuals:
+                dp.set_pose("HCV", None)
+                dp.set_hcv_residual(None)
+                continue
+            else: 
+                # print(f"Min Residual: {residuals[min_idx]:.4f} at index {min_idx}")
+                min_idx = np.argmin(residuals)
+                tf_final = refined_tf_candidates[min_idx]
+                dp.set_pose("HCV", tf_final)
+                dp.set_hcv_residual(residuals[min_idx]) 
+
     def compare_detection(self, num_bins=10):
         ccv_detects = np.sum(self.CCV_detected) / len(self.datapoints)
         lbcv_detects = np.sum(self.LBCV_detected) / len(self.datapoints)
@@ -472,6 +536,8 @@ class DatasetProcessor:
                 "ccv_tf": dp.CCV_tf.flatten().tolist() if dp.CCV_tf is not None else None,
                 "ccv_corners": dp.CCV_corners.tolist() if dp.CCV_corners is not None else None,
                 "lbcv_tf": dp.LBCV_tf.flatten().tolist() if dp.LBCV_tf is not None else None,
+                "hcv_tf": dp.HCV_tf.flatten().tolist() if dp.HCV_tf is not None else None,
+                "hcv_residual": dp.HCV_residual if hasattr(dp, 'HCV_residual') else None,
                 "lbcv_keypoints": dp.LBCV_keypoints.tolist() if dp.LBCV_keypoints is not None else None,
             }
             rows.append(row)
@@ -731,6 +797,7 @@ def run_full_analysis(config, predict_fn=None, summary_path=None):
     processor.run_opencv_fiducial_marker_detection(save_results=False)
     if config["set_CCV_ground_truth"] == True: 
         processor.set_OPTK_to_CCV() 
+    processor.run_hybrid_detection()
     if predict_fn is not None:
         processor.run_learning_based_detection(predict_fn, save_results=False, save_segmentation=False)
     processor.compare_detection()
@@ -759,6 +826,7 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown calibration: {calibration_name}")
     
     fx, fy, cx, cy, dist_coeffs = calibration_configs[calibration_name]
+    sx, sy = 640 / 1920, 480 / 1080
 
     # # === Extrinsic Transforms ===
     tf_w_c = np.array([
@@ -789,12 +857,13 @@ if __name__ == "__main__":
 
         TF_TRACKMARK_FIDUMARK: tf_trackmark_fidumark,
         CAMERA_INTRINSIC_MATRIX: np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]),
+        CAMERA_INTRINSIC_MATRIX_RESIZED: np.array([[fx * sx, 0, cx * sx], [0, fy * sy, cy * sy], [0, 0, 1]]),
         CAMERA_DIST_COEFFS: dist_coeffs,
         ARUCO_DICT: cv2.aruco.DICT_APRILTAG_36h11,
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
         T_OFFSET_OPTK_CCV: 1.15,
-        MAX_FRAMES: 10000, #28782,
+        MAX_FRAMES: 28782, #28782,
         OUT_DIR: f"./real_data_processing/results",
         POSE_EST_METHOD: "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
         "set_CCV_ground_truth":False, 
