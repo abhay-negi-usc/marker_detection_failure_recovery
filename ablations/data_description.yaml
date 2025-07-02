@@ -1,0 +1,104 @@
+"ambient": 
+  data_path: "./ablations/data/exp_sdg_20250617-211257/" 
+"lateral": 
+  data_path: "./ablations/data/exp_sdg_20250618-102429/"
+"distance": 
+  data_path: "./ablations/data/exp_sdg_20250618-125218/" 
+"skew": 
+  data_path: "./ablations/data/exp_sdg_20250618-144529/" 
+"background": 
+  data_path: "./ablations/data/exp_sdg_20250625-144415/"
+  notes: "10 different backgrounds images" 
+"distance_background_old": 
+  data_path: "./ablations/data/exp_sdg_20250625-224837/"
+  notes: "100 different backgrounds images, 10 distances" 
+"distance_background_v2": 
+  data_path: "./ablations/data/exp_sdg_20250626-001137/"
+  notes: "1000 different backgrounds images, 10 distances, terminated aroound 4k"
+"background_v2": 
+  data_path: "./ablations/data/exp_sdg_20250626-101732/"
+  notes: "100 different backgrounds images" 
+"distance_background": 
+  data_path: "./ablations/data/distance_background/"
+  notes: "100 different backgrounds images, 10 distances, up to 2m"
+  ablation_variable: "distance_to_camera"
+"skew_background": 
+  data_path: "./ablations/data/skew_background/"
+  notes: "100 different backgrounds images, 10 skew values"
+  ablation_variable: "skew"
+"truncation_background": 
+  data_path: "./ablations/data/truncation_background/"
+  notes: "100 different backgrounds images, 10 lateral values" 
+  ablation_variable: "lateral"
+"underexposure_background": 
+  data_path: "./ablations/data/underexposure_background/"
+  notes: "100 different backgrounds images, 10 exposure values" 
+  ablation_variable: "ambient_light_intensity"
+"test": 
+  data_path: "./ablations/data/exp_sdg_20250626-180642/"
+  notes: "10 different backgrounds images, 10 lateral values" 
+  ablation_variable: "lateral"
+"truncation_new_range": 
+  data_path: "./ablations/data/truncation_new_range/"
+  notes: "100 different backgrounds images, 10 lateral values, new range"
+  ablation_variable: "fraction_marker_visible"
+"underexposure_new_range": 
+  data_path: "./ablations/data/underexposure_new_range/"
+  notes: "100 different backgrounds images, 10 ambient light intensity values, new range"
+  ablation_variable: "ambient_light_intensity"
+"skew_new_range": 
+  data_path: "./ablations/data/skew_new_range/"
+  notes: "100 different backgrounds images, 10 skew values, new range"
+  ablation_variable: "skew"
+"distance_new_range": 
+  data_path: "./ablations/data/distance_new_range/"
+  notes: "100 different backgrounds images, 10 distance values, new range"
+  ablation_variable: "distance_to_camera"
+"skew_v3": 
+  data_path: "./ablations/data/exp_sdg_20250630-211042/"
+  notes: "10 different backgrounds images, 100 skew values, new range"
+  ablation_variable: "skew"
+"skew_v4": 
+  data_path: "./ablations/data/exp_sdg_20250630-214121/"
+  notes: "100 different backgrounds images, 10 skew values, new range"
+  ablation_variable: "skew"
+"distance_v3": 
+  data_path: "./ablations/data/exp_sdg_20250630-220317/"
+  notes: "100 different backgrounds images, 10 distance values, new range"
+  ablation_variable: "distance_to_camera"
+"skew_v5": 
+  data_path: "./ablations/data/exp_sdg_20250630-235140/"
+  notes: "100 different backgrounds images, 10 skew values, 45deg range"
+  ablation_variable: "skew"
+"skew_blank_background": 
+  data_path: "./ablations/data/skew_blank_background/"
+  notes: "blank background, 10 skew values, 45deg range"
+  ablation_variable: "skew"
+"distance_blank_background": 
+  data_path: "./ablations/data/distance_blank_background/"
+  notes: "blank background, 10 distance values"
+  ablation_variable: "distance_to_camera"
+"truncation_blank_background": 
+  data_path: "./ablations/data/truncation_blank_background/"
+  notes: "blank background, 10 lateral values"
+  ablation_variable: "fraction_marker_visible"
+"underexposure_blank_background": 
+  data_path: "./ablations/data/underexposure_blank_background/"
+  notes: "blank background, 10 lighing values"
+  ablation_variable: "ambient_light_intensity"
+"glare_blank_background_v1":
+  data_path: "./ablations/data/exp_sdg_20250701-152726/"
+  notes: "blank backgrounds images, 100 glare values, 0-8 deg cone range"
+  ablation_variable: "fraction_marker_pixels_saturated_high" 
+"glare_blank_background":
+  data_path: "./ablations/data/exp_sdg_20250701-153521/"
+  notes: "blank backgrounds images, 100 glare values, 0-4 deg cone range"
+  ablation_variable: "fraction_marker_pixels_saturated_high" 
+"glare_corner_blank_background":
+  data_path: "./ablations/data/exp_sdg_20250701-154521/"
+  notes: "blank backgrounds images, 100 glare values, 0-8 deg cone range"
+  ablation_variable: "fraction_marker_pixels_saturated_high"  
+"glare_corner_background":
+  data_path: "./ablations/data/exp_sdg_20250701-232607/"
+  notes: "100 backgrounds images, 10 glare values, 0-8 deg cone range"
+  ablation_variable: "fraction_marker_pixels_saturated_high"  

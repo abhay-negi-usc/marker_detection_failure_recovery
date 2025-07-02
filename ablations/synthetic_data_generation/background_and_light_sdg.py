@@ -99,8 +99,8 @@ sys.path.append(cwd)
     
 if os.getcwd() == '/home/anegi/abhay_ws/marker_detection_failure_recovery': # isaac machine 
     sys.path.append("/home/anegi/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
-    # dir_backgrounds = "/home/anegi/Downloads/test2017" 
-    dir_backgrounds = "/home/anegi/Downloads/blank_background" # FIXME 
+    dir_backgrounds = "/home/anegi/Downloads/test2017" 
+    # dir_backgrounds = "/home/anegi/Downloads/blank_background" # FIXME 
 else: # CAM machine 
     sys.path.append("/home/rp/.local/share/ov/pkg/isaac-sim-4.5.0/standalone_examples/replicator/object_based_sdg")
     dir_backgrounds = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/synthetic_data_generation/assets/background_images" 
@@ -643,7 +643,7 @@ print("SDG setup done.")
 
 # VARIABLE SCHEDULING 
 
-N_backgrounds = 1 
+N_backgrounds = 100 
 idx_start_backgrounds = 0 
 backgrounds_files_all = [os.path.join(dir_backgrounds, f) for f in os.listdir(dir_backgrounds) if os.path.isfile(os.path.join(dir_backgrounds, f))]
 backgrounds = backgrounds_files_all[idx_start_backgrounds:idx_start_backgrounds+N_backgrounds]  
@@ -676,7 +676,7 @@ skew_min = 0
 skew_max = 0
 skew_range = np.linspace(skew_min, skew_max, N_skew).tolist() 
 
-N_glare = 100 
+N_glare = 10 
 glare_min = 0.0 
 glare_max = 8.0 # 4.0 
 glare_range = np.linspace(glare_min, glare_max, N_glare).tolist()

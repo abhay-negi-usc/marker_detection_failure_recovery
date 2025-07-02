@@ -468,11 +468,58 @@ class Plotter():
             plt.savefig(output_path, bbox_inches='tight')
             plt.close()     
 
+    def compute_error_summary(self):
+        """
+        Compute and print/save tables of mean, std dev, MAE, and RMSE for each method and error type.
+        """
+        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
+        methods = []
+
+        if self.config.get("plot_LBCV", True):
+            methods.append("LBCV")
+        if self.config.get("plot_HCV", False):
+            methods.append("HCV")
+        methods.append("CCV")
+
+        summary_records = []
+
+        for method in methods:
+            for err_type in error_types:
+                col_name = f'pose_error_{method}_{err_type}'
+                if col_name not in self.df_data.columns:
+                    continue
+
+                errors = self.df_data[col_name].dropna()
+                if errors.empty:
+                    continue
+
+                mean_err = errors.mean()
+                std_err = errors.std()
+                mae_err = errors.abs().mean()
+                rmse_err = np.sqrt((errors**2).mean())
+
+                summary_records.append({
+                    "Method": method,
+                    "Error Component": err_type,
+                    "Mean": mean_err,
+                    "Std Dev": std_err,
+                    "MAE": mae_err,
+                    "RMSE": rmse_err
+                })
+
+        summary_df = pd.DataFrame(summary_records)
+
+        # Print table
+        print(summary_df.to_string(index=False))
+
+        # Save table
+        summary_path = os.path.join(self.output_dir, "error_summary_table.csv")
+        summary_df.to_csv(summary_path, index=False)
+        print(f"\nSummary table saved to {summary_path}")
+
 if __name__ == "__main__":
-    # ablations = ["truncation_blank_background","distance_blank_background","skew_blank_background","underexposure_blank_background"]
-    # ablations = ["distance_blank_background","skew_blank_background","underexposure_blank_background"]
-    ablations = ["glare_corner_blank_background"]
-    data_yaml_path = "./ablations/data/data_description.yaml"
+    ablations = ["glare_blank_background","glare_corner_blank_background","glare_corner_background"]
+    data_yaml_path = "./ablations/data_description.yaml"
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
 
@@ -505,4 +552,5 @@ if __name__ == "__main__":
         plotter_instance.find_worst_performing(ablation_variable) 
         # plotter_instance.find_best_performing(ablation_variable) 
         # plotter_instance.output_labeled_images(ablation_variable)
+        plotter_instance.compute_error_summary()
 

@@ -86,6 +86,108 @@ class DataPoint():
     def set_corners_HCV(self, corners):
         self.corners_HCV = corners
 
+    def compute_fraction_marker_visible(self, camera_matrix, tf_true, image_segmentation, marker_length):
+        # FIXME: this function appears to be off by a one pixel border (3~5% error) 
+        """
+        Compute the fraction of the marker that is visible given pose, camera intrinsics, and segmentation mask.
+
+        Args:
+            camera_matrix (np.ndarray): Camera intrinsic matrix (3x3).
+            tf_true (np.ndarray): 4x4 pose transformation matrix (marker w.r.t. camera).
+            image_segmentation (np.ndarray or None): Binary segmentation mask (marker region > 0).
+            marker_length (float): Length of the marker side (square marker).
+
+        Returns:
+            float: Fraction of marker area visible in segmentation mask.
+        """
+        if tf_true is None or camera_matrix is None:
+            return 0.0
+
+        # Add border if segmentation provided
+        if image_segmentation is not None:
+            border_width = max(image_segmentation.shape)
+            image_segmentation = cv2.copyMakeBorder(
+                image_segmentation,
+                border_width, border_width, border_width, border_width,
+                cv2.BORDER_CONSTANT,
+                value=0
+            )
+        else:
+            border_width = 0
+
+        # Marker corners in local marker frame
+        half_len = marker_length / 2
+        corners_marker = np.array([
+            [ half_len,  half_len, 0],
+            [-half_len,  half_len, 0],
+            [-half_len, -half_len, 0],
+            [ half_len, -half_len, 0]
+        ])
+
+        # Transform corners to camera frame
+        R = tf_true[:3, :3]
+        t = tf_true[:3, 3].reshape(3, 1)
+        corners_camera = (R @ corners_marker.T + t).T  # (4, 3)
+
+        # Project into image space using camera matrix
+        corners_homog = corners_camera @ camera_matrix.T  # (4, 3)
+        corners_image = corners_homog[:, :2] / corners_homog[:, 2:]
+
+        # Determine mask shape
+        mask_shape = image_segmentation.shape if image_segmentation is not None else (480, 640)
+        marker_mask = np.zeros(mask_shape, dtype=np.uint8)
+
+        # Convert to integer pixel coordinates
+        corners_int = np.round(corners_image).astype(np.int32) 
+
+        # Apply offset if border was added
+        if border_width > 0:
+            corners_int += border_width
+
+        # Draw polygon mask
+        cv2.fillConvexPoly(marker_mask, corners_int, 1)
+
+        # Count total projected marker pixels
+        marker_pixel_count = marker_mask.sum()
+
+        # Count visible pixels
+        if image_segmentation is not None:
+            visible_pixels = np.logical_and(marker_mask == 1, image_segmentation > 0).sum()
+        else:
+            visible_pixels = 0
+
+        # Compute fraction
+        if marker_pixel_count > 0:
+            fraction_visible = visible_pixels / marker_pixel_count
+        else:
+            fraction_visible = 0.0
+
+        self.fraction_marker_visible = fraction_visible
+
+        return fraction_visible
+    
+    def compute_fraction_marker_pixels_saturated(self, image, seg, saturation_threshold_low=15, saturation_threshold_high=240):
+        # find marker pixels from segmentation mask 
+        if seg is None or image is None:
+            return None, None 
+        seg = np.array(seg)
+        marker_indices = np.argwhere(seg > 0)  # Get indices of marker pixels
+        num_marker_pixels = marker_indices.shape[0] 
+        if num_marker_pixels == 0:
+            return 0.0, 0.0  # No marker pixels found
+        # Extract RGB values of marker pixels
+        marker_rgb_values = image[marker_indices[:, 0], marker_indices[:, 1], :]
+        # Count saturated pixels
+        saturated_low = np.sum(np.all(marker_rgb_values <= saturation_threshold_low, axis=1))
+        saturated_high = np.sum(np.all(marker_rgb_values >= saturation_threshold_high, axis=1))
+        # Calculate fractions
+        fraction_saturated_low = saturated_low / num_marker_pixels
+        fraction_saturated_high = saturated_high / num_marker_pixels
+        
+        self.fraction_marker_pixels_saturated_low = fraction_saturated_low
+        self.fraction_marker_pixels_saturated_high = fraction_saturated_high
+        return fraction_saturated_low, fraction_saturated_high 
+
 class DataProcessor(): 
     def __init__(self, config):
         self.config = config
@@ -491,6 +593,7 @@ class DataProcessor():
                         self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
                         self.datapoints[idx].set_corners_HCV(None) 
                         self.datapoints[idx].set_tf_HCV(None) 
+                        corners_est = None
                     else: 
                         bool_detected_hybrid = True
                         # fit quadrilateral and find corners of segmentation mask 
@@ -518,7 +621,7 @@ class DataProcessor():
                     output_dir = os.path.join(self.directory, "HCV_corners_results")
                     os.makedirs(output_dir, exist_ok=True)
                     out_img = image.copy()
-                    if bool_detected:
+                    if bool_detected and corners_est is not None:
                         for kp in corners_est:
                             cv2.circle(out_img, tuple(kp.astype(int)), 3, (0, 255, 0), -1)
                     outpath = os.path.join(output_dir, f"HCV_{idx:05d}.png")
@@ -529,65 +632,22 @@ class DataProcessor():
                 out_segmentation_path = os.path.join(output_dir, f"LBCV_segmentation_{idx:05d}.png")
                 image_segmentation.save(out_segmentation_path) 
 
-    def compute_values(self): 
-        for idx, datapoint in enumerate(self.datapoints): 
-            image_segmentation = self.get_true_segmentation(datapoint) 
-            if image_segmentation is not None:
-                border_width = max(image_segmentation.shape)
-                image_segmentation = cv2.copyMakeBorder(
-                    image_segmentation, 
-                    border_width, border_width, border_width, border_width, 
-                    cv2.BORDER_CONSTANT, 
-                    value=0
-                ) 
-
-            # 3D marker corners in marker frame (Z=0 plane)
-            corners_marker = np.array([
-                [ self.marker_length / 2,  self.marker_length / 2, 0],
-                [-self.marker_length / 2,  self.marker_length / 2, 0],
-                [-self.marker_length / 2, -self.marker_length / 2, 0],
-                [ self.marker_length / 2, -self.marker_length / 2, 0]
-            ])
-
-            tf_true = datapoint.tf_true # 4x4
-            R = tf_true[:3, :3]
-            t = tf_true[:3, 3].reshape(3, 1)
-
-            corners_camera = (R @ corners_marker.T + t).T  # shape (4, 3)
-
-            # Project into image space using camera matrix
-            corners_homog = corners_camera @ self.camera_matrix.T  # shape (4, 3)
-            corners_image = corners_homog[:, :2] / corners_homog[:, 2:]
-
-            # Create binary mask from projected marker corners
-            mask_shape = image_segmentation.shape if image_segmentation is not None else (480, 640)
-            marker_mask = np.zeros(mask_shape, dtype=np.uint8)
-
-            # Convert to int pixel coords
-            corners_int = np.round(corners_image).astype(np.int32)
-
-            # Offset polygon if needed due to earlier border added
-            offset = border_width if image_segmentation is not None else 0
-            corners_int += offset
-
-            # Draw filled polygon (projected marker area)
-            cv2.fillConvexPoly(marker_mask, corners_int, 1)
-
-            # Count pixels in projected marker area
-            marker_pixel_count = marker_mask.sum()
-
-            # Count visible marker pixels in segmentation
-            visible_pixels = np.logical_and(marker_mask == 1, image_segmentation > 0).sum()
-
-            # Compute visible fraction
-            if marker_pixel_count > 0:
-                fraction_visible = visible_pixels / marker_pixel_count
-            else:
-                fraction_visible = 0.0
-
-            # Store in datapoint
-            datapoint.set_fraction_marker_viewable(fraction_visible) 
-
+    def compute_values(self):
+        fraction_marker_visible = [] 
+        for idx, datapoint in enumerate(self.datapoints):
+            datapoint.compute_fraction_marker_visible(
+                camera_matrix=self.camera_matrix, 
+                tf_true=datapoint.tf_true, 
+                image_segmentation=self.get_true_segmentation(datapoint), 
+                marker_length=self.marker_length_without_border
+            ) 
+            datapoint.compute_fraction_marker_pixels_saturated(
+                image=np.array(cv2.imread(datapoint.image_path)),
+                seg=self.get_true_segmentation(datapoint),
+                saturation_threshold_low=15,
+                saturation_threshold_high=240
+            )
+        
     def compile_results(self, save_results=False): 
         self.dict_results = [] # for storing unpacked results in a list of dictionaries
         self.df_results = pd.DataFrame(columns=[
@@ -666,6 +726,8 @@ class DataProcessor():
             "pose_error_HCV_c",
             "lateral",
             "fraction_marker_visible",
+            "fraction_marker_pixels_saturated_low",
+            "fraction_marker_pixels_saturated_high",
             "skew", 
             "glare"
         ]) # for storing packed results in a pandas DataFrame format 
@@ -694,6 +756,8 @@ class DataProcessor():
             self.df_results.loc[idx, "distance_to_camera"] = datapoint.metadata.get("distance", None)
             self.df_results.loc[idx, "lateral"] = datapoint.metadata.get("lateral", None)
             self.df_results.loc[idx, "fraction_marker_visible"] = datapoint.fraction_marker_visible 
+            self.df_results.loc[idx, "fraction_marker_pixels_saturated_low"] = datapoint.fraction_marker_pixels_saturated_low
+            self.df_results.loc[idx, "fraction_marker_pixels_saturated_high"] = datapoint.fraction_marker_pixels_saturated_high
             self.df_results.loc[idx, "skew"] = datapoint.metadata.get("skew", None) 
             self.df_results.loc[idx, "glare"] = datapoint.metadata.get("glare", None)
             self.df_results.loc[idx, "detected_CCV"] = datapoint.CCV_detected 
@@ -876,11 +940,9 @@ def main():
     }
 
     # get ablation data path 
-    # ablations = ["underexposure_blank_background","distance_blank_background","truncation_blank_background","skew_blank_background"]
-    # ablations = ["underexposure_blank_background","distance_blank_background","skew_blank_background"]
-    ablations = ["glare_corner_blank_background"]
-    for ablation in ablations:  
-        data_yaml_path = "./ablations/data/data_description.yaml" 
+    ablations = ["glare_blank_background","glare_corner_blank_background","glare_corner_background"]
+    for ablation in ablations: 
+        data_yaml_path = "./ablations/data_description.yaml" 
         with open(data_yaml_path, 'r') as f:
             data_description = yaml.safe_load(f) 
         data_path = data_description[ablation]["data_path"] 
@@ -900,9 +962,9 @@ def main():
         }
 
         processor = DataProcessor(config)
+        processor.compute_values() 
         processor.run_opencv_fiducial_marker_detection(save_results=False) 
         processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True) 
-        processor.compute_values() 
         processor.compile_results(save_results=True)
 
 if __name__ == "__main__":
