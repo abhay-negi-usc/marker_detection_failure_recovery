@@ -22,3 +22,4 @@ eval_outputs
 hrnet_lite/inference_results 
 keypoints_model/checkpoints
 ablations/data/*
+ablations/analysis/plots

@@ -388,13 +388,13 @@ class DataProcessor():
         load_kp_ckpt(torch.load(self.keypoints_model_path, map_location=self.device), self.kp_model)
         self.kp_model.eval()
 
-    def run_LBCV_segmentation(self, image, detection_threshold=5000):         
+    def run_LBCV_segmentation(self, image, detection_threshold=1000):         
         img_tensor = self.seg_transform(image=image)["image"].unsqueeze(0).to(self.device)
         with torch.no_grad():
             seg_mask = torch.sigmoid(self.seg_model(img_tensor))
             seg_mask = (seg_mask > 0.5).float().cpu()
             seg_mask_img = Image.fromarray(seg_mask.squeeze().numpy().astype(np.uint8) * 255)
-        if np.array(seg_mask_img).sum() > detection_threshold: 
+        if np.count_nonzero(np.array(seg_mask_img)) > detection_threshold:
             bool_detected = True  
         else:
             bool_detected = False
@@ -601,7 +601,7 @@ class DataProcessor():
                         corners_est = find_segmentation_four_corners(image_seg_est_np)
                         # solve for pose using the corners 
                         tf_est_hcv = self.estimate_tf_from_keypoints(self.corners_ref, corners_est)
-                        tf_est_corrected = tf_est 
+                        tf_est_corrected = tf_est # from lbcv  
                         tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
                         self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
                         self.datapoints[idx].set_corners_HCV(corners_est) 
@@ -706,6 +706,7 @@ class DataProcessor():
             "pose_error_LBCV_a",
             "pose_error_LBCV_b",
             "pose_error_LBCV_c",
+            "detected_HCV",
             "tf_error_HCV_Rxx",
             "tf_error_HCV_Rxy",
             "tf_error_HCV_Rxz",
@@ -838,6 +839,7 @@ class DataProcessor():
                 self.df_results.loc[idx, "LBCV_IOU"] = datapoint.LBCV_IOU if hasattr(datapoint, 'LBCV_IOU') else None
                 if hasattr(datapoint, 'tf_error_HCV'): 
                     if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
+                        self.df_results.loc[idx, "detected_HCV"] = datapoint.detected_HCV
                         self.df_results.loc[idx, "tf_error_HCV_Rxx"] = datapoint.tf_error_HCV[0, 0]
                         self.df_results.loc[idx, "tf_error_HCV_Rxy"] = datapoint.tf_error_HCV[0, 1]
                         self.df_results.loc[idx, "tf_error_HCV_Rxz"] = datapoint.tf_error_HCV[0, 2]
@@ -857,6 +859,7 @@ class DataProcessor():
                         self.df_results.loc[idx, "pose_error_HCV_b"] = datapoint.pose_error_HCV[4]
                         self.df_results.loc[idx, "pose_error_HCV_c"] = datapoint.pose_error_HCV[5]
                 else:
+                    self.df_results.loc[idx, "detected_HCV"] = False
                     for col in [
                         "tf_error_HCV_Rxx", "tf_error_HCV_Rxy", "tf_error_HCV_Rxz",
                         "tf_error_HCV_Ryx", "tf_error_HCV_Ryy", "tf_error_HCV_Ryz",
@@ -940,8 +943,13 @@ def main():
     }
 
     # get ablation data path 
-    ablations = ["glare_blank_background","glare_corner_blank_background","glare_corner_background"]
+    # ablations = ["distance_blank_background", "skew_blank_background", "truncation_blank_background","underexposure_blank_background", "glare_corner_blank_background", 
+    #              "distance_multi_background", "skew_multi_background", "truncation_multi_background", "underexposure_multi_background", "glare_corner_multi_background"] 
+    ablations = ["truncation_multi_background_v2"]
     for ablation in ablations: 
+
+        print(f"Running ablation: {ablation}")
+
         data_yaml_path = "./ablations/data_description.yaml" 
         with open(data_yaml_path, 'r') as f:
             data_description = yaml.safe_load(f) 

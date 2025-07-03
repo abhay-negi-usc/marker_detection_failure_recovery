@@ -6,6 +6,15 @@ import os
 import yaml 
 from scipy.stats import gaussian_kde
 
+# Define a mapping for renaming ablation variables
+ABALATION_VARIABLE_PRETTY_NAMES = {
+    "distance_to_camera": "Distance to Camera (m)",
+    "skew": "Pitch Angle to Camera (deg)",
+    "truncation": "Fraction of Marker Pixels Visible",
+    "underexposure": "Ambient Light Intensity",
+    "glare": "Glare Cone Angle (deg)",
+}
+
 class Plotter():
     def __init__(self, config, global_ranges):
         self.config = config
@@ -14,13 +23,24 @@ class Plotter():
         self.df_data = pd.read_csv(self.config["results_path"])
         # self.global_ranges = global_ranges
         self.global_ranges = {
-            'x': 0.10,
-            'y': 0.10,
-            'z': 0.10,
-            'a': 30.0,
-            'b': 30.0,
-            'c': 30.0
+            "x": 0.01,
+            "y": 0.01,
+            "z": 0.02,
+            "a": 15.0,  # Pitch error in degrees
+            "b": 15.0,  # Yaw error in degrees
+            "c": 30.0   # Roll error in degrees
         }
+
+        # Determine which methods to plot based on ablation name
+        ablation_name = self.config.get("ablation_name", "").lower()
+        if "truncation" in ablation_name:
+            self.config["plot_CCV"] = False
+            self.config["plot_LBCV"] = True
+            self.config["plot_HCV"] = False 
+        else:
+            self.config["plot_CCV"] = True
+            self.config["plot_LBCV"] = False
+            self.config["plot_HCV"] = True
 
     @staticmethod
     def calculate_global_max_ranges(dataframes, plot_LBCV=True, plot_HCV=False):
@@ -43,68 +63,63 @@ class Plotter():
 
         return max_ranges
 
-    def detection_plot(self, ablation_variable, n_bins=10):    
-        ablation_variable_pretty = ablation_variable.replace("_", " ").title()
-        bin_name = f'{ablation_variable}_bin'
+    def detection_plot(self, ablation_variable, coplot_blank_background=False, save_central=False):    
+        ablation_variable_pretty = ABALATION_VARIABLE_PRETTY_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
 
-        # Create bins and labels from value ranges
-        bins = pd.cut(self.df_data[ablation_variable], bins=n_bins)
-        self.df_data[bin_name] = bins
+        # Define aggregation dictionary and filter out None values
+        aggregation_dict = {
+            'detected_CCV': 'mean' if self.config.get("plot_CCV", False) else None,
+            'detected_LBCV': 'mean' if self.config.get("plot_LBCV", False) else None,
+            'detected_HCV': 'mean' if self.config.get("plot_HCV", False) else None
+        }
+        aggregation_dict = {key: value for key, value in aggregation_dict.items() if value is not None}
 
-        # Grouped detection rates
-        grouped = self.df_data.groupby(bin_name).agg({
-            'detected_CCV': 'mean',
-            'detected_LBCV': 'mean'
-        }).reset_index().rename(columns={
-            'detected_CCV': 'CCV',
-            'detected_LBCV': 'LBCV'
-        })
+        # Group data by ablation variable and calculate detection rates
+        grouped_data = self.df_data.groupby(ablation_variable).agg(aggregation_dict).reset_index()
 
-        # Convert Interval index to strings for x-axis labeling
-        grouped[bin_name] = grouped[bin_name].astype(str)
-
-        # Melt for seaborn plotting
-        detection_rate_melted = grouped.melt(id_vars=bin_name, value_vars=['CCV', 'LBCV'], 
-                                            var_name='Method', value_name='Detection Rate')
-
-        # --- Barplot (binned) with actual bin ranges as x-axis labels ---
+        # --- Scatter plot (detection rates) + Line Connecting Points ---
         plt.figure(figsize=(10, 6))
-        sns.barplot(x=bin_name, y='Detection Rate', hue='Method', data=detection_rate_melted)
-        plt.xlabel(f'{ablation_variable_pretty} (range)')
-        plt.ylabel('Detection Rate')
-        plt.title(f'Detection Rate vs {ablation_variable_pretty}')
-        plt.xticks(rotation=45)
-        plt.legend()
+        if self.config.get("plot_CCV", False):
+            plt.plot(grouped_data[ablation_variable], grouped_data['detected_CCV'], label='CCV', linewidth=2)
+            plt.scatter(grouped_data[ablation_variable], grouped_data['detected_CCV'], label="_nolegend_")
+        if self.config.get("plot_LBCV", False):
+            plt.plot(grouped_data[ablation_variable], grouped_data['detected_LBCV'], label='LBCV', linewidth=2)
+            plt.scatter(grouped_data[ablation_variable], grouped_data['detected_LBCV'], label="_nolegend_")
+        if self.config.get("plot_HCV", False):
+            plt.plot(grouped_data[ablation_variable], grouped_data['detected_HCV'], label='HCV', linewidth=2)
+            plt.scatter(grouped_data[ablation_variable], grouped_data['detected_HCV'], label="_nolegend_")
+
+        # If coplot_blank_background is enabled, plot blank background data
+        if coplot_blank_background:
+            self.df_data_blank = pd.read_csv(self.config["results_path"].replace("multi_background", "blank_background"))
+            grouped_data_blank = self.df_data_blank.groupby(ablation_variable).agg(aggregation_dict).reset_index()
+
+            if self.config.get("plot_CCV", False):
+                plt.plot(grouped_data_blank[ablation_variable], grouped_data_blank['detected_CCV'], label='CCV Blank', linestyle='--', linewidth=2)
+                plt.scatter(grouped_data_blank[ablation_variable], grouped_data_blank['detected_CCV'], alpha=0.5, label="_nolegend_")
+            if self.config.get("plot_LBCV", False):
+                plt.plot(grouped_data_blank[ablation_variable], grouped_data_blank['detected_LBCV'], label='LBCV Blank', linestyle='--', linewidth=2)
+                plt.scatter(grouped_data_blank[ablation_variable], grouped_data_blank['detected_LBCV'], alpha=0.5, label="_nolegend_")
+            if self.config.get("plot_HCV", False):
+                plt.plot(grouped_data_blank[ablation_variable], grouped_data_blank['detected_HCV'], label='HCV Blank', linestyle='--', linewidth=2)
+                plt.scatter(grouped_data_blank[ablation_variable], grouped_data_blank['detected_HCV'], alpha=0.5, label="_nolegend_")
+
+        plt.xlabel(ablation_variable_pretty, fontsize=16)
+        plt.ylabel('Detection Rate', fontsize=16)
+        plt.title(f'Detection Rate vs {ablation_variable_pretty}', fontsize=18)
+        plt.legend(fontsize=14)
+        plt.grid(True)
         plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_detection_rate_binned.png"))
+
+        # Save to central output path if save_central is True
+        if save_central:
+            central_output_path = self.config.get("central_output_path", self.output_dir)
+            os.makedirs(central_output_path, exist_ok=True)
+            save_path = os.path.join(central_output_path, f"{ablation_variable}_detection_rate_scatter.png")
+        else:
+            save_path = os.path.join(self.output_dir, f"{ablation_variable}_detection_rate_scatter.png")
+        plt.savefig(save_path)
         plt.close()
-
-
-        # --- Scatter plot (raw) + Moving Mean ---
-        plt.figure(figsize=(10, 6))
-        sns.scatterplot(x=ablation_variable, y='detected_CCV', data=self.df_data, label='CCV', alpha=0.5)
-        sns.scatterplot(x=ablation_variable, y='detected_LBCV', data=self.df_data, label='LBCV', alpha=0.5)
-
-        # Sort by ablation variable for consistent rolling
-        df_sorted = self.df_data.sort_values(by=ablation_variable)
-
-        # Rolling mean for smoother trend
-        window = max(5, len(df_sorted) // 20)  # dynamic window size
-        mean_ccv = df_sorted[ablation_variable].rolling(window).mean()
-        roll_ccv = df_sorted['detected_CCV'].rolling(window).mean()
-        roll_lbcv = df_sorted['detected_LBCV'].rolling(window).mean()
-
-        plt.plot(mean_ccv, roll_ccv, label='CCV (Moving Mean)', linewidth=2)
-        plt.plot(mean_ccv, roll_lbcv, label='LBCV (Moving Mean)', linewidth=2)
-
-        plt.xlabel(ablation_variable_pretty)
-        plt.ylabel('Detection Rate')
-        plt.title(f'Detection Rate vs {ablation_variable_pretty}')
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_detection_rate_scatter.png"))
-        plt.close()
-
 
     def IOU_plot(self, ablation_variable, n_bins=10):    
         ablation_variable_pretty = ablation_variable.replace("_", " ").title()
@@ -163,6 +178,9 @@ class Plotter():
             col_CCV = f'pose_error_CCV_{err_type}'
             col_LBCV = f'pose_error_LBCV_{err_type}'
 
+            # Remove scaling to mm for translation errors
+            # (No multiplication by 1000 here)
+
             # Plot raw scatter for CCV
             sns.scatterplot(x=ablation_variable, y=col_CCV, data=self.df_data, ax=axs[i], label='CCV', alpha=0.5)
 
@@ -184,17 +202,13 @@ class Plotter():
                 roll_lbcv = df_sorted[col_LBCV].rolling(window).mean()
                 axs[i].plot(x_rolling, roll_lbcv, label='LBCV (Moving Mean)', linewidth=2)
 
-            # Plot HCV if enabled
-            if self.config.get("plot_HCV", False):
-                col_HCV = f'pose_error_HCV_{err_type}'
-                sns.scatterplot(x=ablation_variable, y=col_HCV, data=self.df_data, ax=axs[i], label='HCV', alpha=0.5)
-                roll_hcv = df_sorted[col_HCV].rolling(window).mean()
-                axs[i].plot(x_rolling, roll_hcv, label='HCV (Moving Mean)', linewidth=2)
-
             # Labels and title
             err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
+            if err_type in ['x', 'y', 'z']:
+                ylabel = f'{err_type_name.title()} Error (m)'
+            else:
+                ylabel = f'{err_type_name.title()} Error (deg)'
             axs[i].set_xlabel(ablation_variable_pretty, fontsize=14)
-            ylabel = f'{err_type_name.title()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.title()} Error (deg)'
             axs[i].set_ylabel(ylabel, fontsize=14)
             axs[i].set_title(f'{err_type_name.title()} Error vs {ablation_variable_pretty}', fontsize=16)
             axs[i].legend(fontsize=12)
@@ -203,14 +217,17 @@ class Plotter():
             axs[i].grid(True)
 
             # Use global ranges for y-axis
-            axs[i].set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+            if err_type in ['x', 'y', 'z']:
+                axs[i].set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+            else:
+                axs[i].set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
 
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_scatter.png"))
         plt.close()
 
-    def err_mean_std_plot(self, ablation_variable):
-        ablation_variable_pretty = ablation_variable.replace("_", " ").title()
+    def err_mean_std_plot(self, ablation_variable, coplot_blank_background=False, save_central=False):
+        ablation_variable_pretty = ABALATION_VARIABLE_PRETTY_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
         fig, axs = plt.subplots(2, 3, figsize=(15, 10))
         axs = axs.flatten()
         error_types = ['x', 'y', 'z', 'a', 'b', 'c']
@@ -220,7 +237,14 @@ class Plotter():
             err_type_name = {'x': 'X', 'y': 'Y', 'z': 'Z', 'a': 'Pitch', 'b': 'Yaw', 'c': 'Roll'}[err_type]
 
             col_CCV = f'pose_error_CCV_{err_type}'
+            col_HCV = f'pose_error_HCV_{err_type}'
             col_LBCV = f'pose_error_LBCV_{err_type}'
+
+            # Scale translation errors to mm
+            if err_type in ['x', 'y', 'z']:
+                self.df_data[col_CCV] *= 1000
+                self.df_data[col_HCV] *= 1000
+                self.df_data[col_LBCV] *= 1000
 
             # Group by ablation_variable
             grouped_CCV = self.df_data.groupby(ablation_variable, observed=False)[col_CCV].agg(['mean', 'std']).reset_index()
@@ -229,38 +253,63 @@ class Plotter():
                             grouped_CCV['mean'] - grouped_CCV['std'],
                             grouped_CCV['mean'] + grouped_CCV['std'],
                             alpha=0.3, label='CCV ±1 Std')
-
-            if self.config.get("plot_LBCV", True):
-                grouped_LBCV = self.df_data.groupby(ablation_variable, observed=False)[col_LBCV].agg(['mean', 'std']).reset_index()
-                ax.plot(grouped_LBCV[ablation_variable], grouped_LBCV['mean'], label='LBCV Mean', linewidth=2)
-                ax.fill_between(grouped_LBCV[ablation_variable],
-                                grouped_LBCV['mean'] - grouped_LBCV['std'],
-                                grouped_LBCV['mean'] + grouped_LBCV['std'],
-                                alpha=0.3, label='LBCV ±1 Std')
-
+            
             if self.config.get("plot_HCV", False):
-                col_HCV = f'pose_error_HCV_{err_type}'
                 grouped_HCV = self.df_data.groupby(ablation_variable, observed=False)[col_HCV].agg(['mean', 'std']).reset_index()
                 ax.plot(grouped_HCV[ablation_variable], grouped_HCV['mean'], label='HCV Mean', linewidth=2)
                 ax.fill_between(grouped_HCV[ablation_variable],
                                 grouped_HCV['mean'] - grouped_HCV['std'],
                                 grouped_HCV['mean'] + grouped_HCV['std'],
                                 alpha=0.3, label='HCV ±1 Std')
+                
+            if self.config.get("plot_LBCV", False): 
+                grouped_LBCV = self.df_data.groupby(ablation_variable, observed=False)[col_LBCV].agg(['mean', 'std']).reset_index()
+                ax.plot(grouped_LBCV[ablation_variable], grouped_LBCV['mean'], label='LBCV Mean', linewidth=2)
+                ax.fill_between(grouped_LBCV[ablation_variable],
+                                grouped_LBCV['mean'] - grouped_LBCV['std'],
+                                grouped_LBCV['mean'] + grouped_LBCV['std'],
+                                alpha=0.3, label='LBCV ±1 Std')
+                
 
-            ax.set_xlabel(ablation_variable_pretty, fontsize=14)
-            ylabel = f'{err_type_name.title()} Error (m)' if err_type in ['x', 'y', 'z'] else f'{err_type_name.title()} Error (deg)'
-            ax.set_ylabel(ylabel, fontsize=14)
-            ax.set_title(f'{err_type_name.title()} Error vs {ablation_variable_pretty}', fontsize=16)
-            ax.legend(fontsize=12)
+            # Labels and title
+            if err_type in ['x', 'y', 'z']:
+                ylabel = f'{err_type_name.title()} Error (mm)'
+            else:
+                ylabel = f'{err_type_name.title()} Error (deg)'
+            ax.set_xlabel(ablation_variable_pretty, fontsize=18)
+            ax.set_ylabel(ylabel, fontsize=18)
 
+            # Dynamically set scale based on global ranges or mean ± 1 std
+            if err_type in ['x', 'y', 'z']:
+                if ablation_variable == "fraction_marker_visible": 
+                    if err_type == 'x' or err_type == 'y': 
+                        ax.set_ylim(-0.030 * 1000, 0.030 * 1000)  # Set range to ±0.5 m converted to mm
+                    elif err_type == 'z':
+                        ax.set_ylim(-0.05 * 1000, 0.05 * 1000)  # Set range to ±0.5 m converted to mm
+                elif (ablation_variable == "distance_to_camera") and err_type == 'z':
+                    ax.set_ylim(-0.05 * 1000, 0.05 * 1000)  # Set range to ±0.5 m converted to mm
+                else:
+                    ax.set_ylim(-self.global_ranges[err_type] * 1000, self.global_ranges[err_type] * 1000)
+            else:
+                ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+                if (ablation_variable == "fraction_marker_visible") and (err_type == 'a' or err_type == 'b'):
+                    ax.set_ylim(-30, 30)
+
+            ax.tick_params(axis='both', labelsize=14)
+            if i == 0:
+                ax.legend(fontsize=14)
             ax.axhline(0, color='black', linestyle='--', linewidth=1)
             ax.grid(True)
 
-            # Dynamically set scale based on global ranges
-            ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_error_mean_std.png"))
+        fig.suptitle(f'Pose Estimation Error vs {ablation_variable_pretty}', fontsize=20)
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        save_path = os.path.join(self.output_dir, f"{ablation_variable}_error_mean_std.png")
+        plt.savefig(save_path)
+        if save_central:
+            central_output_path = self.config.get("central_output_path", self.output_dir)
+            os.makedirs(central_output_path, exist_ok=True)
+            save_path = os.path.join(central_output_path, f"{ablation_variable}_error_mean_std.png")
+            plt.savefig(save_path)
         plt.close()
 
     def error_ridge_plots(self, ablation_variable, n_ablation_bins=10, plot_CCV=True):
@@ -468,57 +517,92 @@ class Plotter():
             plt.savefig(output_path, bbox_inches='tight')
             plt.close()     
 
-    def compute_error_summary(self):
+    def print_detection_rates(self):
         """
-        Compute and print/save tables of mean, std dev, MAE, and RMSE for each method and error type.
+        Compute and print the detection rate for each method (CCV, LBCV, HCV).
         """
-        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
         methods = []
-
-        if self.config.get("plot_LBCV", True):
+        if self.config.get("plot_CCV", False):
+            methods.append("CCV")
+        if self.config.get("plot_LBCV", False):
             methods.append("LBCV")
         if self.config.get("plot_HCV", False):
             methods.append("HCV")
-        methods.append("CCV")
 
-        summary_records = []
+        print("Detection Rates:")
+        for method in methods:
+            col_name = f'detected_{method}'
+            if col_name in self.df_data.columns:
+                detection_rate = self.df_data[col_name].mean()
+                print(f"{method}: {detection_rate:.2%}")
+
+    def save_summary_table(self, ablation_variable):
+        """
+        Save a summary table to CSV with the following columns:
+        method (CCV, LBCV with CCV success, LBCV with CCV fail),
+        detection rate, X MAE +/- std dev (mm), Y MAE +/- std dev (mm),
+        Z MAE +/- std dev (mm), Pitch MAE +/- std dev (deg),
+        Yaw MAE +/- std dev (deg), Roll MAE +/- std dev (deg).
+        """
+        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail"]
+        summary_data = []
 
         for method in methods:
-            for err_type in error_types:
-                col_name = f'pose_error_{method}_{err_type}'
-                if col_name not in self.df_data.columns:
-                    continue
+            if method == "CCV":
+                mask = self.df_data['detected_CCV'] == 1
+            elif method == "LBCV with CCV success":
+                mask = (self.df_data['detected_CCV'] == 1) & (self.df_data['detected_LBCV'] == 1)
+            elif method == "LBCV with CCV fail":
+                mask = (self.df_data['detected_CCV'] == 0) & (self.df_data['detected_LBCV'] == 1)
 
-                errors = self.df_data[col_name].dropna()
-                if errors.empty:
-                    continue
+            filtered_data = self.df_data[mask]
+            detection_rate = mask.mean()
 
-                mean_err = errors.mean()
-                std_err = errors.std()
-                mae_err = errors.abs().mean()
-                rmse_err = np.sqrt((errors**2).mean())
+            # Calculate MAE and standard deviation for each error type
+            error_stats = {}
+            if method == "CCV":
+                method_type = "CCV"
+            else:
+                method_type = "LBCV"
+            for err_type in ['x', 'y', 'z', 'a', 'b', 'c']:
+                col_name = f'pose_error_{method_type}_{err_type}'
+                mae = filtered_data[col_name].abs().mean()
+                std_dev = filtered_data[col_name].abs().std()
+                unit = "mm" if err_type in ['x', 'y', 'z'] else "deg"
+                error_stats[err_type] = f"{mae * 1000:.2f} ± {std_dev * 1000:.2f}" if unit == "mm" else f"{mae:.2f} ± {std_dev:.2f}"
 
-                summary_records.append({
-                    "Method": method,
-                    "Error Component": err_type,
-                    "Mean": mean_err,
-                    "Std Dev": std_err,
-                    "MAE": mae_err,
-                    "RMSE": rmse_err
-                })
+            summary_data.append([
+                method,
+                f"{detection_rate:.2%}",
+                error_stats['x'],
+                error_stats['y'],
+                error_stats['z'],
+                error_stats['a'],
+                error_stats['b'],
+                error_stats['c']
+            ])
 
-        summary_df = pd.DataFrame(summary_records)
+        # Create a DataFrame for the summary table
+        summary_df = pd.DataFrame(summary_data, columns=[
+            "Method",
+            "Detection Rate",
+            "X MAE ± Std Dev (mm)",
+            "Y MAE ± Std Dev (mm)",
+            "Z MAE ± Std Dev (mm)",
+            "Pitch MAE ± Std Dev (deg)",
+            "Yaw MAE ± Std Dev (deg)",
+            "Roll MAE ± Std Dev (deg)"
+        ])
 
-        # Print table
-        print(summary_df.to_string(index=False))
-
-        # Save table
-        summary_path = os.path.join(self.output_dir, "error_summary_table.csv")
-        summary_df.to_csv(summary_path, index=False)
-        print(f"\nSummary table saved to {summary_path}")
+        # Save the summary table to a CSV file
+        output_path = os.path.join(self.output_dir, f"{ablation_variable}_summary_table.csv")
+        summary_df.to_csv(output_path, index=False)
+        print(f"Summary table saved to {output_path}")
 
 if __name__ == "__main__":
-    ablations = ["glare_blank_background","glare_corner_blank_background","glare_corner_background"]
+    ablations = ["distance_multi_background", "skew_multi_background", "truncation_multi_background", "underexposure_multi_background", "glare_corner_multi_background"] 
+    # ablations = ["distance_blank_background", "skew_blank_background", "truncation_blank_background", "underexposure_blank_background", "glare_corner_blank_background"] 
+    # ablations = ["truncation_multi_background_v2"]
     data_yaml_path = "./ablations/data_description.yaml"
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
@@ -541,16 +625,18 @@ if __name__ == "__main__":
             "output_path": os.path.join(data_path, "results/plots"),
             "plot_HCV": True,
             "plot_LBCV": True,
+            "central_output_path": "./ablations/analysis/plots",
+            "ablation_name": ablation
         }
 
         plotter_instance = Plotter(config, global_ranges)
-        plotter_instance.detection_plot(ablation_variable, n_bins=10)
-        plotter_instance.IOU_plot(ablation_variable, n_bins=10) 
-        plotter_instance.error_plot(ablation_variable) 
-        plotter_instance.err_mean_std_plot(ablation_variable) 
-        plotter_instance.error_ridge_plots(ablation_variable, plot_CCV=True)
-        plotter_instance.find_worst_performing(ablation_variable) 
-        # plotter_instance.find_best_performing(ablation_variable) 
+        # plotter_instance.save_summary_table(ablation_variable)
+        plotter_instance.detection_plot(ablation_variable, coplot_blank_background=False, save_central=True)
+        # plotter_instance.IOU_plot(ablation_variable)
+        # plotter_instance.error_plot(ablation_variable)
+        # plotter_instance.error_ridge_plots(ablation_variable, n_ablation_bins=10, plot_CCV=True)
+        plotter_instance.err_mean_std_plot(ablation_variable, coplot_blank_background=False, save_central=True)
         # plotter_instance.output_labeled_images(ablation_variable)
-        plotter_instance.compute_error_summary()
+        # plotter_instance.find_worst_performing(ablation_variable)
+        # plotter_instance.find_best_performing(ablation_variable)
 
