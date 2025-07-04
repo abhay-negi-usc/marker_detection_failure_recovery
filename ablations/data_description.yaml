@@ -107,5 +107,5 @@
   ablation_variable: "glare"
 "truncation_multi_background_v2":
   data_path: "./ablations/data/exp_sdg_20250703-004758/"
-  notes: "10 backgrounds images, 100 lateral values, 0-8 deg cone range"
+  notes: "10 backgrounds images, 100 lateral values"
   ablation_variable: "fraction_marker_visible"

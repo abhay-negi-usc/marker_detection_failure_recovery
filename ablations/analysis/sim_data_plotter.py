@@ -600,9 +600,9 @@ class Plotter():
         print(f"Summary table saved to {output_path}")
 
 if __name__ == "__main__":
-    ablations = ["distance_multi_background", "skew_multi_background", "truncation_multi_background", "underexposure_multi_background", "glare_corner_multi_background"] 
+    # ablations = ["distance_multi_background", "skew_multi_background", "truncation_multi_background", "underexposure_multi_background", "glare_corner_multi_background"] 
     # ablations = ["distance_blank_background", "skew_blank_background", "truncation_blank_background", "underexposure_blank_background", "glare_corner_blank_background"] 
-    # ablations = ["truncation_multi_background_v2"]
+    ablations = ["truncation_multi_background_v2"]
     data_yaml_path = "./ablations/data_description.yaml"
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
