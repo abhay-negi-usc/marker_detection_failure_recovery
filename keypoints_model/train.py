@@ -24,9 +24,9 @@ matplotlib.use('Agg')
 
 
 # === Hyperparameters ===
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-5    
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 128          
+BATCH_SIZE = 64          
 NUM_EPOCHS = 1000000 
 num_epoch_dont_save = 0 
 NUM_WORKERS = 24 
