@@ -345,20 +345,15 @@ class DatasetProcessor:
             img_seg = cv2.imread(seg_path, cv2.IMREAD_GRAYSCALE)
             img_rgb = cv2.resize(img_rgb, (640, 480))
             img_seg = cv2.resize(img_seg, (640, 480))
-            img_rgb_masked = crop_rgb_using_seg(img_rgb, img_seg)
-            corners = find_segmentation_four_corners(img_seg)
-            if corners is None or img_rgb is None or img_seg is None:
-                # print("No corners found in the segmentation image.")
-                # # show image with no corners found
-                # plt.imshow(cv2.cvtColor(img_rgb_masked, cv2.COLOR_BGR2RGB))
-                # plt.title("No Corners Found")
-                # plt.axis('off')
-                # plt.show()
+            corners, area_ratio = find_segmentation_four_corners(img_seg, bound_box=False)
+            if corners is None or img_rgb is None or img_seg is None or area_ratio<0.5 or np.count_nonzero(np.array(img_seg)) < 1000:
+                dp.set_pose("HCV0", None)
+                dp.set_hcv_corners(None)
                 dp.set_pose("HCV", None)
+                dp.set_hcv_residual(None)
                 continue  
-            tf_candidates = compute_tf_candidates_from_corners(corners, marker_size=(0.1, 0.1), camera_matrix=self.camera_matrix_resized)
-
-            keypoints_rgb_image_space = find_keypoints(img_rgb, img_seg)
+            quad_seg = fill_segmentation_from_polygon(img_seg.shape, corners)
+            keypoints_rgb_image_space = find_keypoints(img_rgb, quad_seg)
             img_marker = cv2.imread(img_marker_path)
             keypoints_marker_image_space = find_keypoints(img_marker)
             keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
@@ -367,8 +362,20 @@ class DatasetProcessor:
 
             refined_tf_candidates = []
             residuals = []
-
+            tf_candidates = compute_tf_candidates_from_corners(corners, marker_size=(0.1, 0.1), camera_matrix=self.camera_matrix_resized)
             for i, tf in enumerate(tf_candidates):
+                
+                if hasattr(dp, 'LBCV_tf') and dp.LBCV_tf is not None:
+                    tf_lbcv_corrected = np.array([[-1,0,0,0],[0,-1,0,0],[0,0,1,0],[0,0,0,1]]) @ tf @ np.array([[-1,0,0,0],[0,-1,0,0],[0,0,1,0],[0,0,0,1]]) 
+                    tf_candidate_corrected = tf @ np.array([[-1,0,0,0],[0,1,0,0],[0,0,-1,0],[0,0,0,1]])  
+                    # compute error between lbcv and tf candidate 
+                    tf_err = np.linalg.inv(dp.LBCV_tf) @ tf_candidate_corrected
+                    # compute z angle error 
+                    z_angle = np.rad2deg(np.arctan2(tf_err[1, 0], tf_err[0, 0])) 
+                    if abs(z_angle) > 60: 
+                        # skip due to large z angle error 
+                        continue 
+
                 if keypoints_rgb_image_space is None or keypoints_marker_cartesian_space is None:
                     logger.warning(f"[HCV] No keypoints found for frame {dp.image_path}. Skipping refinement.")
                     continue
@@ -385,6 +392,8 @@ class DatasetProcessor:
 
             # if residuals is empty, set to None
             if not residuals:
+                dp.set_pose("HCV0", None)
+                dp.set_hcv_corners(None)
                 dp.set_pose("HCV", None)
                 dp.set_hcv_residual(None)
                 continue
@@ -392,6 +401,8 @@ class DatasetProcessor:
                 # print(f"Min Residual: {residuals[min_idx]:.4f} at index {min_idx}")
                 min_idx = np.argmin(residuals)
                 tf_final = refined_tf_candidates[min_idx]
+                dp.set_pose("HCV0", tf_candidates[min_idx])
+                dp.set_hcv_corners(corners)
                 dp.set_pose("HCV", tf_final)
                 dp.set_hcv_residual(residuals[min_idx]) 
 
@@ -538,6 +549,8 @@ class DatasetProcessor:
                 "lbcv_tf": dp.LBCV_tf.flatten().tolist() if dp.LBCV_tf is not None else None,
                 "hcv_tf": dp.HCV_tf.flatten().tolist() if dp.HCV_tf is not None else None,
                 "hcv_residual": dp.HCV_residual if hasattr(dp, 'HCV_residual') else None,
+                "hcv0_tf": dp.HCV0_tf.flatten().tolist() if dp.HCV0_tf is not None else None,
+                "hcv_corners": dp.HCV_corners.flatten().tolist() if dp.HCV_corners is not None else None,
                 "lbcv_keypoints": dp.LBCV_keypoints.tolist() if dp.LBCV_keypoints is not None else None,
             }
             rows.append(row)
@@ -799,7 +812,7 @@ def run_full_analysis(config, predict_fn=None, summary_path=None):
         processor.set_OPTK_to_CCV() 
     processor.run_hybrid_detection()
     if predict_fn is not None:
-        processor.run_learning_based_detection(predict_fn, save_results=False, save_segmentation=False)
+        processor.run_learning_based_detection(predict_fn, save_results=True, save_segmentation=True)
     processor.compare_detection()
     processor.compare_pose_estimation()
     if summary_path is None:
@@ -863,7 +876,7 @@ if __name__ == "__main__":
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
         T_OFFSET_OPTK_CCV: 1.15,
-        MAX_FRAMES: 28782, #28782,
+        MAX_FRAMES: 2500, #28782,
         OUT_DIR: f"./real_data_processing/results",
         POSE_EST_METHOD: "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
         "set_CCV_ground_truth":False, 

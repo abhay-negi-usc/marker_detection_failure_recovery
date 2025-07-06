@@ -246,6 +246,9 @@ class DataPoint:
     def set_hcv_residual(self, residual: float):
         self.HCV_residual = residual
 
+    def set_hcv_corners(self, corners: float):
+        self.HCV_corners = corners
+
     def __repr__(self):
         return f"DataPoint(path={self.image_path.name}, time={self.time})"
 

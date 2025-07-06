@@ -11,7 +11,7 @@ with open(json_path, 'r') as file:
     data = json.load(file)
 
 # create lists of poses of each method 
-methods = ['optk','ccv','lbcv','hcv'] 
+methods = ['optk','ccv','lbcv','hcv','hcv0'] 
 transforms = {method: [] for method in methods} 
 poses = {method: [] for method in methods} 
 transform_errors = {method: [] for method in methods}
@@ -44,6 +44,8 @@ for idx, datapoint in enumerate(data):
                 continue
             else: 
                 hcv_residuals.append(datapoint['hcv_residual'])
+        if method == 'hcv0':
+            tf = tf @ np.array([[-1,0,0,0],[0,1,0,0],[0,0,-1,0],[0,0,0,1]])
         # reframe to make euler angles centered around zero 
         tf = tf @ np.array([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])
         pose = tf_to_pose(tf)  
