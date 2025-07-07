@@ -17,6 +17,49 @@ def crop_rgb_using_seg(img_rgb, img_seg):
     # make list of pixel coordinates of the mask boundary
     return img_rgb_masked
 
+def find_largest_blob_from_seg(segmentation): 
+    # If your segmentation image is color, convert to grayscale
+    if len(segmentation.shape) == 3:
+        seg_gray = cv2.cvtColor(segmentation, cv2.COLOR_BGR2GRAY)
+    else:
+        seg_gray = segmentation
+
+    # Threshold to make sure it's binary
+    _, binary = cv2.threshold(seg_gray, 127, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        biggest_contour = max(contours, key=cv2.contourArea)
+        
+        # Create mask
+        mask_biggest_blob = np.zeros_like(binary)
+        cv2.drawContours(mask_biggest_blob, [biggest_contour], -1, 255, thickness=cv2.FILLED)
+    return mask_biggest_blob 
+
+def fill_segmentation_from_polygon(image_shape, polygon_vertices):
+    """
+    Create a segmentation mask by filling a polygon defined by vertices.
+    
+    Args:
+        image_shape (tuple): Shape of the output mask, e.g., (height, width).
+        polygon_vertices (array-like): Polygon vertices as Nx2 array or list of (x, y) points.
+    
+    Returns:
+        np.ndarray: Binary mask with filled polygon (255 inside, 0 outside).
+    """
+    # Create an empty black mask
+    mask = np.zeros(image_shape, dtype=np.uint8)
+    
+    # Ensure vertices are numpy array and int32
+    pts = np.array(polygon_vertices, dtype=np.int32)
+    
+    # Reshape if needed
+    pts = pts.reshape((-1, 1, 2))
+    
+    # Fill polygon on mask
+    cv2.fillPoly(mask, [pts], color=255)
+    
+    return mask
+
 def find_keypoints(img_rgb, img_seg=None): 
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
     if img_seg is None:
@@ -33,7 +76,7 @@ def find_keypoints(img_rgb, img_seg=None):
         keypoints = keypoints.reshape(-1, 2)  # Reshape to (N, 2) where N is the number of keypoints
     return keypoints
 
-def find_segmentation_four_corners(segmentation):
+def find_segmentation_four_corners(segmentation, bound_box=True):
     # Convert to grayscale if needed
     if len(segmentation.shape) == 3:
         segmentation_gray = cv2.cvtColor(segmentation, cv2.COLOR_BGR2GRAY)
@@ -51,7 +94,7 @@ def find_segmentation_four_corners(segmentation):
     )
 
     if len(contours) == 0:
-        return None
+        return None, None 
 
     # Choose the largest contour by area
     contour = max(contours, key=cv2.contourArea)
@@ -68,20 +111,30 @@ def find_segmentation_four_corners(segmentation):
         box = cv2.boxPoints(rect)
         corners = box.astype(np.intp)
     else:
-        # Fall back to bounding box if not enough corners
-        x, y, w, h = cv2.boundingRect(contour)
-        corners = np.array([
-            [x, y],
-            [x + w, y],
-            [x + w, y + h],
-            [x, y + h]
-        ], dtype=np.int32)
-
+        if bound_box:
+            # Fall back to bounding box if not enough corners
+            x, y, w, h = cv2.boundingRect(contour)
+            corners = np.array([
+                [x, y],
+                [x + w, y],
+                [x + w, y + h],
+                [x, y + h]
+            ], dtype=np.int32)
+        else:
+            return None, None 
     # Ensure corners are in a consistent order (counterclockwise)
     corners = corners[np.argsort(np.arctan2(corners[:, 1] - np.mean(corners[:, 1]), 
                                              corners[:, 0] - np.mean(corners[:, 0])))]
     corners = corners.reshape(4, 2).astype(np.float32)
-    return corners
+    if len(approx) >= 4:
+        contour_area = cv2.contourArea(contour)
+        approx_area = cv2.contourArea(approx)
+
+        if contour_area > 0:
+            area_ratio = approx_area / contour_area
+        else:
+            area_ratio = 0
+    return corners, area_ratio 
 
 
 def estimate_tf_from_keypoints(keypoints_ref, keypoints_est, camera_matrix, dist_coeffs=np.zeros((5, 1))): 
