@@ -4,6 +4,10 @@ import numpy as np
 import json 
 import torch
 import matplotlib.pyplot as plt
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import cv2 
+from torchvision import transforms
 
 from benchmark_analysis.utils import list_filetype_alphanumeric_order 
 from segmentation_model.utils import load_checkpoint as load_seg_ckpt
@@ -104,21 +108,45 @@ class estimator():
         if not hasattr(self, 'seg_model'):
             raise RuntimeError("Segmentation model is not loaded.")
         
-        # Convert image_np to tensor and run through model
-        image_tensor = torch.from_numpy(image_np).float().unsqueeze(0).to(self.device)
-        if image_tensor.shape[3] == 3:  # Check if the image has 3 channels
-            image_tensor = image_tensor.permute(0, 3, 1, 2)  # Change to (batch_size, channels, height, width)
-        else:
-            raise ValueError("Image must have 3 channels (RGB).")   
-        
+        seg_size = (640, 480)
+
+        # Resize RGB image to match segmentation input
+        resized_rgb = cv2.resize(image_np, seg_size)  # shape (H, W, 3)
+
+        # Segmentation transform: normalized for model
+        seg_transform = A.Compose([
+            A.Normalize(max_pixel_value=1.0),
+            ToTensorV2()
+        ])
+        transformed = seg_transform(image=resized_rgb)
+        img_tensor = transformed["image"].unsqueeze(0).to(self.device)
+
         with torch.no_grad():
-            self.seg_model.eval()
-            segmentation_mask = self.seg_model(image_tensor)  # Run the model
-            segmentation_mask = torch.sigmoid(segmentation_mask)  # Apply sigmoid to get probabilities
-            segmentation_mask = (segmentation_mask > 0.1).float()  # Threshold
-            segmentation_mask = segmentation_mask.squeeze(0).cpu().numpy()  # Remove batch dimension
-        segmentation_mask = segmentation_mask.squeeze()  # Remove channel dimension if present
-        return segmentation_mask
+            seg_mask = torch.sigmoid(self.seg_model(img_tensor))
+            seg_mask = (seg_mask > 0.5).float().cpu().numpy()
+
+        seg_mask = seg_mask.squeeze(0).squeeze()  # Remove batch dimension
+
+        # seg_mask_img = transforms.ToPILImage()(seg_mask.squeeze(0))  # shape matches resized_rgb
+        # return seg_mask_img 
+
+        return seg_mask 
+        
+        # # Convert image_np to tensor and run through model
+        # image_tensor = torch.from_numpy(image_np).float().unsqueeze(0).to(self.device)
+        # if image_tensor.shape[3] == 3:  # Check if the image has 3 channels
+        #     image_tensor = image_tensor.permute(0, 3, 1, 2)  # Change to (batch_size, channels, height, width)
+        # else:
+        #     raise ValueError("Image must have 3 channels (RGB).")   
+        
+        # with torch.no_grad():
+        #     self.seg_model.eval()
+        #     segmentation_mask = self.seg_model(image_tensor)  # Run the model
+        #     segmentation_mask = torch.sigmoid(segmentation_mask)  # Apply sigmoid to get probabilities
+        #     segmentation_mask = (segmentation_mask > 0.1).float()  # Threshold
+        #     segmentation_mask = segmentation_mask.squeeze(0).cpu().numpy()  # Remove batch dimension
+        # segmentation_mask = segmentation_mask.squeeze()  # Remove channel dimension if present
+        # return segmentation_mask
 
 
 # List all image and label files 
@@ -159,7 +187,7 @@ def main():
     config = {
         'dir_images': f"/home/anegi/abhay_ws/deeparuco/datasets/10791293/video_{video_idx}/",  
         'dir_annotations': f"/home/anegi/abhay_ws/deeparuco/datasets/10791293/video_{video_idx}/corrected_annotations/",  
-        'segmentation_model_path': "/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_0_batch_1000.pth.tar",
+        'segmentation_model_path': "/home/nom4d/marker_ws/segmentation_checkpoints/my_checkpoint_multimarker_epoch_2_batch_30000.pth.tar",
     }
 
     # Initialize the dataset
