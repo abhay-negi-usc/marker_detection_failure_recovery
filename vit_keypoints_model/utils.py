@@ -54,7 +54,59 @@ class KeypointsDataset(Dataset):
         keypoints_flat = keypoints.flatten()
 
         return image, torch.tensor(keypoints_flat, dtype=torch.float32)
+    
+class CornersDataset(Dataset):
+    def __init__(self, image_dir, keypoints_dir, transform=None):
+        self.image_dir = image_dir
+        self.keypoints_dir = keypoints_dir
+        self.image_files = sorted(os.listdir(image_dir))
+        self.transform = transform
 
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, index):
+        img_filename = self.image_files[index]
+        img_path = os.path.join(self.image_dir, img_filename)
+
+        keypoints_filename = img_filename.replace("roi", "roi_keypoints").replace(".png", ".json")
+        keypoints_path = os.path.join(self.keypoints_dir, keypoints_filename)
+
+        # Load image
+        image = np.array(Image.open(img_path).convert("RGB")).astype(np.float32)
+
+        # Load keypoints from JSON
+        with open(keypoints_path, 'r') as f:
+            keypoints_data = json.load(f)
+
+        # Sort keys to ensure correct order
+        keypoints_list = [keypoints_data[key] for key in sorted(keypoints_data.keys())]
+        keypoints = np.array(keypoints_list, dtype=np.float32)
+
+        # Prepare keypoints for Albumentations
+        keypoints_tuples = [tuple(pt) for pt in keypoints]
+
+        # Apply transforms
+        if self.transform:
+            augmented = self.transform(image=image, keypoints=keypoints_tuples)
+            image = augmented["image"]
+            keypoints = np.array(augmented["keypoints"], dtype=np.float32)
+
+        num_keypoints = len(keypoints_list)
+        num_keypoints_side = int(np.sqrt(num_keypoints))    
+        idx_corners = [0, num_keypoints_side-1, num_keypoints-num_keypoints_side, num_keypoints-1]
+        corners = keypoints[idx_corners]
+        # Flatten corners for regression output
+        corners_flat = corners.flatten()
+        # Convert corners to tensor
+        corners_tensor = torch.tensor(corners_flat, dtype=torch.float32)
+        # Return image and corners tensor
+        return image, corners_tensor
+
+        # # Flatten keypoints for regression output
+        # keypoints_flat = keypoints.flatten()
+
+        # return image, torch.tensor(keypoints_flat, dtype=torch.float32)
 
 
 from torch.utils.data import DataLoader
@@ -70,13 +122,13 @@ def get_vit_loaders(
     num_workers=4,
     pin_memory=True,
 ):
-    train_ds = KeypointsDataset(
+    train_ds = CornersDataset(
         image_dir=train_img_dir,
         keypoints_dir=train_keypoints_dir,
         transform=train_transform,
     )
 
-    val_ds = KeypointsDataset(
+    val_ds = CornersDataset(
         image_dir=val_img_dir,
         keypoints_dir=val_keypoints_dir,
         transform=val_transform,

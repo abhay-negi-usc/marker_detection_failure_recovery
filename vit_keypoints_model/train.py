@@ -14,25 +14,21 @@ import matplotlib
 
 matplotlib.use('Agg')
 from keypoints_model.utils import (
-    load_checkpoint,
     save_checkpoint,
-    get_loaders,
-    # evaluate_l1_loss,
-    overlay_points_on_image,
 )
 from vit_keypoints_model.utils import get_vit_loaders, evaluate_l1_loss
 
 # === Hyperparameters ===
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 64
+BATCH_SIZE = 32 
 NUM_EPOCHS = 100_000 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 224  # ViT requires 224x224 input size
 IMAGE_WIDTH = 224
 PIN_MEMORY = True
-LOAD_MODEL = False 
-LOAD_PATH = "./vit_keypoints_model/checkpoints/vit_keypoints_model.pth.tar"
+LOAD_MODEL = False  
+LOAD_PATH = "./vit_keypoints_model/checkpoints/vit_keypoints_model.pth (copy).tar"
 MAIN_DIR = "./segmentation_model/data/data_20250330-013534_reaugmented/"
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb_reaugmented")
 TRAIN_KEYPOINTS_DIR = os.path.join(MAIN_DIR, "train", "roi_keypoints")
@@ -64,7 +60,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
     return avg_loss
 
 def main():
-    wandb.init(project="vit-keypoints", name="vit-keypoints", config={
+    wandb.init(project="vit-keypoints", name="vit-corners", config={
         "learning_rate": LEARNING_RATE,
         "batch_size": BATCH_SIZE,
         "num_epochs": NUM_EPOCHS,
@@ -90,7 +86,7 @@ def main():
         ToTensorV2(),
     ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
 
-    model = ViTKeypointRegressor(num_keypoints=11**2).to(DEVICE)
+    model = ViTKeypointRegressor(num_keypoints=4).to(DEVICE)
     loss_fn = nn.L1Loss()  # Using L1 loss for keypoint regression
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
@@ -105,7 +101,6 @@ def main():
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
     )
-
 
     if LOAD_MODEL:
         checkpoint = torch.load(LOAD_PATH)

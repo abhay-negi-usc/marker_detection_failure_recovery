@@ -8,7 +8,11 @@ class ViTKeypointRegressor(nn.Module):
         self.num_keypoints = num_keypoints
 
         # Create ViT backbone
-        self.vit = torchvision.models.vision_transformer.vit_b_16(weights=None)
+        self.vit = torchvision.models.vision_transformer.vit_b_16(
+            weights=None,
+            dropout=0.1,
+            attention_dropout=0.1,
+        )
         self.vit.heads = nn.Identity()  # Remove default classifier head
 
         # Add linear head for keypoints
