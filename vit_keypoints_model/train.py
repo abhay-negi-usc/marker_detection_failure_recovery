@@ -23,15 +23,15 @@ from keypoints_model.utils import (
 from vit_keypoints_model.utils import get_vit_loaders, evaluate_l1_loss
 
 # === Hyperparameters ===
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 NUM_EPOCHS = 100_000 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 224  # ViT requires 224x224 input size
 IMAGE_WIDTH = 224
 PIN_MEMORY = True
-LOAD_MODEL = True
+LOAD_MODEL = False 
 LOAD_PATH = "./vit_keypoints_model/checkpoints/vit_keypoints_model.pth.tar"
 MAIN_DIR = "./segmentation_model/data/data_20250330-013534_reaugmented/"
 TRAIN_IMG_DIR = os.path.join(MAIN_DIR, "train", "roi_rgb_reaugmented")

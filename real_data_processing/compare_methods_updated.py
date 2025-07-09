@@ -334,9 +334,9 @@ class DatasetProcessor:
         self.LBCV_detected = detected
         self.LBCV_keypoints = np.array(LBCV_keypoints, dtype=object)
 
-    def run_hybrid_detection(self): 
+    def run_hybrid_detection(self, save_results=False): 
         img_marker_path = "./synthetic_data_generation/assets/tags/tag36h11_0.png"
-        for dp in self.datapoints:
+        for idx, dp in enumerate(self.datapoints):
             # get filename from dp.image_path 
             img_path = str(dp.image_path) 
             seg_path = str(dp.image_path).replace("_frames/realsense_6_frame","_frames_LBCV/segmentation_masks/LBCV_seg") 
@@ -405,6 +405,25 @@ class DatasetProcessor:
                 dp.set_hcv_corners(corners)
                 dp.set_pose("HCV", tf_final)
                 dp.set_hcv_residual(residuals[min_idx]) 
+
+            if save_results: 
+                output_dir = Path(self.realsense_video_file.replace('.mp4', '_frames_LBCV'))
+                # Save overlay image with HCV corners
+                overlay_image = dp.get_image()
+                if overlay_image is not None:
+                    overlay_image = cv2.resize(overlay_image, (640, 480))
+                    cv2.polylines(overlay_image, [corners.astype(np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
+                    # overlay_path = str(dp.image_path).replace("_frames/realsense_", "_frames_HCV/overlay_")
+                    overlay_path = output_dir / "keypoints_overlay" / f"HCV_frame_{idx:05d}.png"
+                    os.makedirs(os.path.dirname(overlay_path), exist_ok=True)
+                    cv2.imwrite(overlay_path, overlay_image)
+
+                # Save refined tf as JSON
+                # json_path = str(dp.image_path).replace("_frames/realsense_", "_frames_HCV/json_").replace(".png", ".json")
+                json_path = output_dir / "keypoints_json" / f"HCV_frame_{idx:05d}.json"
+                os.makedirs(os.path.dirname(json_path), exist_ok=True)
+                with open(json_path, "w") as f:
+                    json.dump(tf_final.flatten().tolist(), f)
 
     def compare_detection(self, num_bins=10):
         ccv_detects = np.sum(self.CCV_detected) / len(self.datapoints)
@@ -807,12 +826,12 @@ def run_full_analysis(config, predict_fn=None, summary_path=None):
     processor.set_marker_detector()
     if config["set_CCV_ground_truth"] == False: 
         processor.process_optitrack_data(save_overlay=False)
-    processor.run_opencv_fiducial_marker_detection(save_results=False)
+    processor.run_opencv_fiducial_marker_detection(save_results=True)
     if config["set_CCV_ground_truth"] == True: 
         processor.set_OPTK_to_CCV() 
-    processor.run_hybrid_detection()
     if predict_fn is not None:
         processor.run_learning_based_detection(predict_fn, save_results=True, save_segmentation=True)
+    processor.run_hybrid_detection(save_results=True)
     processor.compare_detection()
     processor.compare_pose_estimation()
     if summary_path is None:
@@ -863,8 +882,8 @@ if __name__ == "__main__":
 
     config = {
         "trial_idx": trial_idx,
-        OPTITRACK_CSV_FILE: f"./test_data/optitrack/optitrack_{trial_idx}.csv",
-        REALSENSE_VIDEO_FILE: f"./test_data/realsense/realsense_{trial_idx}.mp4",
+        OPTITRACK_CSV_FILE: f"./real_data_processing/raw_data/optitrack/optitrack_{trial_idx}.csv",
+        REALSENSE_VIDEO_FILE: f"./real_data_processing/raw_data/realsense/realsense_{trial_idx}.mp4",
         # OPTITRACK_CSV_FILE: None,
         # REALSENSE_VIDEO_FILE: f"./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4",
 
@@ -876,7 +895,7 @@ if __name__ == "__main__":
         MARKER_LENGTH: 0.0798,
         CAMERA_EXTRINSIC_MATRIX: tf_w_c,
         T_OFFSET_OPTK_CCV: 1.15,
-        MAX_FRAMES: 2500, #28782,
+        MAX_FRAMES: 10, #28782,
         OUT_DIR: f"./real_data_processing/results",
         POSE_EST_METHOD: "kp_mobilenet",  # Options: "seg", "kp_mobilenet", "kp_hrnet"
         "set_CCV_ground_truth":False, 
