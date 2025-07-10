@@ -40,7 +40,7 @@ def find_segmentation_four_corners(segmentation):
         # Use convex hull and select 4 corners via bounding box
         rect = cv2.minAreaRect(contour)
         box = cv2.boxPoints(rect)
-        corners = np.int0(box)
+        corners = np.int8(box)
     else:
         # Fall back to bounding box if not enough corners
         x, y, w, h = cv2.boundingRect(contour)
