@@ -1,0 +1,20 @@
+"distance":
+  data_path: "./ablations/data/real_experiments/distance"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose"
+"glare":
+  data_path: "./ablations/data/real_experiments/glare"
+  ablation_variable: "fraction_saturated_high_pixels"
+  type: "fixed_pose"
+"glint":
+  data_path: "./ablations/data/real_experiments/glint"
+  ablation_variable: "mean_marker_pixel_brightness"
+  type: "fixed_pose"
+"skew":
+  data_path: "./ablations/data/real_experiments/skew"
+  ablation_variable: "yaw"
+  type: "variable_pose"
+"truncation":
+  data_path: "./ablations/data/real_experiments/truncation"
+  ablation_variable: "fraction_marker_visible"
+  type: "variable_pose" 
