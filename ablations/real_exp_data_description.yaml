@@ -18,3 +18,73 @@
   data_path: "./ablations/data/real_experiments/truncation"
   ablation_variable: "fraction_marker_visible"
   type: "variable_pose" 
+"underexposure":
+  data_path: "./ablations/data/real_experiments/underexposure"
+  ablation_variable: "mean_marker_pixel_brightness"
+  type: "fixed_pose"
+"shadow":
+  data_path: "./ablations/data/real_experiments/shadow"
+  ablation_variable: "fraction_saturated_low_pixels"
+  type: "fixed_pose" 
+"distance_v2":
+  data_path: "./ablations/data/real_experiments/distance_v2"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+"distance_camera_AN":
+  data_path: "./ablations/data/real_experiments/distance_camera_AN"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+"distance_camera_AN_v2":
+  data_path: "./ablations/data/real_experiments/distance_camera_AN_v2"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+"distance_camera_AN_v3":
+  data_path: "./ablations/data/real_experiments/distance_camera_AN_v3"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+"distance_camera_AN_v4":
+  data_path: "./ablations/data/real_experiments/distance_camera_AN_v4"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+"distance_20250712":
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/distance/"
+  ablation_variable: "distance_to_camera"
+  type: "variable_pose" 
+  window_size: 20
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"skew_20250712":
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew/"
+  ablation_variable: "yaw"
+  type: "variable_pose" 
+  window_size: 20
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"truncation_20250712": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/truncation/"
+  ablation_variable: "fraction_marker_visible"
+  type: "variable_pose"
+  window_size: 20
+  ablation_variable_min: 0.33 
+  ablation_variable_max: 1.0 
+"underexposure_20250712": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/underexposure_box/"
+  ablation_variable: "mean_marker_pixel_brightness"
+  type: "fixed_pose"
+  window_size: 10
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"shadow_20250712": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow/"
+  ablation_variable: "fraction_saturated_low_pixels"
+  window_size: 10 
+  type: "fixed_pose"
+  ablation_variable_min: 0
+  ablation_variable_max: 0.75 
+"glare_20250712": 
+  data_path: "./ablations/data/real_experiments/glare"
+  ablation_variable: "fraction_saturated_high_pixels"
+  window_size: 10 
+  type: "fixed_pose"
+  ablation_variable_min: None
+  ablation_variable_max: None 

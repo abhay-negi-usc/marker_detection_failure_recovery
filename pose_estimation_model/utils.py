@@ -134,6 +134,8 @@ def find_segmentation_four_corners(segmentation, bound_box=True):
             area_ratio = approx_area / contour_area
         else:
             area_ratio = 0
+    else:
+        area_ratio = 0
     return corners, area_ratio 
 
 

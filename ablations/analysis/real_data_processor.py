@@ -21,7 +21,7 @@ from keypoints_model.utils import compute_2D_gridpoints
 from ablations.analysis.utils import * 
 from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
 from pose_estimation_model.utils import compute_segmentation_IOU 
-
+from pose_estimation_model.utils import * 
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,25 @@ class DataPoint():
             self.pose_error_LBCV = tf_to_pose(self.tf_error_LBCV) if self.tf_error_LBCV is not None else None 
 
     def set_keypoints_LBCV(self, keypoints):
-        self.keypoints_LBCV = keypoints
+        self.keypoints_LBCV = keypoints 
+        if keypoints is not None: 
+            len_keypoints = len(keypoints)
+            len_keypoints_side = int(np.sqrt(len_keypoints)) 
+            corners_idx = np.array([0, len_keypoints_side-1, len_keypoints-1, len_keypoints-len_keypoints_side])
+            corners = keypoints[corners_idx, :2]  # Extract only x, y coordinates
+            self.set_corners_LBCV(corners) 
+        else: 
+            self.keypoints_LBCV = None 
+            self.corners_LBCV = None 
+            self.corners_error_LBCV = None 
+            self.mean_corners_error_LBCV = None
+
+    def set_corners_LBCV(self, corners):
+        self.corners_LBCV = corners
+        if hasattr(self, 'corners_true'): 
+            # compute mean corners error in pixel distance 
+            self.corners_error_LBCV = np.mean(np.linalg.norm(self.corners_true - self.corners_LBCV, axis=1)) # shape (4, 2) 
+            self.mean_corners_error_LBCV = np.mean(self.corners_error_LBCV)  # scalar value 
     
     def set_detected_LBCV(self, bool_detected):
         self.detected_LBCV = bool_detected
@@ -87,6 +105,22 @@ class DataPoint():
     def set_corners_HCV(self, corners):
         self.corners_HCV = corners
 
+    def set_tf_PBCV(self, tf):
+        self.tf_PBCV = tf 
+        # if self.tf_true exists 
+        if hasattr(self, 'tf_true') and self.tf_true is not None and tf is not None:
+            self.tf_error_PBCV = compute_tf_error(self.tf_true, self.tf_PBCV) 
+            self.pose_error_PBCV = tf_to_pose(self.tf_error_PBCV) if self.tf_error_PBCV is not None else None 
+        else: 
+            self.tf_error_PBCV = None 
+            self.pose_error_PBCV = None
+
+    def set_keypoints_PBCV(self, keypoints):
+        self.keypoints_PBCV = keypoints
+
+    def set_detected_PBCV(self, bool_detected):
+        self.detected_PBCV = bool_detected
+
     def get_segmentation(self, square_length, camera_matrix): 
         if hasattr(self, 'image_path') and hasattr(self, 'tf_true') and self.image_path is not None and self.tf_true is not None:
             image = cv2.imread(self.image_path)
@@ -100,7 +134,29 @@ class DataPoint():
             return image_segmentation
         else:
             raise ValueError("Image path not set for this DataPoint.")
+        
+    def get_corners_true(self, square_length, camera_matrix):
+        if hasattr(self, 'tf_true') and self.tf_true is not None:
+            square_corners_3d = np.array([
+                [square_length/2, square_length/2, 0],
+                [-square_length/2, square_length/2, 0],
+                [-square_length/2, -square_length/2, 0],
+                [square_length/2, -square_length/2, 0]
+            ])  # shape (4, 3)
 
+            # Extract rotation and translation
+            R_wc = self.tf_true[:3, :3]
+            t_wc = self.tf_true[:3, 3]
+
+            # Transform corners to camera frame
+            square_corners_cam = (R_wc @ square_corners_3d.T + t_wc.reshape(3, 1)).T  # shape (4, 3)
+
+            # Project to 2D using intrinsic matrix
+            square_corners_2d = (camera_matrix @ square_corners_cam.T).T  # shape (4, 3)
+            square_corners_2d = square_corners_2d[:, :2] / square_corners_2d[:, 2:3]  # normalize
+            self.corners_true = square_corners_2d  # shape (4, 2)
+
+            return self.corners_true 
 class DataProcessor(): 
     def __init__(self, config):
         self.config = config
@@ -123,6 +179,10 @@ class DataProcessor():
         self.camera_matrix = np.array([[fx, 0, cx],
                                        [0, fy, cy],
                                        [0, 0, 1]], dtype=np.float32)
+        
+        self.camera_matrix_resized = np.array([[fx * 640 / width , 0, cx * 640 / width ],
+                                               [0, fy * 480 / height, cy * 480 / height],
+                                               [0, 0, 1]], dtype=np.float32)
 
         self.dist_coeffs = np.array(self.camera_parameters["distortion_coefficients"], dtype=np.float32)
         if len(self.dist_coeffs) == 0:
@@ -157,6 +217,7 @@ class DataProcessor():
 
         # check if tf_c_m.csv exists 
         if not os.path.exists(self.tf_m_c_path):
+            tf = None 
             for datapoint in self.datapoints:
                 image = cv2.imread(datapoint.image_path) 
                 ids, rvecs, tvecs, corners_tuple = marker_pose_estimation_estimatePoseSingleMarkers(
@@ -174,6 +235,9 @@ class DataProcessor():
                     tf[:3, :3] = R_matrix
                     tf[:3, 3] = tvecs[0].reshape(3)
                     break 
+            if tf is None:
+                logger.warning("[CCV] No marker detected in any image. Cannot create tf_m_c.csv.")
+                tf = np.eye(4)  # Default to identity matrix if no marker is detected
             # save tf to tf_m_c.csv 
             list_tf = [tf.flatten() for _ in range(len(self.datapoints))]  # Initialize with identity matrices
             df_tf_m_c = pd.DataFrame(list_tf, columns=["m00", "m01", "m02", "m03",  
@@ -184,21 +248,23 @@ class DataProcessor():
 
     def read_pose(self):
         
-        df_tf_c_m = pd.read_csv(self.tf_m_c_path) 
+        df_tf_m_c = pd.read_csv(self.tf_m_c_path) 
 
 
-        array_tf_c_m = df_tf_c_m.values.reshape(-1, 4, 4) 
+        array_tf_m_c = df_tf_m_c.values.reshape(-1, 4, 4) 
 
-        assert(len(self.datapoints) == len(array_tf_c_m), "[CCV] Number of datapoints does not match number of poses in tf_m_c.csv")
+        assert(len(self.datapoints) == len(array_tf_m_c), "[CCV] Number of datapoints does not match number of poses in tf_m_c.csv")
 
         self.tf_marker = []
 
 
         for idx, datapoint in enumerate(self.datapoints):
-            tf_marker = np.linalg.inv(array_tf_c_m[idx])  # Inverse to get marker wrt camera transform
+            tf_marker = np.linalg.inv(array_tf_m_c[idx])  # Inverse to get marker wrt camera transform
+            # tf_marker = array_tf_c_m[idx] # Inverse to get marker wrt camera transform
 
             self.tf_marker.append(tf_marker)
             self.datapoints[idx].set_true_pose(tf_marker) 
+            self.datapoints[idx].get_corners_true(self.marker_length, self.camera_matrix)
 
             if self.max_num_datapoints is not None and len(self.tf_marker) >= self.max_num_datapoints:
                 break
@@ -285,6 +351,7 @@ class DataProcessor():
             bool_detected = True  
         else:
             bool_detected = False
+
         return seg_mask_img, bool_detected
     
     def compute_roi(self, seg, rgb):
@@ -368,6 +435,37 @@ class DataProcessor():
         return keypoints_img  
 
     def estimate_tf_from_keypoints(self, keypoints_ref, keypoints_est): 
+        # Check if keypoints_est is None or invalid
+        if keypoints_est is None:
+            return None
+        
+        # Check if keypoints_ref is None or invalid
+        if keypoints_ref is None:
+            return None
+        
+        # Ensure keypoints_est is a numpy array with correct shape and type
+        if not isinstance(keypoints_est, np.ndarray):
+            return None
+        
+        # Ensure keypoints_ref is a numpy array with correct shape and type
+        if not isinstance(keypoints_ref, np.ndarray):
+            return None
+        
+        # Ensure it's the correct shape (N, 2) for image points and (N, 3) for object points
+        if keypoints_est.ndim != 2 or keypoints_est.shape[1] != 2:
+            return None
+        
+        if keypoints_ref.ndim != 2 or keypoints_ref.shape[1] != 3:
+            return None
+        
+        # Ensure they have the same number of points
+        if keypoints_est.shape[0] != keypoints_ref.shape[0]:
+            return None
+        
+        # Ensure it's float32/float64 type as expected by cv2.solvePnP
+        keypoints_est = keypoints_est.astype(np.float32)
+        keypoints_ref = keypoints_ref.astype(np.float32)
+        
         success, rvec, tvec = cv2.solvePnP(
             objectPoints=keypoints_ref,
             imagePoints=keypoints_est,
@@ -428,7 +526,7 @@ class DataProcessor():
                 image_seg_true_np = self.get_true_segmentation(self.datapoints[idx]) 
                 IOU = compute_segmentation_IOU(image_seg_est_np, image_seg_true_np) 
                 image_roi, coords_roi = self.compute_roi(image_segmentation, image) 
-                if image_roi is None or coords_roi is None or IOU < 0.5: # FIXME: using IOU < 0.5 as a threshold for detection, this is not ideal 
+                if image_roi is None or coords_roi is None or IOU < 0.25: # FIXME: using IOU < 0.25 as a threshold for detection, this is not ideal 
                     bool_detected = False
                     keypoints_est = None 
                     tf_est = None 
@@ -456,6 +554,10 @@ class DataProcessor():
 
             # hybrid method 
             if run_corners_HCV: 
+                img_marker_path = "./synthetic_data_generation/assets/tags/tag36h11_0.png"
+                img_marker = cv2.imread(img_marker_path)
+                keypoints_marker_image_space = find_keypoints(img_marker)
+                bool_detected_hybrid = False
                 if bool_detected: 
                     # check if no segmentation points within margin of border 
                     margin = 10 # units: pixels 
@@ -471,18 +573,46 @@ class DataProcessor():
                     else: 
                         bool_detected_hybrid = True
                         # fit quadrilateral and find corners of segmentation mask 
-                        corners_est = find_segmentation_four_corners(image_seg_est_np)
+                        corners_est, area_ratio = find_segmentation_four_corners(image_seg_est_np)
                         # solve for pose using the corners 
                         tf_est_hcv = self.estimate_tf_from_keypoints(self.corners_ref, corners_est)
-                        tf_est_corrected = tf_est 
-                        tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
-                        self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
-                        self.datapoints[idx].set_corners_HCV(corners_est) 
-                        self.datapoints[idx].set_tf_HCV(tf_est_hcv) 
+                        
+                        # Check if pose estimation was successful
+                        if tf_est_hcv is None:
+                            bool_detected_hybrid = False
+                            self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
+                            self.datapoints[idx].set_corners_HCV(None) 
+                            self.datapoints[idx].set_tf_HCV(None)
+                        else:
+                            tf_est_corrected = tf_est 
+                            tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
+                            self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
+                            self.datapoints[idx].set_corners_HCV(corners_est) 
+                            self.datapoints[idx].set_tf_HCV(tf_est_hcv) 
 
             # pattern hybrid method 
             if run_PBCV: 
-                pass # TODO 
+                corners, area_ratio = find_segmentation_four_corners(image_seg_est_np, bound_box=False)
+                if corners is None or image is None or image_seg_est_np is None or area_ratio<0.5 or np.count_nonzero(image_seg_est_np) < 1000:
+                    tf_PBCV = None 
+                    # continue  
+                quad_seg = fill_segmentation_from_polygon(image_seg_est_np.shape, corners)
+                keypoints_rgb_image_space = find_keypoints(image, quad_seg)
+                keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
+                    keypoints_marker_image_space, image_size=(image.shape[0], image.shape[1]), marker_size=(0.1, 0.1)
+                )
+                tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
+                    keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix_resized,
+                    tf_est, max_iterations=100, show_iteration_images=False
+                )
+                if tf_PBCV is not None:
+                    self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
+                    self.datapoints[idx].set_keypoints_PBCV(keypoints_rgb_image_space) 
+                    self.datapoints[idx].set_detected_PBCV(True)
+                else:
+                    self.datapoints[idx].set_tf_PBCV(False)
+                    self.datapoints[idx].set_keypoints_PBCV(None)
+                    self.datapoints[idx].set_detected_PBCV(None)
 
             if save_results:
                 output_dir = os.path.join(self.directory, "LBCV_keypoints_results")
@@ -508,6 +638,19 @@ class DataProcessor():
                 os.makedirs(output_dir, exist_ok=True)
                 out_segmentation_path = os.path.join(output_dir, f"LBCV_segmentation_{idx:05d}.png")
                 image_segmentation.save(out_segmentation_path) 
+
+                if run_PBCV:
+                    output_dir = os.path.join(self.directory, "PBCV_keypoints_results")
+                    os.makedirs(output_dir, exist_ok=True)
+                    out_img = image.copy()
+                    if self.datapoints[idx].detected_PBCV:
+                        for kp in self.datapoints[idx].keypoints_PBCV:
+                            cv2.circle(out_img, tuple(kp.astype(int)), 3, (0, 255, 0), -1)
+                    outpath = os.path.join(output_dir, f"PBCV_{idx:05d}.png")
+                    cv2.imwrite(str(outpath), out_img)
+
+
+            del image 
 
     def compute_values(self): 
         for idx, datapoint in enumerate(self.datapoints): 
@@ -577,7 +720,7 @@ class DataProcessor():
             num_saturated_high_pixels = np.sum(visible_rgb_pixels.mean(axis=1) > 250)  # Count pixels with brightness > 250 
             fraction_saturated_high_pixels = num_saturated_high_pixels / visible_rgb_pixels.shape[0] if visible_rgb_pixels.shape[0] > 0 else 0.0
 
-            num_saturated_low_pixels = np.sum(visible_rgb_pixels < 5)  # Count pixels with brightness < 5
+            num_saturated_low_pixels = np.sum(visible_rgb_pixels.mean(axis=1) < 5)  # Count pixels with brightness < 5
             fraction_saturated_low_pixels = num_saturated_low_pixels / visible_rgb_pixels.shape[0] if visible_rgb_pixels.shape[0] > 0 else 0.0
 
             # Store in datapoint
@@ -684,10 +827,32 @@ class DataProcessor():
             "pose_error_HCV_c",
             "lateral",
             "fraction_marker_visible",
+            "mean_marker_pixel_brightness",
+            "fraction_saturated_high_pixels",
+            "fraction_saturated_low_pixels",
             "skew", 
             "pitch",
             "yaw",
             "roll",
+            "detected_PBCV",
+            "tf_error_PBCV_Rxx",
+            "tf_error_PBCV_Rxy",
+            "tf_error_PBCV_Rxz",
+            "tf_error_PBCV_Ryx",    
+            "tf_error_PBCV_Ryy",
+            "tf_error_PBCV_Ryz",
+            "tf_error_PBCV_Rzx",
+            "tf_error_PBCV_Rzy",
+            "tf_error_PBCV_Rzz",
+            "tf_error_PBCV_tx", 
+            "tf_error_PBCV_ty",
+            "tf_error_PBCV_tz",
+            "pose_error_PBCV_x",
+            "pose_error_PBCV_y",
+            "pose_error_PBCV_z",
+            "pose_error_PBCV_a",
+            "pose_error_PBCV_b",
+            "pose_error_PBCV_c",
         ]) # for storing packed results in a pandas DataFrame format 
 
         for idx, datapoint in enumerate(self.datapoints): 
@@ -720,6 +885,7 @@ class DataProcessor():
             self.df_results.loc[idx, "mean_marker_pixel_brightness"] = datapoint.metadata.get("mean_marker_pixel_brightness", None)
             self.df_results.loc[idx, "fraction_saturated_high_pixels"] = datapoint.metadata.get("fraction_saturated_high_pixels", None)
             self.df_results.loc[idx, "fraction_saturated_low_pixels"] = datapoint.metadata.get("fraction_saturated_low_pixels", None)
+            self.df_results.loc[idx, "mean_corners_error_LBCV"] = datapoint.mean_corners_error_LBCV if hasattr(datapoint, 'mean_corners_error_LBCV') else None
 
             if datapoint.CCV_detected:
                 self.df_results.loc[idx, "tf_error_CCV_Rxx"] = datapoint.tf_error_CCV[0, 0] 
@@ -812,6 +978,37 @@ class DataProcessor():
                         "pose_error_HCV_a", "pose_error_HCV_b", "pose_error_HCV_c"
                     ]:
                         self.df_results.loc[idx, col] = None
+                if hasattr(datapoint, 'tf_error_PBCV'): 
+                    if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
+                        self.df_results.loc[idx, "detected_PBCV"] = datapoint.detected_PBCV
+                        self.df_results.loc[idx, "tf_error_PBCV_Rxx"] = datapoint.tf_error_PBCV[0, 0]
+                        self.df_results.loc[idx, "tf_error_PBCV_Rxy"] = datapoint.tf_error_PBCV[0, 1]
+                        self.df_results.loc[idx, "tf_error_PBCV_Rxz"] = datapoint.tf_error_PBCV[0, 2]
+                        self.df_results.loc[idx, "tf_error_PBCV_Ryx"] = datapoint.tf_error_PBCV[1, 0]
+                        self.df_results.loc[idx, "tf_error_PBCV_Ryy"] = datapoint.tf_error_PBCV[1, 1]
+                        self.df_results.loc[idx, "tf_error_PBCV_Ryz"] = datapoint.tf_error_PBCV[1, 2]
+                        self.df_results.loc[idx, "tf_error_PBCV_Rzx"] = datapoint.tf_error_PBCV[2, 0]
+                        self.df_results.loc[idx, "tf_error_PBCV_Rzy"] = datapoint.tf_error_PBCV[2, 1]
+                        self.df_results.loc[idx, "tf_error_PBCV_Rzz"] = datapoint.tf_error_PBCV[2, 2]
+                        self.df_results.loc[idx, "tf_error_PBCV_tx"] = datapoint.tf_error_PBCV[0, 3]
+                        self.df_results.loc[idx, "tf_error_PBCV_ty"] = datapoint.tf_error_PBCV[1, 3]
+                        self.df_results.loc[idx, "tf_error_PBCV_tz"] = datapoint.tf_error_PBCV[2, 3]
+                        self.df_results.loc[idx, "pose_error_PBCV_x"] = datapoint.pose_error_PBCV[0]
+                        self.df_results.loc[idx, "pose_error_PBCV_y"] = datapoint.pose_error_PBCV[1]
+                        self.df_results.loc[idx, "pose_error_PBCV_z"] = datapoint.pose_error_PBCV[2]
+                        self.df_results.loc[idx, "pose_error_PBCV_a"] = datapoint.pose_error_PBCV[3]
+                        self.df_results.loc[idx, "pose_error_PBCV_b"] = datapoint.pose_error_PBCV[4]
+                        self.df_results.loc[idx, "pose_error_PBCV_c"] = datapoint.pose_error_PBCV[5]
+                else:
+                    for col in [
+                        "tf_error_PBCV_Rxx", "tf_error_PBCV_Rxy", "tf_errorPBCV_Rxz",
+                        "tf_error_PBCV_Ryx", "tf_error_PBCV_Ryy", "tf_errorPBCV_Ryz",
+                        "tf_error_PBCV_Rzx", "tf_error_PBCV_Rzy", "tf_errorPBCV_Rzz",
+                        "tf_error_PBCV_tx",  "tf_error_PBCV_ty",  "tf_errorPBCV_tz",
+                        "pose_error_PBCV_x", "pose_error_PBCV_y", "pose_error_PBCV_z",
+                        "pose_error_PBCV_a", "pose_error_PBCV_b", "pose_error_PBCV_c"
+                    ]:
+                        self.df_results.loc[idx, col] = None
             else:
                 self.df_results.loc[idx, "tf_error_LBCV_Rxx"] = None
                 self.df_results.loc[idx, "tf_error_LBCV_Rxy"] = None
@@ -864,25 +1061,55 @@ class DataProcessor():
 
 def main(): 
 
+    # camera_parameters = {
+    #     "width": 1280,
+    #     "height": 720,
+    #     "fx": 886.643,
+    #     "fy": 886.643,
+    #     "cx": 631.834,
+    #     "cy": 367.724,
+    #     "distortion_coefficients": np.zeros(5),
+    # }
+
     camera_parameters = {
         "width": 1280,
         "height": 720,
-        "fx": 886.643,
-        "fy": 886.643,
-        "cx": 631.834,
-        "cy": 367.724,
-        "distortion_coefficients": np.zeros(5),
-    }
+        "fx": 906.995,
+        "fy": 906.995,
+        "cx": 638.235,
+        "cy": 360.533,
+        "distortion_coefficients": np.array([0,0,0,0,0], dtype=float),
+    } # realsense calibration 
+
+    # camera_parameters = {
+    #     "width": 1920,
+    #     "height": 1080,
+    #     "fx": 1363.85,
+    #     "fy": 1365.40,
+    #     "cx": 958.58,
+    #     "cy": 552.25,
+    #     "distortion_coefficients": np.array([0.1693, -0.4755, 0.0018, 0.0023, 0.4114], dtype=float),
+    # } # from charuco calibration 
+
+    # camera_parameters = {
+    #     "width": 1920,
+    #     "height": 1080,
+    #     "fx": 1360.49,
+    #     "fy": 1360.49,
+    #     "cx": 957.355,
+    #     "cy": 540.8,
+    #     "distortion_coefficients": np.array([0.1693, -0.4755, 0.0018, 0.0023, 0.4114], dtype=float),
+    # } # from realsense
 
     marker_parameters = {
-        "marker_length": 0.1,  # units: meters
-        "marker_length_without_border": 0.08,  # units: meters
+        "marker_length": 0.100,  # units: meters
+        "marker_length_without_border": 0.080,  # units: meters
         "num_squares": 10, # including border 
         "aruco_dict": cv2.aruco.DICT_APRILTAG_36h11, 
     }
 
     # get ablation data path 
-    ablation = "glare" 
+    ablation = "distance_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -901,7 +1128,7 @@ def main():
 
     processor = DataProcessor(config)
     processor.run_opencv_fiducial_marker_detection(save_results=True) 
-    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True) 
+    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True, run_PBCV=False) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
 

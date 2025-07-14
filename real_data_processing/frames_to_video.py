@@ -31,5 +31,5 @@ if __name__ == "__main__":
     pngs_to_mp4(
         input_dir="./real_data_processing/raw_data/realsense/realsense_6_frames_LBCV/keypoints_overlay",  # 🔁 your input folder here
         output_path="./real_data_processing/raw_data/realsense/realsense_6_frames_LBCV/keypoints_overlay/keypoints_video.mp4",
-        fps=30  # 🔁 change FPS as needed
+        fps=1  
     )

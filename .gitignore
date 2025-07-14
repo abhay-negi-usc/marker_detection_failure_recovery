@@ -24,3 +24,4 @@ keypoints_model/checkpoints
 ablations/data/* 
 ablations/analysis/plots 
 vit_keypoints_model/checkpoints/*
+ablations/analysis/real_exp/plots 

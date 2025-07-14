@@ -126,13 +126,14 @@ def save_calibration(file_path, camera_matrix, distortion_coeffs):
 
 def main():
     # Parameters
-    image_dir = 'C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration_frames_v2'
+    # image_dir = 'C:/Users/NegiA/Desktop/abhay_ws/marker_detection_failure_recovery/real_data_processing/raw_data/realsense415_charuco_calibration_frames_v2'
+    image_dir = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/checkerboard_calibration_v3/images/"
     output_file = './real_data_processing/raw_data/camera_calibration.npz'
     chessboard_size = (5, 7) 
     pattern_size = (4, 6) # Number of inner corners (not squares)
-    square_length = 0.07750 
-    marker_length = 0.03875
-    max_images = 250
+    square_length = 77.35e-3 #0.07750 
+    marker_length = 0.5*77.35e-3 #0.03875
+    max_images = 300
     use_charuco = False  # Set to False to use checkerboard calibration
 
     images = load_images(image_dir, max_images)

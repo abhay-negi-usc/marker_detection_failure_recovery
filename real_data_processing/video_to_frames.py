@@ -32,7 +32,8 @@ def split_video_to_frames(video_path, output_folder, get_timestamps=False):
             break
         
         # Generate filename for each frame
-        frame_filename = os.path.join(output_folder, f"{video_filename}_frame_{frame_count:05d}.png")
+        # frame_filename = os.path.join(output_folder, f"{video_filename}_frame_{frame_count:05d}.png")
+        frame_filename = os.path.join(output_folder, f"picture_{frame_count}.png")
         
         # Save the frame as PNG
         cv2.imwrite(frame_filename, frame)
@@ -49,6 +50,8 @@ def split_video_to_frames(video_path, output_folder, get_timestamps=False):
         # Return the list of timestamps if requested
         return np.array(timestamps) 
     
-video_path = "./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4"
-output_folder = "./real_data_processing/raw_data/controlled_tests/dark_test_3"  # Folder to save the PNGs
+# video_path = "./real_data_processing/raw_data/controlled_tests/dark_test_3.mp4"
+# output_folder = "./real_data_processing/raw_data/controlled_tests/dark_test_3"  # Folder to save the PNGs
+video_path = "/home/rp/Videos/Webcam/2025-07-13-214653.webm"
+output_folder = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/underexposure_webcam/images/"  # Folder to save the PNGs
 split_video_to_frames(video_path, output_folder, get_timestamps=False)
