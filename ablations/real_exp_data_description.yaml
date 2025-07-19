@@ -82,9 +82,37 @@
   ablation_variable_min: 0
   ablation_variable_max: 0.75 
 "glare_20250712": 
-  data_path: "./ablations/data/real_experiments/glare"
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/glare/"
   ablation_variable: "fraction_saturated_high_pixels"
   window_size: 10 
   type: "fixed_pose"
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"foil_20250712": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/foil/"
+  ablation_variable: "fraction_saturated_high_pixels"
+  window_size: 10 
+  type: "fixed_pose"
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"skew_with_roll": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew_with_roll/"
+  ablation_variable: "yaw"
+  window_size: 10 
+  type: "variable_pose"
+  ablation_variable_min: None
+  ablation_variable_max: None
+"skew_with_pitch": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew_with_pitch/"
+  ablation_variable: "yaw"
+  window_size: 10 
+  type: "variable_pose"
+  ablation_variable_min: None
+  ablation_variable_max: None 
+"skew_with_foil_border": 
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew_with_foil_border/"
+  ablation_variable: "yaw"
+  window_size: 10 
+  type: "variable_pose"
   ablation_variable_min: None
   ablation_variable_max: None 

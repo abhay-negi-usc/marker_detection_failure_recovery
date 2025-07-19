@@ -54,7 +54,7 @@ class Plotter():
         else:
             self.config["plot_CCV"] = True
             self.config["plot_LBCV"] = True
-            self.config["plot_HCV"] = False
+            self.config["plot_HCV"] = True
             self.config["plot_PBCV"] = False
 
         if config["ablation_variable_min"] != "None":
@@ -276,8 +276,8 @@ class Plotter():
             methods_to_plot.append('detected_CCV')
         if self.config.get("plot_LBCV", False):
             methods_to_plot.append('detected_LBCV')
-        if self.config.get("plot_HCV", False):
-            methods_to_plot.append('detected_HCV')
+        # if self.config.get("plot_HCV", False):
+        #     methods_to_plot.append('detected_HCV')
         if self.config.get("plot_PBCV", False):
             methods_to_plot.append('detected_PBCV')
 
@@ -287,7 +287,7 @@ class Plotter():
         method_mapping = {
             'detected_CCV': 'CCV',
             'detected_LBCV': 'LBCV',
-            'detected_HCV': 'HCV',
+            # 'detected_HCV': 'HCV',
             'detected_PBCV': 'PBCV'
         }
         melted_data['Method'] = melted_data['Method'].map(method_mapping)
@@ -508,12 +508,15 @@ class Plotter():
 
         fig.suptitle(f'Pose Estimation Error vs {ablation_variable_pretty}', fontsize=20)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
-        save_path = os.path.join(self.output_dir, f"{ablation_variable}_error_mean_std.png")
+        plot_filename = f"{ablation_variable}_error_mean_std.png" 
+        if self.config.get("plot_HCV", False):
+            plot_filename = f"{ablation_variable}_error_mean_std_HCV.png"
+        save_path = os.path.join(self.output_dir, plot_filename)
         plt.savefig(save_path)
         if save_central:
             central_output_path = self.config.get("central_output_path", self.output_dir)
             os.makedirs(central_output_path, exist_ok=True)
-            save_path = os.path.join(central_output_path, f"{ablation_variable}_error_mean_std.png")
+            save_path = os.path.join(central_output_path, plot_filename)
             plt.savefig(save_path)
         plt.close()
 
@@ -604,12 +607,16 @@ class Plotter():
             #         ax.set_ylim(-30, 30)
 
         plt.tight_layout()
-        save_path = os.path.join(self.output_dir, f"{ablation_variable}_error_moving_mean_std.png")
+        plot_filename = f"{ablation_variable}_error_moving_mean_std.png"
+        if self.config.get("plot_HCV", False):
+            plot_filename = f"{ablation_variable}_error_moving_mean_std_HCV.png"
+
+        save_path = os.path.join(self.output_dir, plot_filename)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         if save_central:
             central_output_path = self.config.get("central_output_path", self.output_dir)
             os.makedirs(central_output_path, exist_ok=True)
-            save_path_central = os.path.join(central_output_path, f"{ablation_variable}_error_moving_mean_std.png")
+            save_path_central = os.path.join(central_output_path, plot_filename)
             plt.savefig(save_path_central, dpi=300, bbox_inches='tight')
         plt.close()
 
@@ -848,7 +855,7 @@ class Plotter():
         Z MAE +/- std dev (mm), Pitch MAE +/- std dev (deg),
         Yaw MAE +/- std dev (deg), Roll MAE +/- std dev (deg).
         """
-        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail", "LBCV"]
+        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail", "LBCV", "HCV with CCV success", "HCV with CCV fail", "HCV"]
         summary_data = []
 
         for method in methods:
@@ -860,6 +867,12 @@ class Plotter():
                 mask = (self.df_data['detected_CCV'] == 0) & (self.df_data['detected_LBCV'] == 1)
             elif method == "LBCV":
                 mask = self.df_data['detected_LBCV'] == 1
+            elif method == "HCV with CCV success":
+                mask = (self.df_data['detected_CCV'] == 1) & (self.df_data['detected_HCV'] == 1)
+            elif method == "HCV with CCV fail":
+                mask = (self.df_data['detected_CCV'] == 0) & (self.df_data['detected_HCV'] == 1)
+            elif method == "HCV":
+                mask = self.df_data['detected_HCV'] == 1
 
             filtered_data = self.df_data[mask]
             detection_rate = mask.mean()
@@ -868,8 +881,10 @@ class Plotter():
             error_stats = {}
             if method == "CCV":
                 method_type = "CCV"
-            else:
+            elif "LBCV" in method:
                 method_type = "LBCV"
+            elif "HCV" in method:
+                method_type = "HCV"
             for err_type in ['x', 'y', 'z', 'a', 'b', 'c']:
                 col_name = f'pose_error_{method_type}_{err_type}'
                 mae = filtered_data[col_name].abs().mean()
@@ -1103,7 +1118,7 @@ class Plotter():
         plt.close()
         
 if __name__ == "__main__":
-    ablations = ["glare_20250712"] 
+    ablations = ["skew_with_foil_border"] 
     # ablations = ["distance","skew","truncation","underexposure","glare","glint","shadow"]
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:

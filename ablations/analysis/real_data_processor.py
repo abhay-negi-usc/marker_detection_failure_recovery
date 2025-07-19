@@ -76,8 +76,10 @@ class DataPoint():
     def set_corners_LBCV(self, corners):
         self.corners_LBCV = corners
         if hasattr(self, 'corners_true'): 
-            # compute mean corners error in pixel distance 
-            self.corners_error_LBCV = np.mean(np.linalg.norm(self.corners_true - self.corners_LBCV, axis=1)) # shape (4, 2) 
+            # compute mean corners error in pixel distance by finding closest corners in self.corners_true 
+            distances = np.linalg.norm(self.corners_true[:, np.newaxis, :] - self.corners_LBCV[np.newaxis, :, :], axis=-1)  # shape (4, 4)
+            closest_indices = np.argmin(distances, axis=1)
+            self.corners_error_LBCV = np.linalg.norm(self.corners_true - self.corners_LBCV[closest_indices], axis=1)  # shape (4,)
             self.mean_corners_error_LBCV = np.mean(self.corners_error_LBCV)  # scalar value 
     
     def set_detected_LBCV(self, bool_detected):
@@ -465,7 +467,9 @@ class DataProcessor():
         # Ensure it's float32/float64 type as expected by cv2.solvePnP
         keypoints_est = keypoints_est.astype(np.float32)
         keypoints_ref = keypoints_ref.astype(np.float32)
-        
+
+        import pdb; pdb.set_trace()  # Debugging line to inspect keypoints_ref and keypoints_est
+
         success, rvec, tvec = cv2.solvePnP(
             objectPoints=keypoints_ref,
             imagePoints=keypoints_est,
@@ -480,25 +484,30 @@ class DataProcessor():
             return tf_marker 
 
     def find_closest_symmetric_pose(self, tf_est, tf_ref): 
-        tf_z_rot_90deg = np.array([
+        tf_z_90 = np.array([
             [0, -1, 0, 0],
-            [1, 0, 0, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 1]
+            [1,  0, 0, 0],
+            [0,  0, 1, 0],
+            [0,  0, 0, 1]
         ])
-        tf_est_0 = tf_est.copy()
-        # right-multiply tf_est by 90 degree rotations around local Z-axis
-        tf_est_1 = tf_est @ tf_z_rot_90deg
-        tf_est_2 = tf_est @ tf_z_rot_90deg @ tf_z_rot_90deg
-        tf_est_3 = tf_est @ tf_z_rot_90deg @ tf_z_rot_90deg @ tf_z_rot_90deg
-        tf_candidates = [tf_est_0, tf_est_1, tf_est_2, tf_est_3]
+        tf_z_180 = tf_z_90 @ tf_z_90
+        tf_z_270 = tf_z_180 @ tf_z_90
+
+        tf_candidates = [
+            tf_est,
+            tf_est @ tf_z_90,
+            tf_est @ tf_z_180,
+            tf_est @ tf_z_270
+        ]
+
         min_error = float('inf')
         best_tf = None
         for tf_candidate in tf_candidates:
-            error = np.linalg.norm(compute_tf_error(tf_ref, tf_candidate))
+            error = np.linalg.norm(tf_candidate[:3, :3] - tf_ref[:3, :3]) # angular error 
             if error < min_error:
                 min_error = error
                 best_tf = tf_candidate
+
         if best_tf is None:
             logger.warning("[LBCV] No valid symmetric pose found.")
             return None 
@@ -584,7 +593,7 @@ class DataProcessor():
                             self.datapoints[idx].set_corners_HCV(None) 
                             self.datapoints[idx].set_tf_HCV(None)
                         else:
-                            tf_est_corrected = tf_est 
+                            tf_est_corrected = tf_est
                             tf_est_hcv = self.find_closest_symmetric_pose(tf_est_hcv, tf_est_corrected)
                             self.datapoints[idx].set_detected_HCV(bool_detected_hybrid) 
                             self.datapoints[idx].set_corners_HCV(corners_est) 
