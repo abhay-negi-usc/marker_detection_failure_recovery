@@ -9,6 +9,7 @@ import random
 import math 
 from scipy.spatial.transform import Rotation as R
 from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
+from utils.image_utils import * 
 
 def crop_rgb_using_seg(img_rgb, img_seg):
     mask = img_seg > 0  # Assuming the segmentation mask is binary (0 for background, 1 for foreground)
@@ -174,6 +175,7 @@ def convert_marker_keypoints_to_cartesian(keypoints_image_space, image_size, mar
         kp = kp.reshape(2)
         x_norm = (kp[0] / width) * 2 - 1
         y_norm = (kp[1] / height) * 2 - 1
+        x_norm = -x_norm  # rotate about y-axis to convert from image coordinates to marker coordinates # NOTE: make this configurable
         # Convert normalized coordinates to Cartesian space
         x_cartesian = x_norm * marker_size[0] / 2
         y_cartesian = y_norm * marker_size[1] / 2
@@ -259,7 +261,7 @@ def transform_points_image_space_to_cartesian_space(keypoints_image_space, tf_es
     return keypoints_cartesian_space
 
 def refine_pose_icp_3d2d_auto_match(
-    keypoints_ref_3d, keypoints_est_2d, camera_matrix, tf_init=None, dist_coeffs=None, 
+    image_np, keypoints_ref_3d, keypoints_est_2d, camera_matrix, tf_init=None, dist_coeffs=None, 
     max_iterations=20, max_keypoints_est_2d=100, outlier_percentile=90,
     show_iteration_images=False, plot_residual=False, plot_estimate=False
 ):
@@ -292,9 +294,20 @@ def refine_pose_icp_3d2d_auto_match(
 
     residual_history, eul_history, tvec_history = [], [], []
 
+    tf_est = tf_init 
+
     for i in range(max_iterations):
         projected_points, _ = cv2.projectPoints(keypoints_ref_3d, rvec.copy(), tvec.copy(), camera_matrix, dist_coeffs)
         projected_points = projected_points.reshape(-1, 2)
+
+        if show_iteration_images and i ==0:
+            img_overlay = draw_keypoints(
+                image_np.copy(), projected_points, color=(255, 0, 0), size=5
+            )
+            plt.imshow(cv2.cvtColor(img_overlay, cv2.COLOR_BGR2RGB))
+            plt.title(f'Initial estimate keypoint overlay')
+            plt.axis('off')
+            plt.show()
 
         # Find nearest neighbors
         distances = np.linalg.norm(projected_points[:, None, :] - keypoints_est_2d[None, :, :], axis=2)
@@ -338,7 +351,9 @@ def refine_pose_icp_3d2d_auto_match(
 
             if show_iteration_images:
                 img_overlay = overlay_3D_points_on_image(
-                    np.zeros((480, 640, 3), dtype=np.uint8), matched_3d_inliers, camera_matrix, tf_est,
+                    # np.zeros((720, 1280, 3), dtype=np.uint8),
+                    image_np,  
+                    matched_3d_inliers, camera_matrix, tf_est, 
                     color=(0, 255, 0), radius=5
                 )
                 plt.imshow(cv2.cvtColor(img_overlay, cv2.COLOR_BGR2RGB))
@@ -380,6 +395,14 @@ def refine_pose_icp_3d2d_auto_match(
 
 # HELPER FUNCTIONS 
 def project_point_to_image(C,T,P): 
+    """Project a 3D point P into the image plane using camera matrix C and transformation matrix T.
+    Args:
+        C (numpy.ndarray): Camera intrinsic matrix (3x3).
+        T (numpy.ndarray): Transformation matrix (4x4).
+        P (numpy.ndarray): 3D point in world coordinates (3,).
+    Returns:
+        numpy.ndarray: 2D point in image coordinates (2,).
+    """
     P_H = np.array([[P[0]],[P[1]],[P[2]],[1]]) 
     T_H = T[:3,:4]  
     uv = C @ T_H @ P_H 
@@ -402,6 +425,33 @@ def project_point_list_to_image(C,T,P_list,convert_cam_is2cv=True):
         uv = project_point_to_image(C,T,P) 
         uv_list.append(uv) 
     return uv_list   
+
+def project_points_array_to_image(C, T, P_array, convert_cam_is2cv=True):
+    """
+    Project a 3D points array into the image plane using camera matrix C and transformation matrix T.
+    
+    Args:
+        C (numpy.ndarray): Camera intrinsic matrix (3x3).
+        T (numpy.ndarray): Transformation matrix (4x4).
+        P_array (numpy.ndarray): 3D points in world coordinates (N, 3).
+        convert_cam_is2cv (bool): Whether to convert camera image space to OpenCV format.
+    
+    Returns:
+        numpy.ndarray: 2D points in image coordinates (N, 2).
+    """
+    if convert_cam_is2cv:
+        T = T @ np.array([
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1]
+        ])
+    
+    P_homogeneous = np.hstack((P_array, np.ones((P_array.shape[0], 1))))  # Convert to homogeneous coordinates
+    uv_homogeneous = C @ T[:3, :4] @ P_homogeneous.T
+    uv_homogeneous /= uv_homogeneous[2]  # Normalize by the third coordinate
+    uv = uv_homogeneous[:2].T  # Take the first two coordinates and transpose
+    return uv
 
 def transform_pts(pts, T):  
     pts_transformed = [] 

@@ -55,7 +55,7 @@ class Plotter():
             self.config["plot_CCV"] = True
             self.config["plot_LBCV"] = True
             self.config["plot_HCV"] = True
-            self.config["plot_PBCV"] = False
+            self.config["plot_PBCV"] = True
 
         if config["ablation_variable_min"] != "None":
             # Filter the dataframe based on the ablation variable range
@@ -511,6 +511,8 @@ class Plotter():
         plot_filename = f"{ablation_variable}_error_mean_std.png" 
         if self.config.get("plot_HCV", False):
             plot_filename = f"{ablation_variable}_error_mean_std_HCV.png"
+        if self.config.get("plot_PBCV", False):
+            plot_filename = f"{ablation_variable}_error_mean_std_PBCV.png"
         save_path = os.path.join(self.output_dir, plot_filename)
         plt.savefig(save_path)
         if save_central:
@@ -610,6 +612,8 @@ class Plotter():
         plot_filename = f"{ablation_variable}_error_moving_mean_std.png"
         if self.config.get("plot_HCV", False):
             plot_filename = f"{ablation_variable}_error_moving_mean_std_HCV.png"
+        if self.config.get("plot_PBCV", False):
+            plot_filename = f"{ablation_variable}_error_moving_mean_std_PBCV.png"
 
         save_path = os.path.join(self.output_dir, plot_filename)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -855,7 +859,7 @@ class Plotter():
         Z MAE +/- std dev (mm), Pitch MAE +/- std dev (deg),
         Yaw MAE +/- std dev (deg), Roll MAE +/- std dev (deg).
         """
-        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail", "LBCV", "HCV with CCV success", "HCV with CCV fail", "HCV"]
+        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail", "LBCV", "HCV with CCV success", "HCV with CCV fail", "HCV", "PBCV"]
         summary_data = []
 
         for method in methods:
@@ -873,6 +877,8 @@ class Plotter():
                 mask = (self.df_data['detected_CCV'] == 0) & (self.df_data['detected_HCV'] == 1)
             elif method == "HCV":
                 mask = self.df_data['detected_HCV'] == 1
+            elif method == "PBCV":
+                mask = self.df_data['detected_PBCV'] == 1
 
             filtered_data = self.df_data[mask]
             detection_rate = mask.mean()
@@ -885,6 +891,8 @@ class Plotter():
                 method_type = "LBCV"
             elif "HCV" in method:
                 method_type = "HCV"
+            elif "PBCV" in method:
+                method_type = "PBCV"
             for err_type in ['x', 'y', 'z', 'a', 'b', 'c']:
                 col_name = f'pose_error_{method_type}_{err_type}'
                 mae = filtered_data[col_name].abs().mean()
@@ -1118,7 +1126,7 @@ class Plotter():
         plt.close()
         
 if __name__ == "__main__":
-    ablations = ["skew_with_foil_border"] 
+    ablations = ["truncation_20250712"] 
     # ablations = ["distance","skew","truncation","underexposure","glare","glint","shadow"]
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:

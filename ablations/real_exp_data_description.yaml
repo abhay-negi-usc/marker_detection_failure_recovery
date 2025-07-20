@@ -2,6 +2,9 @@
   data_path: "./ablations/data/real_experiments/distance"
   ablation_variable: "distance_to_camera"
   type: "variable_pose"
+  window_size: 10 
+  ablation_variable_min: None
+  ablation_variable_max: None 
 "glare":
   data_path: "./ablations/data/real_experiments/glare"
   ablation_variable: "fraction_saturated_high_pixels"

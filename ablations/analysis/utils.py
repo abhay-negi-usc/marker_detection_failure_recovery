@@ -56,3 +56,36 @@ def find_segmentation_four_corners(segmentation):
                                              corners[:, 0] - np.mean(corners[:, 0])))]
     corners = corners.reshape(4, 2).astype(np.float32)
     return corners
+
+
+def segmentation_biggest_blob_filter(segmentation_mask, min_area=1000):
+    """
+    Filters the segmentation mask to keep only the largest connected component (blob).
+    
+    Args:
+        segmentation_mask (numpy.ndarray): Binary segmentation mask.
+        min_area (int): Minimum area of the blob to keep.
+    
+    Returns:
+        numpy.ndarray: Filtered segmentation mask with only the largest blob.
+    """
+    if segmentation_mask is None or not np.any(segmentation_mask):
+        return None
+    
+    # Find contours
+    contours, _ = cv2.findContours(segmentation_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None
+    
+    # Find the largest contour by area
+    largest_contour = max(contours, key=cv2.contourArea)
+    
+    if cv2.contourArea(largest_contour) < min_area:
+        return None
+    
+    # Create a new mask for the largest blob
+    filtered_mask = np.zeros_like(segmentation_mask)
+    cv2.drawContours(filtered_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+    
+    return filtered_mask

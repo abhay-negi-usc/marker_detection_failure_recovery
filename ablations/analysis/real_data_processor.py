@@ -36,6 +36,25 @@ class DataPoint():
         # parse the data and set the metadata attributes
         self.metadata = data
 
+    def set_camera_matrix(self, camera_matrix):
+        self.camera_matrix = camera_matrix
+
+    def set_marker_length(self, marker_length):
+        self.marker_length = marker_length
+        self.marker_length_without_border = marker_length * 0.8 # FIXME: hardcoded for now, should be set in config based on marker pattern 
+        self.marker_corners_black_border = np.array([
+            [+self.marker_length_without_border/2, +self.marker_length_without_border/2, 0],
+            [-self.marker_length_without_border/2, +self.marker_length_without_border/2, 0],
+            [-self.marker_length_without_border/2, -self.marker_length_without_border/2, 0],
+            [+self.marker_length_without_border/2, -self.marker_length_without_border/2, 0]
+        ])
+        self.marker_corners = np.array([
+            [+marker_length/2, -marker_length/2, 0],
+            [-marker_length/2, -marker_length/2, 0],
+            [-marker_length/2, +marker_length/2, 0],
+            [+marker_length/2, +marker_length/2, 0]
+        ])
+
     def set_true_pose(self, tf): 
         self.tf_true = tf  
 
@@ -79,7 +98,7 @@ class DataPoint():
             # compute mean corners error in pixel distance by finding closest corners in self.corners_true 
             distances = np.linalg.norm(self.corners_true[:, np.newaxis, :] - self.corners_LBCV[np.newaxis, :, :], axis=-1)  # shape (4, 4)
             closest_indices = np.argmin(distances, axis=1)
-            self.corners_error_LBCV = np.linalg.norm(self.corners_true - self.corners_LBCV[closest_indices], axis=1)  # shape (4,)
+            self.corners_error_LBCV = np.linalg.norm(self.corners_true - self.corners_LBCV[closest_indices], axis=1)  # shape (4,) # FIXME: should use the appropriate indices for the corners 
             self.mean_corners_error_LBCV = np.mean(self.corners_error_LBCV)  # scalar value 
     
     def set_detected_LBCV(self, bool_detected):
@@ -113,6 +132,10 @@ class DataPoint():
         if hasattr(self, 'tf_true') and self.tf_true is not None and tf is not None:
             self.tf_error_PBCV = compute_tf_error(self.tf_true, self.tf_PBCV) 
             self.pose_error_PBCV = tf_to_pose(self.tf_error_PBCV) if self.tf_error_PBCV is not None else None 
+            if hasattr(self, 'corners_true'): 
+                self.corners_PBCV = project_points_array_to_image(C=self.camera_matrix,T=self.tf_PBCV, P_array=self.marker_corners, convert_cam_is2cv=True)
+                self.corners_error_PBCV = np.linalg.norm(self.corners_true - self.corners_PBCV, axis=1)  # shape (4,) # FIXME: should use the appropriate indices for the corners
+                self.mean_corners_error_PBCV = np.mean(self.corners_error_PBCV)
         else: 
             self.tf_error_PBCV = None 
             self.pose_error_PBCV = None
@@ -215,6 +238,8 @@ class DataProcessor():
         for idx in range(self.max_num_datapoints): 
             datapoint = DataPoint(idx)
             datapoint.set_image_path(os.path.join(self.dir_images, f"picture_{idx}.png"))
+            datapoint.set_camera_matrix(self.camera_matrix)
+            datapoint.set_marker_length(self.marker_length)
             self.datapoints.append(datapoint)
 
         # check if tf_c_m.csv exists 
@@ -468,8 +493,6 @@ class DataProcessor():
         keypoints_est = keypoints_est.astype(np.float32)
         keypoints_ref = keypoints_ref.astype(np.float32)
 
-        import pdb; pdb.set_trace()  # Debugging line to inspect keypoints_ref and keypoints_est
-
         success, rvec, tvec = cv2.solvePnP(
             objectPoints=keypoints_ref,
             imagePoints=keypoints_est,
@@ -605,14 +628,16 @@ class DataProcessor():
                 if corners is None or image is None or image_seg_est_np is None or area_ratio<0.5 or np.count_nonzero(image_seg_est_np) < 1000:
                     tf_PBCV = None 
                     # continue  
-                quad_seg = fill_segmentation_from_polygon(image_seg_est_np.shape, corners)
-                keypoints_rgb_image_space = find_keypoints(image, quad_seg)
+                # quad_seg = fill_segmentation_from_polygon(image_seg_est_np.shape, corners)
+                # keypoints_rgb_image_space = find_keypoints(image, quad_seg)
+                seg_mask_img_np = segmentation_biggest_blob_filter(image_seg_est_np, min_area=1000)
+                keypoints_rgb_image_space = find_keypoints(image, seg_mask_img_np)
                 keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
-                    keypoints_marker_image_space, image_size=(image.shape[0], image.shape[1]), marker_size=(0.1, 0.1)
+                    keypoints_marker_image_space, image_size=(img_marker.shape[0], img_marker.shape[1]), marker_size=(0.1, 0.1)
                 )
                 tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
-                    keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix_resized,
-                    tf_est, max_iterations=100, show_iteration_images=False
+                    np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
+                    tf_est, max_iterations=10, show_iteration_images=False
                 )
                 if tf_PBCV is not None:
                     self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
@@ -895,6 +920,7 @@ class DataProcessor():
             self.df_results.loc[idx, "fraction_saturated_high_pixels"] = datapoint.metadata.get("fraction_saturated_high_pixels", None)
             self.df_results.loc[idx, "fraction_saturated_low_pixels"] = datapoint.metadata.get("fraction_saturated_low_pixels", None)
             self.df_results.loc[idx, "mean_corners_error_LBCV"] = datapoint.mean_corners_error_LBCV if hasattr(datapoint, 'mean_corners_error_LBCV') else None
+            self.df_results.loc[idx, "mean_corners_error_PBCV"] = datapoint.mean_corners_error_PBCV if hasattr(datapoint, 'mean_corners_error_PBCV') else None
 
             if datapoint.CCV_detected:
                 self.df_results.loc[idx, "tf_error_CCV_Rxx"] = datapoint.tf_error_CCV[0, 0] 
@@ -1118,7 +1144,8 @@ def main():
     }
 
     # get ablation data path 
-    ablation = "distance_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
+    # results in: distance_20250712, skew_20250712, truncation_20250712, underexposure_20250712, shadow_20250712, glare_20250712 
+    ablation = "truncation_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -1137,7 +1164,7 @@ def main():
 
     processor = DataProcessor(config)
     processor.run_opencv_fiducial_marker_detection(save_results=True) 
-    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True, run_PBCV=False) 
+    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True, run_PBCV=True) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
 
