@@ -22,6 +22,7 @@ from ablations.analysis.utils import *
 from keypoints_model.utils import xyzabc_to_tf, rvectvec_to_xyzabc
 from pose_estimation_model.utils import compute_segmentation_IOU 
 from pose_estimation_model.utils import * 
+from utils.pose_estimation_utils import * 
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,9 @@ class DataPoint():
     def set_LBCV_IOU(self, iou):
         self.LBCV_IOU = iou
 
+    def set_PBCV_IOU(self, iou):
+        self.PBCV_IOU = iou
+
     def set_fraction_marker_viewable(self, fraction):
         self.fraction_marker_visible = fraction 
 
@@ -145,6 +149,15 @@ class DataPoint():
 
     def set_detected_PBCV(self, bool_detected):
         self.detected_PBCV = bool_detected
+
+    def set_detection_scores(self, harris_corner_response_score=None, num_valid_proj_points=None, keypoint_residual_score=None, detection_score=None):
+        self.harris_corner_response_score = harris_corner_response_score
+        self.num_valid_proj_points = num_valid_proj_points 
+        self.keypoint_residual_score = keypoint_residual_score
+        self.detection_score = detection_score
+
+    def set_image_similarity_score(self, image_similarity_score):
+        self.image_similarity_score = image_similarity_score
 
     def get_segmentation(self, square_length, camera_matrix): 
         if hasattr(self, 'image_path') and hasattr(self, 'tf_true') and self.image_path is not None and self.tf_true is not None:
@@ -368,13 +381,13 @@ class DataProcessor():
         load_kp_ckpt(torch.load(self.keypoints_model_path, map_location=self.device), self.kp_model)
         self.kp_model.eval()
 
-    def run_LBCV_segmentation(self, image, detection_threshold=5000):         
+    def run_LBCV_segmentation(self, image, detection_threshold=1000):         
         img_tensor = self.seg_transform(image=image)["image"].unsqueeze(0).to(self.device)
         with torch.no_grad():
             seg_mask = torch.sigmoid(self.seg_model(img_tensor))
             seg_mask = (seg_mask > 0.5).float().cpu()
             seg_mask_img = Image.fromarray(seg_mask.squeeze().numpy().astype(np.uint8) * 255)
-        if np.array(seg_mask_img).sum() > detection_threshold: 
+        if np.count_nonzero(np.array(seg_mask_img)) > detection_threshold:
             bool_detected = True  
         else:
             bool_detected = False
@@ -544,21 +557,26 @@ class DataProcessor():
         )
         return image_segmentation 
 
-    def run_LBCV_fiducial_marker_detection(self, save_results=False, run_corners_HCV=False, run_PBCV=False): 
+    def run_LBCV_fiducial_marker_detection(self, save_results=False, run_corners_HCV=False, run_PBCV=False, use_precomputed_segmentation=False): 
         self.setup_models() 
         # for idx, image_path in enumerate(self.image_paths):
         for idx, datapoint in enumerate(self.datapoints):
             image_path = datapoint.image_path
             image = np.array(cv2.imread(image_path))
             # image = np.array(cv2.imread(os.path.join(self.dir_rgb, str(image_path)))) 
-            image_segmentation, bool_detected = self.run_LBCV_segmentation(image) 
+
+            if use_precomputed_segmentation: 
+                import pdb; pdb.set_trace() 
+            else: 
+                image_segmentation, bool_detected = self.run_LBCV_segmentation(image) 
+
             if bool_detected: 
                 # compute segmentation IOU
                 image_seg_est_np = np.array(image_segmentation) 
                 image_seg_true_np = self.get_true_segmentation(self.datapoints[idx]) 
                 IOU = compute_segmentation_IOU(image_seg_est_np, image_seg_true_np) 
                 image_roi, coords_roi = self.compute_roi(image_segmentation, image) 
-                if image_roi is None or coords_roi is None or IOU < 0.25: # FIXME: using IOU < 0.25 as a threshold for detection, this is not ideal 
+                if image_roi is None or coords_roi is None: #or IOU < 0.25: # FIXME: using IOU < 0.25 as a threshold for detection, this is not ideal 
                     bool_detected = False
                     keypoints_est = None 
                     tf_est = None 
@@ -624,9 +642,9 @@ class DataProcessor():
 
             # pattern hybrid method 
             if run_PBCV: 
-                corners, area_ratio = find_segmentation_four_corners(image_seg_est_np, bound_box=False)
-                if corners is None or image is None or image_seg_est_np is None or area_ratio<0.5 or np.count_nonzero(image_seg_est_np) < 1000:
-                    tf_PBCV = None 
+                # corners, area_ratio = find_segmentation_four_corners(image_seg_est_np, bound_box=False)
+                # if corners is None or image is None or image_seg_est_np is None or area_ratio<0.5 or np.count_nonzero(image_seg_est_np) < 1000:
+                #     tf_PBCV = None 
                     # continue  
                 # quad_seg = fill_segmentation_from_polygon(image_seg_est_np.shape, corners)
                 # keypoints_rgb_image_space = find_keypoints(image, quad_seg)
@@ -635,18 +653,50 @@ class DataProcessor():
                 keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
                     keypoints_marker_image_space, image_size=(img_marker.shape[0], img_marker.shape[1]), marker_size=(0.1, 0.1)
                 )
-                tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
-                    np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
-                    tf_est, max_iterations=10, show_iteration_images=False
-                )
-                if tf_PBCV is not None:
-                    self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
-                    self.datapoints[idx].set_keypoints_PBCV(keypoints_rgb_image_space) 
-                    self.datapoints[idx].set_detected_PBCV(True)
+                if keypoints_rgb_image_space is not None and seg_mask_img_np is not None: 
+                    tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
+                        np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
+                        tf_est, max_iterations=10, show_iteration_images=False, max_keypoints_est_2d=72
+                    )
+
+                    if tf_PBCV is not None:
+                        harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score = compute_detection_score(
+                            image, keypoints_marker_image_space, keypoints_marker_cartesian_space, tf_PBCV, self.camera_matrix, self.dist_coeffs, 
+                            harris_corner_response_weight=1.0, keypoint_residual_score_weight=1.0
+                        )
+                        image_similarity_score = compute_image_similarity_score(image, img_marker, self.marker_length, tf_PBCV, self.camera_matrix, self.dist_coeffs)
+                        PBCV_seg_mask_img_np = get_marker_segmentation(
+                            image=image, 
+                            tf=tf_PBCV, 
+                            square_length=self.marker_length, 
+                            K=self.camera_matrix
+                        )
+                        PBCV_IOU = compute_segmentation_IOU(PBCV_seg_mask_img_np, image_seg_est_np)
+                        self.datapoints[idx].set_detection_scores(harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score) 
+                        self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
+                        self.datapoints[idx].set_keypoints_PBCV(keypoints_rgb_image_space) 
+                        self.datapoints[idx].set_detected_PBCV(True) 
+                        self.datapoints[idx].set_image_similarity_score(image_similarity_score)
+                        self.datapoints[idx].set_PBCV_IOU(PBCV_IOU)
+                        # NOTE: filtering out bad estimates based on scores 
+                        bool_detected_PBCV = (harris_corner_response_score > 0.001) and (num_valid_proj_points > 2) and (tf_PBCV[2,3] < 10) and (image_similarity_score > 20_000) 
+                        # self.datapoints[idx].set_detected_PBCV(bool_detected_PBCV)
+                    else:
+                        self.datapoints[idx].set_tf_PBCV(None)
+                        self.datapoints[idx].set_keypoints_PBCV(None)
+                        self.datapoints[idx].set_detected_PBCV(False)
+                        self.datapoints[idx].set_detection_scores(None) 
+                        self.datapoints[idx].set_image_similarity_score(None)
+
                 else:
-                    self.datapoints[idx].set_tf_PBCV(False)
+                    self.datapoints[idx].set_tf_PBCV(None)
                     self.datapoints[idx].set_keypoints_PBCV(None)
-                    self.datapoints[idx].set_detected_PBCV(None)
+                    self.datapoints[idx].set_detected_PBCV(False)
+                    self.datapoints[idx].set_detection_scores(None) 
+                    self.datapoints[idx].set_image_similarity_score(None)
+
+                # FIXME: this can be made more elegant 
+                if not bool_detected: self.datapoints[idx].set_detected_PBCV(False) 
 
             if save_results:
                 output_dir = os.path.join(self.directory, "LBCV_keypoints_results")
@@ -963,6 +1013,20 @@ class DataProcessor():
                 self.df_results.loc[idx, "pose_error_CCV_c"] = None  
 
             if datapoint.detected_LBCV:
+
+                self.df_results.loc[idx, "tf_LBCV_Rxx"] = datapoint.tf_LBCV[0, 0]
+                self.df_results.loc[idx, "tf_LBCV_Rxy"] = datapoint.tf_LBCV[0, 1]
+                self.df_results.loc[idx, "tf_LBCV_Rxz"] = datapoint.tf_LBCV[0, 2]     
+                self.df_results.loc[idx, "tf_LBCV_Ryx"] = datapoint.tf_LBCV[1, 0]
+                self.df_results.loc[idx, "tf_LBCV_Ryy"] = datapoint.tf_LBCV[1, 1]
+                self.df_results.loc[idx, "tf_LBCV_Ryz"] = datapoint.tf_LBCV[1, 2]
+                self.df_results.loc[idx, "tf_LBCV_Rzx"] = datapoint.tf_LBCV[2, 0]
+                self.df_results.loc[idx, "tf_LBCV_Rzy"] = datapoint.tf_LBCV[2, 1]
+                self.df_results.loc[idx, "tf_LBCV_Rzz"] = datapoint.tf_LBCV[2, 2]
+                self.df_results.loc[idx, "tf_LBCV_tx"] = datapoint.tf_LBCV[0, 3]
+                self.df_results.loc[idx, "tf_LBCV_ty"] = datapoint.tf_LBCV[1, 3]
+                self.df_results.loc[idx, "tf_LBCV_tz"] = datapoint.tf_LBCV[2, 3]
+
                 self.df_results.loc[idx, "tf_error_LBCV_Rxx"] = datapoint.tf_error_LBCV[0, 0] 
                 self.df_results.loc[idx, "tf_error_LBCV_Rxy"] = datapoint.tf_error_LBCV[0, 1]
                 self.df_results.loc[idx, "tf_error_LBCV_Rxz"] = datapoint.tf_error_LBCV[0, 2]
@@ -1013,37 +1077,6 @@ class DataProcessor():
                         "pose_error_HCV_a", "pose_error_HCV_b", "pose_error_HCV_c"
                     ]:
                         self.df_results.loc[idx, col] = None
-                if hasattr(datapoint, 'tf_error_PBCV'): 
-                    if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
-                        self.df_results.loc[idx, "detected_PBCV"] = datapoint.detected_PBCV
-                        self.df_results.loc[idx, "tf_error_PBCV_Rxx"] = datapoint.tf_error_PBCV[0, 0]
-                        self.df_results.loc[idx, "tf_error_PBCV_Rxy"] = datapoint.tf_error_PBCV[0, 1]
-                        self.df_results.loc[idx, "tf_error_PBCV_Rxz"] = datapoint.tf_error_PBCV[0, 2]
-                        self.df_results.loc[idx, "tf_error_PBCV_Ryx"] = datapoint.tf_error_PBCV[1, 0]
-                        self.df_results.loc[idx, "tf_error_PBCV_Ryy"] = datapoint.tf_error_PBCV[1, 1]
-                        self.df_results.loc[idx, "tf_error_PBCV_Ryz"] = datapoint.tf_error_PBCV[1, 2]
-                        self.df_results.loc[idx, "tf_error_PBCV_Rzx"] = datapoint.tf_error_PBCV[2, 0]
-                        self.df_results.loc[idx, "tf_error_PBCV_Rzy"] = datapoint.tf_error_PBCV[2, 1]
-                        self.df_results.loc[idx, "tf_error_PBCV_Rzz"] = datapoint.tf_error_PBCV[2, 2]
-                        self.df_results.loc[idx, "tf_error_PBCV_tx"] = datapoint.tf_error_PBCV[0, 3]
-                        self.df_results.loc[idx, "tf_error_PBCV_ty"] = datapoint.tf_error_PBCV[1, 3]
-                        self.df_results.loc[idx, "tf_error_PBCV_tz"] = datapoint.tf_error_PBCV[2, 3]
-                        self.df_results.loc[idx, "pose_error_PBCV_x"] = datapoint.pose_error_PBCV[0]
-                        self.df_results.loc[idx, "pose_error_PBCV_y"] = datapoint.pose_error_PBCV[1]
-                        self.df_results.loc[idx, "pose_error_PBCV_z"] = datapoint.pose_error_PBCV[2]
-                        self.df_results.loc[idx, "pose_error_PBCV_a"] = datapoint.pose_error_PBCV[3]
-                        self.df_results.loc[idx, "pose_error_PBCV_b"] = datapoint.pose_error_PBCV[4]
-                        self.df_results.loc[idx, "pose_error_PBCV_c"] = datapoint.pose_error_PBCV[5]
-                else:
-                    for col in [
-                        "tf_error_PBCV_Rxx", "tf_error_PBCV_Rxy", "tf_errorPBCV_Rxz",
-                        "tf_error_PBCV_Ryx", "tf_error_PBCV_Ryy", "tf_errorPBCV_Ryz",
-                        "tf_error_PBCV_Rzx", "tf_error_PBCV_Rzy", "tf_errorPBCV_Rzz",
-                        "tf_error_PBCV_tx",  "tf_error_PBCV_ty",  "tf_errorPBCV_tz",
-                        "pose_error_PBCV_x", "pose_error_PBCV_y", "pose_error_PBCV_z",
-                        "pose_error_PBCV_a", "pose_error_PBCV_b", "pose_error_PBCV_c"
-                    ]:
-                        self.df_results.loc[idx, col] = None
             else:
                 self.df_results.loc[idx, "tf_error_LBCV_Rxx"] = None
                 self.df_results.loc[idx, "tf_error_LBCV_Rxy"] = None
@@ -1082,6 +1115,63 @@ class DataProcessor():
                 self.df_results.loc[idx, "pose_error_HCV_b"] = None 
                 self.df_results.loc[idx, "pose_error_HCV_c"] = None
                 self.df_results.loc[idx, "LBCV_IOU"] = None
+
+            if hasattr(datapoint, 'detected_PBCV'): 
+                if datapoint.tf_error_PBCV is not None and datapoint.pose_error_PBCV is not None:
+                    self.df_results.loc[idx, "detected_PBCV"] = datapoint.detected_PBCV
+                    self.df_results.loc[idx, "tf_PBCV_Rxx"] = datapoint.tf_PBCV[0, 0]
+                    self.df_results.loc[idx, "tf_PBCV_Rxy"] = datapoint.tf_PBCV[0, 1]
+                    self.df_results.loc[idx, "tf_PBCV_Rxz"] = datapoint.tf_PBCV[0, 2]     
+                    self.df_results.loc[idx, "tf_PBCV_Ryx"] = datapoint.tf_PBCV[1, 0]
+                    self.df_results.loc[idx, "tf_PBCV_Ryy"] = datapoint.tf_PBCV[1, 1]
+                    self.df_results.loc[idx, "tf_PBCV_Ryz"] = datapoint.tf_PBCV[1, 2]
+                    self.df_results.loc[idx, "tf_PBCV_Rzx"] = datapoint.tf_PBCV[2, 0]
+                    self.df_results.loc[idx, "tf_PBCV_Rzy"] = datapoint.tf_PBCV[2, 1]
+                    self.df_results.loc[idx, "tf_PBCV_Rzz"] = datapoint.tf_PBCV[2, 2]
+                    self.df_results.loc[idx, "tf_PBCV_tx"] = datapoint.tf_PBCV[0, 3]
+                    self.df_results.loc[idx, "tf_PBCV_ty"] = datapoint.tf_PBCV[1, 3]
+                    self.df_results.loc[idx, "tf_PBCV_tz"] = datapoint.tf_PBCV[2, 3]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rxx"] = datapoint.tf_error_PBCV[0, 0]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rxy"] = datapoint.tf_error_PBCV[0, 1]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rxz"] = datapoint.tf_error_PBCV[0, 2]
+                    self.df_results.loc[idx, "tf_error_PBCV_Ryx"] = datapoint.tf_error_PBCV[1, 0]
+                    self.df_results.loc[idx, "tf_error_PBCV_Ryy"] = datapoint.tf_error_PBCV[1, 1]
+                    self.df_results.loc[idx, "tf_error_PBCV_Ryz"] = datapoint.tf_error_PBCV[1, 2]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rzx"] = datapoint.tf_error_PBCV[2, 0]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rzy"] = datapoint.tf_error_PBCV[2, 1]
+                    self.df_results.loc[idx, "tf_error_PBCV_Rzz"] = datapoint.tf_error_PBCV[2, 2]
+                    self.df_results.loc[idx, "tf_error_PBCV_tx"] = datapoint.tf_error_PBCV[0, 3]
+                    self.df_results.loc[idx, "tf_error_PBCV_ty"] = datapoint.tf_error_PBCV[1, 3]
+                    self.df_results.loc[idx, "tf_error_PBCV_tz"] = datapoint.tf_error_PBCV[2, 3]
+                    self.df_results.loc[idx, "pose_error_PBCV_x"] = datapoint.pose_error_PBCV[0]
+                    self.df_results.loc[idx, "pose_error_PBCV_y"] = datapoint.pose_error_PBCV[1]
+                    self.df_results.loc[idx, "pose_error_PBCV_z"] = datapoint.pose_error_PBCV[2]
+                    self.df_results.loc[idx, "pose_error_PBCV_a"] = datapoint.pose_error_PBCV[3]
+                    self.df_results.loc[idx, "pose_error_PBCV_b"] = datapoint.pose_error_PBCV[4]
+                    self.df_results.loc[idx, "pose_error_PBCV_c"] = datapoint.pose_error_PBCV[5]
+                    self.df_results.loc[idx, "harris_corner_response_score"] = datapoint.harris_corner_response_score if hasattr(datapoint, 'harris_corner_response_score') else None
+                    self.df_results.loc[idx, "num_valid_proj_points"] = datapoint.num_valid_proj_points if hasattr(datapoint, 'num_valid_proj_points') else None
+                    self.df_results.loc[idx, "keypoint_residual_score"] = datapoint.keypoint_residual_score if hasattr(datapoint, 'keypoint_residual_score') else None
+                    self.df_results.loc[idx, "detection_score"] = datapoint.detection_score if hasattr(datapoint, 'detection_score') else None
+                    self.df_results.loc[idx, "image_similarity_score"] = datapoint.image_similarity_score if hasattr(datapoint, 'image_similarity_score') else None
+                    self.df_results.loc[idx, "PBCV_IOU"] = datapoint.PBCV_IOU if hasattr(datapoint, 'PBCV_IOU') else None
+
+                else:
+                    for col in [
+                        "tf_error_PBCV_Rxx", "tf_error_PBCV_Rxy", "tf_errorPBCV_Rxz",
+                        "tf_error_PBCV_Ryx", "tf_error_PBCV_Ryy", "tf_errorPBCV_Ryz",
+                        "tf_error_PBCV_Rzx", "tf_error_PBCV_Rzy", "tf_errorPBCV_Rzz",
+                        "tf_error_PBCV_tx",  "tf_error_PBCV_ty",  "tf_errorPBCV_tz",
+                        "pose_error_PBCV_x", "pose_error_PBCV_y", "pose_error_PBCV_z",
+                        "pose_error_PBCV_a", "pose_error_PBCV_b", "pose_error_PBCV_c",
+                        "detected_PBCV",
+                        "harris_corner_response_score",
+                        "keypoint_residual_score",
+                        "detection_score",
+                        "image_similarity_score",
+                    ]:
+                        self.df_results.loc[idx, col] = None
+            
 
         if save_results: 
             output_dir = os.path.join(self.directory, "results")
@@ -1145,7 +1235,7 @@ def main():
 
     # get ablation data path 
     # results in: distance_20250712, skew_20250712, truncation_20250712, underexposure_20250712, shadow_20250712, glare_20250712 
-    ablation = "truncation_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
+    ablation = "glare_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 

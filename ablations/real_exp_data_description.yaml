@@ -68,7 +68,7 @@
   ablation_variable: "fraction_marker_visible"
   type: "variable_pose"
   window_size: 20
-  ablation_variable_min: 0.33 
+  ablation_variable_min: 0.40 
   ablation_variable_max: 1.0 
 "underexposure_20250712": 
   data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/underexposure_box/"
@@ -78,19 +78,20 @@
   ablation_variable_min: None
   ablation_variable_max: None 
 "shadow_20250712": 
-  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow/"
+  # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow/"
+  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow_v2/"
   ablation_variable: "fraction_saturated_low_pixels"
-  window_size: 10 
+  window_size: 20 
   type: "fixed_pose"
   ablation_variable_min: 0
-  ablation_variable_max: 0.75 
+  ablation_variable_max: 0.50 
 "glare_20250712": 
   data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/glare/"
   ablation_variable: "fraction_saturated_high_pixels"
-  window_size: 10 
+  window_size: 50 
   type: "fixed_pose"
-  ablation_variable_min: None
-  ablation_variable_max: None 
+  ablation_variable_min: 0
+  ablation_variable_max: 0.40 
 "foil_20250712": 
   data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/foil/"
   ablation_variable: "fraction_saturated_high_pixels"

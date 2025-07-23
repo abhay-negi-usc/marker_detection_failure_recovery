@@ -50,11 +50,11 @@ class Plotter():
             self.config["plot_CCV"] = False
             self.config["plot_LBCV"] = True
             self.config["plot_HCV"] = False
-            self.config["plot_PBCV"] = False
+            self.config["plot_PBCV"] = True 
         else:
             self.config["plot_CCV"] = True
             self.config["plot_LBCV"] = True
-            self.config["plot_HCV"] = True
+            self.config["plot_HCV"] = False
             self.config["plot_PBCV"] = True
 
         if config["ablation_variable_min"] != "None":
@@ -522,13 +522,18 @@ class Plotter():
             plt.savefig(save_path)
         plt.close()
 
-    def err_moving_mean_std_plot(self, ablation_variable, window_size=20, save_central=False):
+    def err_moving_mean_std_plot(self, ablation_variable, window_size=20, save_central=False, ccv_no_moving_mean=False, ccv_window_size=None, center=True, min_periods=None, win_type=None):
         """
         Plot mean error curves computed using a moving window, with std dev as shaded area.
         Args:
             ablation_variable (str): Ablation variable to plot against.
-            window_size (int): Size of the moving window (number of samples).
+            window_size (int): Size of the moving window (number of samples) for all methods except CCV.
             save_central (bool): Save also to central output path if True.
+            ccv_no_moving_mean (bool): If True, don't apply moving mean to CCV, plot raw data instead.
+            ccv_window_size (int): Optional different window size for CCV. If None, uses window_size.
+            center (bool): Whether to center the rolling window. Default True.
+            min_periods (int): Minimum number of observations in window required to have a value. Default None.
+            win_type (str): Window type for rolling calculation. Default None (simple rolling mean).
         """
         ablation_variable_pretty = ABLATION_VARIABLE_PRETTY_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
         ablation_variable_title = ABLATION_VARIABLE_TITLE_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
@@ -557,22 +562,38 @@ class Plotter():
             x_vals = df_sorted[ablation_variable]
 
             # Helper function to plot for each method
-            def plot_method(col_name, label_name, color=None):
+            def plot_method(col_name, label_name, color=None, use_moving_mean=True, custom_window_size=None):
                 if col_name in df_sorted.columns:
-                    roll_mean = df_sorted[col_name].rolling(window=window_size, center=True).mean()
-                    roll_std = df_sorted[col_name].rolling(window=window_size, center=True).std()
-
-                    ax.plot(x_vals, roll_mean, label=f'{label_name} (Moving Mean)', linewidth=2, color=color, alpha=0.7)
-                    ax.fill_between(x_vals, roll_mean - roll_std, roll_mean + roll_std, alpha=0.3, color=color)
+                    if use_moving_mean:
+                        effective_window_size = custom_window_size if custom_window_size is not None else window_size
+                        roll_mean = df_sorted[col_name].rolling(
+                            window=effective_window_size, 
+                            center=center, 
+                            min_periods=min_periods,
+                            win_type=win_type
+                        ).mean()
+                        roll_std = df_sorted[col_name].rolling(
+                            window=effective_window_size, 
+                            center=center, 
+                            min_periods=min_periods,
+                            win_type=win_type
+                        ).std()
+                        # window_label = f" (Window={effective_window_size})" if custom_window_size is not None else ""
+                        window_label=""
+                        ax.plot(x_vals, roll_mean, label=f'{label_name} (Moving Mean{window_label})', linewidth=2, color=color, alpha=0.7)
+                        ax.fill_between(x_vals, roll_mean - roll_std, roll_mean + roll_std, alpha=0.3, color=color)
+                    else:
+                        # Plot raw data without moving mean
+                        ax.plot(x_vals, df_sorted[col_name], label=f'{label_name} (Raw)', linewidth=1, color=color, alpha=0.7)
 
             if self.config.get("plot_CCV", False):
-                plot_method(col_CCV, "CCV", color='blue')
+                plot_method(col_CCV, "CCV", color='blue', use_moving_mean=not ccv_no_moving_mean, custom_window_size=ccv_window_size)
             if self.config.get("plot_HCV", False):
-                plot_method(col_HCV, "HCV", color='green')
+                plot_method(col_HCV, "HCV", color='green', use_moving_mean=True, custom_window_size=None)
             if self.config.get("plot_LBCV", False):
-                plot_method(col_LBCV, "LBCV", color='orange')
+                plot_method(col_LBCV, "LBCV", color='orange', use_moving_mean=True, custom_window_size=None)
             if self.config.get("plot_PBCV", False):
-                plot_method(col_PBCV, "PBCV", color='red')
+                plot_method(col_PBCV, "PBCV", color='red', use_moving_mean=True, custom_window_size=None)
 
             # Labeling
             if err_type in ['x', 'y', 'z']:
@@ -727,7 +748,7 @@ class Plotter():
             plt.figure(figsize=(10, 6))
             img = plt.imread(image_path)
             plt.imshow(img)
-            plt.title(f'{ablation_variable.replace("_", " ").title()}: {float(ablation_value):.4f}')
+            plt.title(f"{ablation_variable.replace('_', ' ').title()}: {float(ablation_value):.4f}, Harris Score: {float(row['harris_corner_response_score']):.0f}")
             plt.axis('off')
             output_path = os.path.join(dir_labeled, f"labeled_{idx}.png")
             plt.savefig(output_path, bbox_inches='tight')
@@ -1124,10 +1145,132 @@ class Plotter():
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             
         plt.close()
-        
+    
+    def detection_score_plot(self):
+        error_types = ['x', 'y', 'z', 'a', 'b', 'c']
+        score_types = {
+            'harris_corner_response_score': 'Harris Corner Response',
+            'keypoint_residual_score': 'Keypoint Residual',
+            'image_similarity_score': 'Image Similarity',
+        }
+
+        for score_col, score_label in score_types.items():
+            fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+            axs = axs.flatten()
+
+            for i, err_type in enumerate(error_types):
+                col_name = f'pose_error_PBCV_{err_type}'
+                if col_name not in self.df_data.columns or score_col not in self.df_data.columns:
+                    continue
+
+                ax = axs[i]
+                sns.scatterplot(
+                    x=self.df_data[score_col],
+                    y=self.df_data[col_name],
+                    ax=ax,
+                    alpha=0.5
+                )
+                ax.set_xlabel(score_label, fontsize=14)
+                if err_type in ['x', 'y', 'z']:
+                    ax.set_ylabel(f'{err_type.upper()} Error (m)', fontsize=14)
+                else:
+                    ax.set_ylabel(f'{err_type.upper()} Error (deg)', fontsize=14)
+                ax.set_title(f'{err_type.upper()} Error vs {score_label}', fontsize=16)
+                ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            save_path = os.path.join(self.output_dir, f"PBCV_error_vs_{score_col}.png")
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+        for score_col, score_label in score_types.items():
+            fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+            axs = axs.flatten()
+
+            for i, err_type in enumerate(error_types):
+                col_name = f'pose_error_PBCV_{err_type}'
+                if col_name not in self.df_data.columns or score_col not in self.df_data.columns:
+                    continue
+
+                ax = axs[i]
+                sns.scatterplot(
+                    x=self.df_data[score_col],
+                    y=self.df_data[col_name],
+                    ax=ax,
+                    alpha=0.5
+                )
+                ax.set_xlabel(score_label, fontsize=14)
+                if err_type in ['x', 'y', 'z']:
+                    ax.set_ylabel(f'{err_type.upper()} Error (m)', fontsize=14)
+                    ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+                else:
+                    ax.set_ylabel(f'{err_type.upper()} Error (deg)', fontsize=14)
+                    ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+                ax.set_title(f'{err_type.upper()} Error vs {score_label}', fontsize=16)
+                ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            save_path = os.path.join(self.output_dir, f"PBCV_error_vs_{score_col}_withrangelimits.png")
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+        # plot filtered data 
+        df_filtered = self.df_data[self.df_data['detected_PBCV'] == True]
+        for score_col, score_label in score_types.items():
+            fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+            axs = axs.flatten()
+
+            for i, err_type in enumerate(error_types):
+                col_name = f'pose_error_PBCV_{err_type}'
+                if col_name not in df_filtered.columns or score_col not in df_filtered.columns:
+                    continue
+
+                ax = axs[i]
+                sns.scatterplot(
+                    x=df_filtered[score_col],
+                    y=df_filtered[col_name],
+                    ax=ax,
+                    alpha=0.5
+                )
+                ax.set_xlabel(score_label, fontsize=14)
+                if err_type in ['x', 'y', 'z']:
+                    ax.set_ylabel(f'{err_type.upper()} Error (m)', fontsize=14)
+                    ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+                else:
+                    ax.set_ylabel(f'{err_type.upper()} Error (deg)', fontsize=14)
+                    ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+                ax.set_title(f'{err_type.upper()} Error vs {score_label}', fontsize=16)
+                ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            save_path = os.path.join(self.output_dir, f"PBCV_error_vs_{score_col}_filtered.png")
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+    
+    def refilter_PBCV_detection(self, harris_corner_response_thresh=0.001, num_valid_proj_points_thresh=2, tf_PBCV_tz_thresh=10, image_similarity_thresh=20_000):
+        """
+        Refilter the data based on specified thresholds.
+        """
+        len_pre_filter = len(self.df_data)
+        # self.df_data = self.df_data[
+        #     (self.df_data['harris_corner_response_score'] >= harris_corner_response_thresh) &
+        #     (self.df_data['num_valid_projection_points'] >= num_valid_proj_points_thresh) &
+        #     (self.df_data['tf_PBCV_tz'] <= tf_PBCV_tz_thresh) &
+        #     (self.df_data['image_similarity_score'] >= image_similarity_thresh)
+        # ]
+        self.df_data['detected_PBCV'] = (
+            (self.df_data['detected_LBCV'] == True) & 
+            (self.df_data['harris_corner_response_score'] >= harris_corner_response_thresh) &
+            (self.df_data['num_valid_proj_points'] >= num_valid_proj_points_thresh) &
+            (self.df_data['tf_PBCV_tz'] <= tf_PBCV_tz_thresh) &
+            (self.df_data['image_similarity_score'] >= image_similarity_thresh)
+        )
+        print(f"Refiltered data from {len_pre_filter} to {len(self.df_data)} entries based on thresholds.")
+
 if __name__ == "__main__":
-    ablations = ["truncation_20250712"] 
-    # ablations = ["distance","skew","truncation","underexposure","glare","glint","shadow"]
+    # ablations = ["truncation_20250712", "underexposure_20250712", "shadow_20250712","glare_20250712"] 
+    ablations = ["glare_20250712"]
+    # ablations = ["distance_20250712","skew_20250712","truncation_20250712","underexposure_20250712","glare_20250712","shadow_20250712"]
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
@@ -1170,6 +1313,7 @@ if __name__ == "__main__":
 
         plotter_instance = Plotter(config, global_ranges)
 
+        plotter_instance.refilter_PBCV_detection(harris_corner_response_thresh = 0.0, num_valid_proj_points_thresh = 1, tf_PBCV_tz_thresh = 10, image_similarity_thresh = 0)
         plotter_instance.save_summary_table(ablation_variable)
         # plotter_instance.detection_plot(ablation_variable, coplot_blank_background=False, save_central=True)
         # plotter_instance.IOU_plot(ablation_variable)
@@ -1177,7 +1321,11 @@ if __name__ == "__main__":
         # plotter_instance.error_plot(ablation_variable)
         # plotter_instance.error_ridge_plots(ablation_variable, n_ablation_bins=10, plot_CCV=True)
         plotter_instance.err_mean_std_plot(ablation_variable, coplot_blank_background=False, save_central=True)
-        plotter_instance.err_moving_mean_std_plot(ablation_variable, window_size=window_size, save_central=True)
+        if "glare" not in ablation:  # FIXME: make this a parameter in yaml file 
+            plotter_instance.err_moving_mean_std_plot(ablation_variable, window_size=window_size, save_central=True, ccv_no_moving_mean=False, ccv_window_size=30, min_periods=1)
+        else:             
+            plotter_instance.err_moving_mean_std_plot(ablation_variable, window_size=window_size, save_central=True, ccv_no_moving_mean=False, ccv_window_size=150, min_periods=1)
+        plotter_instance.detection_score_plot()
         # plotter_instance.output_labeled_images(ablation_variable)
         # plotter_instance.find_worst_performing(ablation_variable)
         # plotter_instance.find_best_performing(ablation_variable)
