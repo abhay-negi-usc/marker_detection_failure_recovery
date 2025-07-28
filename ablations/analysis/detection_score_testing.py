@@ -10,7 +10,6 @@ from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_prec
 
 # ablations = ["underexposure_20250712","glare_20250712","shadow_20250712"]
 ablations = ["distance_20250712","skew_20250712","truncation_20250712","underexposure_20250712","glare_20250712","shadow_20250712"]
-# ablations = ["underexposure_20250712"]
 out_dir = "./ablations/analysis/plots/"
 os.makedirs(out_dir, exist_ok=True)
 
@@ -22,7 +21,20 @@ score_columns = {
     # "num_valid_proj_points": "Num Valid Projected Points",
     "image_similarity_score": "Image Similarity Score"
 }
-
+label_rename_dict = {
+    "distance_20250712 (PBCV)": "Distance (PBCV)",
+    "skew_20250712 (PBCV)": "Skew (PBCV)",
+    "truncation_20250712 (PBCV)": "Truncation (PBCV)",
+    "underexposure_20250712 (PBCV)": "Underexposure (PBCV)",
+    "glare_20250712 (PBCV)": "Glare (PBCV)",
+    "shadow_20250712 (PBCV)": "Shadow (PBCV)",
+    "distance_20250712 (LBCV)": "Distance (LBCV)",
+    "skew_20250712 (LBCV)": "Skew (LBCV)",
+    "truncation_20250712 (LBCV)": "Truncation (LBCV)",
+    "underexposure_20250712 (LBCV)": "Underexposure (LBCV)",
+    "glare_20250712 (LBCV)": "Glare (LBCV)",
+    "shadow_20250712 (LBCV)": "Shadow (LBCV)",
+}
 
 # --- Load YAML ---
 data_yaml_path = "./ablations/real_exp_data_description.yaml" 
@@ -982,6 +994,347 @@ def plot_max_pose_error_vs_score_thresholds(
     plt.close(fig)
     print(f"Saved figure: {save_path}")
 
+# Re-defining the updated function after kernel reset
+
+def plot_dual_precision_recall_figure_by_IOU_and_PoseError(
+    df_ablations,
+    ablations,
+    score_columns,
+    data_description,
+    colors,
+    out_dir,
+    iou_threshold=0.5,
+    pose_error_thresholds={"x": 0.025, "y": 0.025, "z": 0.050, "a": 15.0, "b": 15.0, "c": 30.0},
+    coplot_LBCV=True,
+    label_rename_dict=None
+):
+    from sklearn.metrics import precision_recall_curve, average_precision_score, roc_curve, auc
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+
+    label_map = {"x": "X", "y": "Y", "z": "Z", "a": "Roll", "b": "Yaw", "c": "Pitch"}
+
+    for score_key, score_display_name in score_columns.items():
+        pr_curves_iou = []
+        pr_curves_pose = []
+
+        for ablation_idx, ablation in enumerate(ablations):
+            df_ablation = df_ablations[ablation_idx]
+            if df_ablation.empty:
+                continue
+
+            for method in ['PBCV', 'LBCV'] if coplot_LBCV else ['PBCV']:
+                # Override score key for method
+                if method == "LBCV":
+                    method_score_key = "LBCV_mean_mask_score"
+                elif method == "PBCV":
+                    method_score_key = "image_similarity_score"
+                else:
+                    continue
+
+                if method_score_key not in df_ablation.columns:
+                    continue
+
+                detect_col = f'detected_{method}'
+                iou_col = f'{method}_IOU'
+                prefix = f'pose_error_{method}_'
+
+                if detect_col not in df_ablation.columns or iou_col not in df_ablation.columns:
+                    continue
+
+                ablation_label = data_description[ablation].get("label", ablation)
+                color = colors[ablation_idx]
+                linestyle = '-' if method == 'PBCV' else '--'
+
+                label_base = f"{ablation_label} ({method})"
+                if label_rename_dict and label_base in label_rename_dict:
+                    label_base = label_rename_dict[label_base]
+
+                # --- IOU-based PR ---
+                df_detected_iou = df_ablation[df_ablation[detect_col] == True].copy()
+                if df_detected_iou.empty:
+                    continue
+                df_detected_iou['ground_truth'] = (df_detected_iou[iou_col] > iou_threshold).astype(int)
+
+                scores = df_detected_iou[method_score_key].values
+                labels = df_detected_iou['ground_truth'].values
+                valid_mask = ~np.isnan(scores)
+                scores = scores[valid_mask]
+                labels = labels[valid_mask]
+
+                if len(np.unique(labels)) > 1:
+                    precision, recall, _ = precision_recall_curve(labels, scores)
+                    ap_score = average_precision_score(labels, scores)
+                    fpr, tpr, _ = roc_curve(labels, scores)
+                    auc_score = auc(fpr, tpr)
+                    label = f"{label_base} (AP={ap_score:.2f}, AUC={auc_score:.2f})"
+                else:
+                    ap_score = 1.0 if np.all(labels == 1) else 0.0
+                    auc_score = ap_score
+                    label = f"{label_base} (AP={ap_score:.2f}, AUC={auc_score:.2f})"
+                    recall, precision = [1.0], [ap_score]
+                pr_curves_iou.append((label, recall, precision, color, linestyle))
+
+                # --- Pose error-based PR ---
+                df_detected_pose = df_ablation[df_ablation[detect_col] == True].copy()
+                if df_detected_pose.empty:
+                    continue
+
+                err_mask = np.ones(len(df_detected_pose), dtype=bool)
+                for key, threshold in pose_error_thresholds.items():
+                    col = prefix + key
+                    if col not in df_detected_pose.columns:
+                        err_mask[:] = False
+                        break
+                    err_mask &= np.abs(df_detected_pose[col]) < threshold
+                df_detected_pose['ground_truth'] = err_mask.astype(int)
+
+                scores = df_detected_pose[method_score_key].values
+                labels = df_detected_pose['ground_truth'].values
+                valid_mask = ~np.isnan(scores)
+                scores = scores[valid_mask]
+                labels = labels[valid_mask]
+
+                if len(np.unique(labels)) > 1:
+                    precision, recall, _ = precision_recall_curve(labels, scores)
+                    ap_score = average_precision_score(labels, scores)
+                    fpr, tpr, _ = roc_curve(labels, scores)
+                    auc_score = auc(fpr, tpr)
+                    label = f"{label_base} (AP={ap_score:.2f}, AUC={auc_score:.2f})"
+                else:
+                    ap_score = 1.0 if np.all(labels == 1) else 0.0
+                    auc_score = ap_score
+                    label = f"{label_base} (AP={ap_score:.2f}, AUC={auc_score:.2f})"
+                    recall, precision = [1.0], [ap_score]
+                pr_curves_pose.append((label, recall, precision, color, linestyle))
+
+        fig, axs = plt.subplots(1, 2, figsize=(26, 10), sharey=False)
+        fig.suptitle(f"Precision-recall curves for {score_display_name}", fontsize=24)
+        ax_iou, ax_pose = axs
+
+        for (label, recall, precision, color, linestyle) in pr_curves_iou:
+            ax_iou.plot(recall, precision, label=label, linewidth=2, linestyle=linestyle, color=color)
+        ax_iou.set_title(f"True positive: IOU > {iou_threshold}", fontsize=20)
+        ax_iou.set_xlabel("Recall", fontsize=20)
+        ax_iou.set_ylabel("Precision", fontsize=20)
+        ax_iou.tick_params(axis='both', labelsize=20)
+        ax_iou.grid(True, alpha=0.3)
+
+        thresh_parts = []
+        for k, v in pose_error_thresholds.items():
+            name = label_map[k]
+            unit = " mm" if k in {"x", "y", "z"} else "°"
+            val = int(round(v * 1000)) if unit.strip() == "mm" else int(round(v))
+            thresh_parts.append(f"{name}<{val}{unit}")
+        pose_thresh_str = ", ".join(thresh_parts)
+
+        for (label, recall, precision, color, linestyle) in pr_curves_pose:
+            ax_pose.plot(recall, precision, label=label, linewidth=2, linestyle=linestyle, color=color)
+        ax_pose.set_title(f"True positive: Pose error thresholds\n({pose_thresh_str})", fontsize=20)
+        ax_pose.set_xlabel("Recall", fontsize=20)
+        ax_pose.set_ylabel("Precision", fontsize=20)
+        ax_pose.tick_params(axis='both', labelsize=20)
+        ax_pose.grid(True, alpha=0.3)
+
+        # Add compact 2-column legends inside plot
+        ax_iou.legend(loc='best', fontsize=14, ncol=2, frameon=True)
+        ax_pose.legend(loc='best', fontsize=14, ncol=2, frameon=True)
+
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+        save_path = os.path.join(out_dir, f"Dual_PR_Curves_{score_key.replace(' ', '_')}.png")
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved dual PR curve figure: {save_path}")
+
+        # Save individual plots as well
+        save_individual_PR_curves(
+            pr_curves_iou=pr_curves_iou,
+            pr_curves_pose=pr_curves_pose,
+            score_key=score_key,
+            score_display_name=score_display_name,
+            iou_threshold=iou_threshold,
+            pose_error_thresholds=pose_error_thresholds,
+            out_dir=out_dir
+        )
+
+
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def save_individual_PR_curves(pr_curves_iou, pr_curves_pose, score_key, score_display_name, iou_threshold, pose_error_thresholds, out_dir):
+    label_map = {"x": "X", "y": "Y", "z": "Z", "a": "Roll", "b": "Yaw", "c": "Pitch"}
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- IOU-based PR Curve ---
+    fig_iou, ax_iou = plt.subplots(figsize=(12, 8))
+    for (label, recall, precision, color, linestyle) in pr_curves_iou:
+        ax_iou.plot(recall, precision, label=label, linewidth=2, linestyle=linestyle, color=color)
+    ax_iou.set_title(f"PR Curve (IOU > {iou_threshold}) for {score_display_name}", fontsize=16)
+    ax_iou.set_xlabel("Recall", fontsize=14)
+    ax_iou.set_ylabel("Precision", fontsize=14)
+    ax_iou.grid(True, alpha=0.3)
+    if pr_curves_iou:
+        ax_iou.legend(loc="lower left", fontsize=10, ncol=2)
+    fig_iou.tight_layout()
+    save_path_iou = os.path.join(out_dir, f"PR_Curve_IOU_{score_key.replace(' ', '_')}.png")
+    fig_iou.savefig(save_path_iou, dpi=300, bbox_inches='tight')
+    plt.close(fig_iou)
+
+    # --- PoseError-based PR Curve ---
+    fig_pose, ax_pose = plt.subplots(figsize=(12, 8))
+    for (label, recall, precision, color, linestyle) in pr_curves_pose:
+        # ax_pose.plot(recall, precision, label=label, linewidth=2, linestyle=linestyle, color=color)
+        # Only show AP (remove AUC from label)
+        label_ap_only = label.split(",")[0] + ")"
+        ax_pose.plot(recall, precision, label=label_ap_only, linewidth=2, linestyle=linestyle, color=color)
+
+    thresh_parts = []
+    for k, v in pose_error_thresholds.items():
+        name = label_map[k]
+        unit = " mm" if k in {"x", "y", "z"} else "°"
+        val = int(round(v * 1000)) if unit.strip() == "mm" else int(round(v))
+        thresh_parts.append(f"{name}<{val}{unit}")
+    pose_thresh_str = ", ".join(thresh_parts)
+
+    ax_pose.set_title(f"Precision-Recall Curve for Mean Mask Score (LBCV) and Image Similarity Score (PBCV) \nTrue Positive: ({pose_thresh_str}) ", fontsize=16)
+    ax_pose.set_xlabel("Recall", fontsize=14)
+    ax_pose.set_ylabel("Precision", fontsize=14)
+    ax_pose.grid(True, alpha=0.3)
+    if pr_curves_pose:
+        ax_pose.legend(loc="lower left", fontsize=10, ncol=2)
+    fig_pose.tight_layout()
+    save_path_pose = os.path.join(out_dir, f"PR_Curve_PoseError_{score_key.replace(' ', '_')}.png")
+    fig_pose.savefig(save_path_pose, dpi=300, bbox_inches='tight')
+    plt.close(fig_pose)
+
+    return save_path_iou, save_path_pose
+
+import os
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+import numpy as np
+
+def plot_ROC_and_PR_side_by_side_for_methods(
+    df_ablations,
+    ablations,
+    data_description,
+    colors,
+    out_dir,
+    iou_threshold=0.5,
+    pose_error_thresholds={"x": 0.025, "y": 0.025, "z": 0.050, "a": 15.0, "b": 15.0, "c": 30.0},
+    coplot_LBCV=True,
+    label_rename_dict=None
+):
+    """
+    For each ablation and method (PBCV, LBCV), compute and plot:
+    - ROC Curve (left) with AUC in legend
+    - Precision-Recall Curve (right) with AP in legend
+    Ground truth is defined by pose error thresholds.
+    """
+    label_map = {"x": "X", "y": "Y", "z": "Z", "a": "Roll", "b": "Yaw", "c": "Pitch"}
+
+    for ablation_idx, ablation in enumerate(ablations):
+        df_ablation = df_ablations[ablation_idx]
+        if df_ablation.empty:
+            continue
+
+        ablation_label = data_description[ablation].get("label", ablation)
+        color = colors[ablation_idx]
+
+        for method in ['PBCV', 'LBCV'] if coplot_LBCV else ['PBCV']:
+            if method == "LBCV":
+                detect_col = 'detected_LBCV'
+                score_col = 'LBCV_mean_mask_score'
+            else:
+                detect_col = 'detected_PBCV'
+                score_col = 'image_similarity_score'
+
+            prefix = f'pose_error_{method}_'
+            if detect_col not in df_ablation.columns or score_col not in df_ablation.columns:
+                continue
+
+            df_detected = df_ablation[df_ablation[detect_col] == True].copy()
+            if df_detected.empty:
+                continue
+
+            # Compute ground truth
+            err_mask = np.ones(len(df_detected), dtype=bool)
+            for key, threshold in pose_error_thresholds.items():
+                col = prefix + key
+                if col not in df_detected.columns:
+                    err_mask[:] = False
+                    break
+                err_mask &= np.abs(df_detected[col]) < threshold
+            df_detected['ground_truth'] = err_mask.astype(int)
+
+            scores = df_detected[score_col].values
+            labels = df_detected['ground_truth'].values
+            valid_mask = ~np.isnan(scores)
+            scores = scores[valid_mask]
+            labels = labels[valid_mask]
+
+            if len(np.unique(labels)) < 2:
+                print(f"Only one class in {ablation} ({method}). Skipping.")
+                continue
+
+            # ROC & PR
+            fpr, tpr, _ = roc_curve(labels, scores)
+            roc_auc = auc(fpr, tpr)
+            precision, recall, _ = precision_recall_curve(labels, scores)
+            ap_score = average_precision_score(labels, scores)
+
+            linestyle = '-' if method == 'PBCV' else '--'
+            alpha = 0.9 if method == 'PBCV' else 0.6
+
+            method_label = f"{ablation_label} ({method})"
+            if label_rename_dict and method_label in label_rename_dict:
+                method_label = label_rename_dict[method_label]
+
+            # Plotting
+            fig, (ax_roc, ax_pr) = plt.subplots(1, 2, figsize=(18, 8))
+            fig.suptitle(f"ROC & PR Curves for {method_label}", fontsize=22)
+
+            ax_roc.plot(fpr, tpr, linestyle=linestyle, color=color, linewidth=2,
+                        label=f"{method_label} (AUC = {roc_auc:.2f})", alpha=alpha)
+            ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.4, label="Random")
+            ax_roc.set_xlim([0.0, 1.0])
+            ax_roc.set_ylim([0.0, 1.05])
+            ax_roc.set_xlabel("False Positive Rate", fontsize=14)
+            ax_roc.set_ylabel("True Positive Rate", fontsize=14)
+            ax_roc.set_title("ROC Curve", fontsize=16)
+            ax_roc.grid(True, alpha=0.3)
+            ax_roc.legend(loc="lower right", fontsize=12)
+
+            ax_pr.plot(recall, precision, linestyle=linestyle, color=color, linewidth=2,
+                       label=f"{method_label} (AP = {ap_score:.2f})", alpha=alpha)
+            ax_pr.set_xlim([0.0, 1.0])
+            ax_pr.set_ylim([0.0, 1.05])
+            ax_pr.set_xlabel("Recall", fontsize=14)
+            ax_pr.set_ylabel("Precision", fontsize=14)
+
+            thresh_parts = []
+            for k, v in pose_error_thresholds.items():
+                name = label_map[k]
+                unit = " mm" if k in {"x", "y", "z"} else "°"
+                val = int(round(v * 1000)) if unit.strip() == "mm" else int(round(v))
+                thresh_parts.append(f"{name}<{val}{unit}")
+            pose_thresh_str = ", ".join(thresh_parts)
+
+            ax_pr.set_title(f"PR Curve\n(TP: {pose_thresh_str})", fontsize=16)
+            ax_pr.grid(True, alpha=0.3)
+            ax_pr.legend(loc="lower left", fontsize=12)
+
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            os.makedirs(out_dir, exist_ok=True)
+            save_name = f"ROC_PR_{method}_{ablation.replace('/', '_')}.png"
+            save_path = os.path.join(out_dir, save_name)
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"Saved ROC+PR plot: {save_path}")
+
 
 if __name__ == "__main__":
     # # --- Generate Plots ---
@@ -1054,3 +1407,28 @@ if __name__ == "__main__":
             out_dir=out_dir,
             num_thresholds=100
         )
+
+    plot_dual_precision_recall_figure_by_IOU_and_PoseError(
+        df_ablations=df_ablations,
+        ablations=ablations,
+        score_columns=score_columns,
+        data_description=data_description,
+        colors=colors,
+        out_dir=out_dir,
+        iou_threshold=0.50,
+        pose_error_thresholds={"x": 0.010, "y": 0.010, "z": 0.050, "a": 10, "b": 15.0, "c": 15.0},
+        coplot_LBCV=True,
+        label_rename_dict=label_rename_dict
+    )
+
+    # plot_ROC_and_PR_side_by_side_for_methods(
+    #     df_ablations=df_ablations,
+    #     ablations=ablations,
+    #     data_description=data_description,
+    #     colors=colors,
+    #     out_dir=out_dir,
+    #     iou_threshold=0.50,
+    #     pose_error_thresholds={"x": 0.010, "y": 0.010, "z": 0.050, "a": 10, "b": 15.0, "c": 15.0},
+    #     coplot_LBCV=True,
+    #     label_rename_dict=label_rename_dict
+    # )

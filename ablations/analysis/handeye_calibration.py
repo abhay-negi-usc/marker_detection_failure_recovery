@@ -89,7 +89,8 @@ def compute_residuals(A_list, B_list, X):
 def main(): 
     # === Load data ===
 
-    flange_poses_path = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/handeye_calibration_v6/tf_b_f.csv"
+    # flange_poses_path = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/handeye_calibration_v6/tf_b_f.csv"
+    flange_poses_path = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew/tf_b_f.csv"
     flange_poses = np.loadtxt(flange_poses_path, delimiter=',', skiprows=1).reshape(-1, 4, 4)
 
     # checkerboard calibration 
@@ -108,7 +109,8 @@ def main():
     ], dtype=float)
     distortion_coefficients = np.array([0,0,0,0,0], dtype=float)
 
-    dir_images = Path("/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/handeye_calibration_v6/images")
+    # dir_images = Path("/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/handeye_calibration_v6/images")
+    dir_images = Path("/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/skew/images")
     image_files = sorted(dir_images.glob("*.png"), key=lambda x: x.stat().st_mtime)
 
     marker_poses = [] 

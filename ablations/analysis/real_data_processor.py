@@ -108,6 +108,9 @@ class DataPoint():
     def set_LBCV_IOU(self, iou):
         self.LBCV_IOU = iou
 
+    def set_LBCV_mean_mask_score(self, mean_mask_score):
+        self.LBCV_mean_mask_score = mean_mask_score
+
     def set_PBCV_IOU(self, iou):
         self.PBCV_IOU = iou
 
@@ -385,6 +388,7 @@ class DataProcessor():
         img_tensor = self.seg_transform(image=image)["image"].unsqueeze(0).to(self.device)
         with torch.no_grad():
             seg_mask = torch.sigmoid(self.seg_model(img_tensor))
+            mean_mask_score = seg_mask.mean().item()  # Get the mean score of the segmentation mask
             seg_mask = (seg_mask > 0.5).float().cpu()
             seg_mask_img = Image.fromarray(seg_mask.squeeze().numpy().astype(np.uint8) * 255)
         if np.count_nonzero(np.array(seg_mask_img)) > detection_threshold:
@@ -392,7 +396,7 @@ class DataProcessor():
         else:
             bool_detected = False
 
-        return seg_mask_img, bool_detected
+        return seg_mask_img, bool_detected, mean_mask_score
     
     def compute_roi(self, seg, rgb):
 
@@ -566,9 +570,11 @@ class DataProcessor():
             # image = np.array(cv2.imread(os.path.join(self.dir_rgb, str(image_path)))) 
 
             if use_precomputed_segmentation: 
-                import pdb; pdb.set_trace() 
+                seg_path = os.path.join(os.path.dirname(datapoint.image_path).replace("images","LBCV_segmentation_results"), f"LBCV_segmentation_{datapoint.idx:05d}.png")
+                image_segmentation = Image.open(seg_path).convert("L")  # Load as grayscale
+                bool_detected = np.count_nonzero(np.array(image_segmentation)) > 100  # threshold for detection, can be adjusted, #NOTE: this may have to be adjusted 
             else: 
-                image_segmentation, bool_detected = self.run_LBCV_segmentation(image) 
+                image_segmentation, bool_detected, mean_mask_score = self.run_LBCV_segmentation(image) 
 
             if bool_detected: 
                 # compute segmentation IOU
@@ -601,6 +607,7 @@ class DataProcessor():
             self.datapoints[idx].set_tf_LBCV(tf_est) 
             self.datapoints[idx].set_keypoints_LBCV(keypoints_est)
             self.datapoints[idx].set_LBCV_IOU(IOU)
+            self.datapoints[idx].set_LBCV_mean_mask_score(mean_mask_score) 
 
             # hybrid method 
             if run_corners_HCV: 
@@ -642,6 +649,7 @@ class DataProcessor():
 
             # pattern hybrid method 
             if run_PBCV: 
+                print(idx)
                 # corners, area_ratio = find_segmentation_four_corners(image_seg_est_np, bound_box=False)
                 # if corners is None or image is None or image_seg_est_np is None or area_ratio<0.5 or np.count_nonzero(image_seg_est_np) < 1000:
                 #     tf_PBCV = None 
@@ -656,8 +664,9 @@ class DataProcessor():
                 if keypoints_rgb_image_space is not None and seg_mask_img_np is not None: 
                     tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
                         np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
-                        tf_est, max_iterations=10, show_iteration_images=False, max_keypoints_est_2d=72
+                        tf_est, max_iterations=10, show_iteration_images=False, max_keypoints_est_2d=72, output_final_image=True,
                     )
+                    import pdb;pdb.set_trace()
 
                     if tf_PBCV is not None:
                         harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score = compute_detection_score(
@@ -957,6 +966,7 @@ class DataProcessor():
             self.df_results.loc[idx, "tf_true_ty"] = datapoint.tf_true[1, 3]
             self.df_results.loc[idx, "tf_true_tz"] = datapoint.tf_true[2, 3]
             self.df_results.loc[idx, "detected_LBCV"] = datapoint.detected_LBCV
+            self.df_results.loc[idx, "LBCV_mean_mask_score"] = datapoint.LBCV_mean_mask_score if hasattr(datapoint, 'LBCV_mean_mask_score') else None
             self.df_results.loc[idx, "detected_HCV"] = datapoint.detected_LBCV # FIXME 
             self.df_results.loc[idx, "background_id"] = datapoint.metadata.get("background_id", None)
             self.df_results.loc[idx, "ambient_light_intensity"] = datapoint.metadata.get("ambient_light_intensity", None)
@@ -1204,6 +1214,7 @@ def main():
         "cx": 638.235,
         "cy": 360.533,
         "distortion_coefficients": np.array([0,0,0,0,0], dtype=float),
+        # "distortion_coefficients": np.array([0.17328606, -0.52955904, -0.00090532,  0.00268294,  0.46284461], dtype=float)
     } # realsense calibration 
 
     # camera_parameters = {
@@ -1235,7 +1246,7 @@ def main():
 
     # get ablation data path 
     # results in: distance_20250712, skew_20250712, truncation_20250712, underexposure_20250712, shadow_20250712, glare_20250712 
-    ablation = "glare_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
+    ablation = "underexposure_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -1253,8 +1264,8 @@ def main():
     }
 
     processor = DataProcessor(config)
-    processor.run_opencv_fiducial_marker_detection(save_results=True) 
-    processor.run_LBCV_fiducial_marker_detection(save_results=True, run_corners_HCV=True, run_PBCV=True) 
+    processor.run_opencv_fiducial_marker_detection(save_results=False) 
+    processor.run_LBCV_fiducial_marker_detection(save_results=False, run_corners_HCV=True, run_PBCV=True, use_precomputed_segmentation=False) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
 

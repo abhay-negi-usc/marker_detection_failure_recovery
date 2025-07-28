@@ -14,6 +14,8 @@ ABLATION_VARIABLE_PRETTY_NAMES = {
     "truncation": "Fraction of Marker Pixels Visible",
     "underexposure": "Ambient Light Intensity",
     "glare": "Glare Cone Angle (deg)",
+    "fraction_saturated_low_pixels": "Fraction of Pixels Saturated Low",
+    "fraction_saturated_high_pixels": "Fraction of Pixels Saturated High", 
 }
 ABLATION_VARIABLE_TITLE_NAMES = {
     "distance_to_camera": "Distance",
@@ -22,11 +24,17 @@ ABLATION_VARIABLE_TITLE_NAMES = {
     "truncation": "Fraction Visible",
     "underexposure": "Underexposure",
     "mean_marker_pixel_brightness": "Underexposure",
-    "glare": "Glare Cone Angle",
+    # "glare": "Glare Cone Angle",
     "fraction_saturated_low_pixels": "Shadowing",
     "fraction_saturated_high_pixels": "Glare", 
 }
 
+bar_colors = {
+    'CCV': '#FF8888',
+    'HCV': '#FF595E',
+    'LBCV': '#3594cc',
+    'PBCV': '#05af6b'
+}
 
 class Plotter():
     def __init__(self, config, global_ranges):
@@ -36,12 +44,12 @@ class Plotter():
         self.df_data = pd.read_csv(self.config["results_path"])
         # self.global_ranges = global_ranges
         self.global_ranges = {
-            "x": 50,
-            "y": 50,
-            "z": 100,
-            "a": 30.0,  # Pitch error in degrees
-            "b": 30.0,  # Yaw error in degrees
-            "c": 30.0   # Roll error in degrees
+            "x": 5,
+            "y": 5,
+            "z": 10,
+            "a": 5.0,  # Pitch error in degrees
+            "b": 10.0,  # Yaw error in degrees
+            "c": 10.0   # Roll error in degrees
         }
 
         # Determine which methods to plot based on ablation name
@@ -238,9 +246,11 @@ class Plotter():
         plt.savefig(os.path.join(self.output_dir, f"{ablation_variable}_IOU_scatter.png"))
         plt.close()
 
-    def detection_and_IOU_plot(self, ablation_variable, n_bins=10, save_central=False):
+    def detection_and_IOU_plot(self, ablation_variable, n_bins=10, save_central=False, IOU_threshold=0.5):
         """
-        Create a 1x2 figure: left = detection rate bar plot, right = mean IOU bar plot.
+        Create a 1x2 figure:
+        - Left: true positive rate (for CCV, LBCV, PBCV using IOU > IOU_threshold)
+        - Right: mean IOU per method
         """
         ablation_variable_pretty = ABLATION_VARIABLE_PRETTY_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
         ablation_variable_title = ABLATION_VARIABLE_TITLE_NAMES.get(ablation_variable, ablation_variable.replace("_", " ").title())
@@ -258,14 +268,20 @@ class Plotter():
         bin_label_mapping = {i: bin_labels[i] for i in range(len(bin_labels))}
         self.df_data[f'{bin_name}_numeric'] = self.df_data[bin_name].cat.codes
 
-        # --- Detection plot aggregation ---
+        # --- True positive filtering ---
+        self.df_data['tp_CCV'] = self.df_data['detected_CCV'] if self.config.get("plot_CCV", False) else False
+        if self.config.get("plot_LBCV", False):
+            self.df_data['tp_LBCV'] = (self.df_data['detected_LBCV'] == True) & (self.df_data['LBCV_IOU'] > IOU_threshold)
+        if self.config.get("plot_PBCV", False):
+            self.df_data['tp_PBCV'] = (self.df_data['detected_PBCV'] == True) & (self.df_data['PBCV_IOU'] > IOU_threshold)
         aggregation_dict = {
-            'detected_CCV': 'mean' if self.config.get("plot_CCV", False) else None,
-            'detected_LBCV': 'mean' if self.config.get("plot_LBCV", False) else None,
-            'detected_HCV': 'mean' if self.config.get("plot_HCV", False) else None,
-            'detected_PBCV': 'mean' if self.config.get("plot_PBCV", False) else None
+            'tp_CCV': 'mean' if self.config.get("plot_CCV", False) else None,
+            'tp_LBCV': 'mean' if self.config.get("plot_LBCV", False) else None,
+            'tp_PBCV': 'mean' if self.config.get("plot_PBCV", False) else None
         }
         aggregation_dict = {k: v for k, v in aggregation_dict.items() if v is not None}
+
+
 
         grouped_data = self.df_data.groupby(f'{bin_name}_numeric').agg(aggregation_dict).reset_index()
         grouped_data['bin_label'] = grouped_data[f'{bin_name}_numeric'].map(bin_label_mapping)
@@ -273,53 +289,87 @@ class Plotter():
         # Prepare methods to plot
         methods_to_plot = []
         if self.config.get("plot_CCV", False):
-            methods_to_plot.append('detected_CCV')
+            methods_to_plot.append('tp_CCV')
         if self.config.get("plot_LBCV", False):
-            methods_to_plot.append('detected_LBCV')
-        # if self.config.get("plot_HCV", False):
-        #     methods_to_plot.append('detected_HCV')
+            methods_to_plot.append('tp_LBCV')
         if self.config.get("plot_PBCV", False):
-            methods_to_plot.append('detected_PBCV')
-
-        melted_data = grouped_data.melt(id_vars=['bin_label'], value_vars=methods_to_plot, 
-                                        var_name='Method', value_name='Detection_Rate')
+            methods_to_plot.append('tp_PBCV')
 
         method_mapping = {
-            'detected_CCV': 'CCV',
-            'detected_LBCV': 'LBCV',
-            # 'detected_HCV': 'HCV',
-            'detected_PBCV': 'PBCV'
+            'tp_CCV': 'CCV',
+            'tp_LBCV': 'LBCV',
+            'tp_PBCV': 'PBCV'
         }
+
+        melted_data = grouped_data.melt(id_vars=['bin_label'], value_vars=methods_to_plot, 
+                                 var_name='Method', value_name='True_Positive_Rate')
         melted_data['Method'] = melted_data['Method'].map(method_mapping)
 
+
         # --- IOU plot aggregation ---
-        grouped_iou = self.df_data.groupby(f'{bin_name}_numeric').agg({
-            'LBCV_IOU': 'mean'
-        }).reset_index()
+        iou_agg_dict = {}
+        if 'LBCV_IOU' in self.df_data.columns and self.config.get("plot_LBCV", False):
+            iou_agg_dict['LBCV_IOU'] = 'mean'
+        if 'PBCV_IOU' in self.df_data.columns and self.config.get("plot_PBCV", False):
+            iou_agg_dict['PBCV_IOU'] = 'mean'
+
+        grouped_iou = self.df_data.groupby(f'{bin_name}_numeric').agg(iou_agg_dict).reset_index()
         grouped_iou['bin_label'] = grouped_iou[f'{bin_name}_numeric'].map(bin_label_mapping)
+
+        # Melt for seaborn
+        iou_melted = grouped_iou.melt(id_vars='bin_label', value_name='Mean_IOU', var_name='Method')
+        iou_melted['Method'] = iou_melted['Method'].map({
+            'LBCV_IOU': 'LBCV',
+            'PBCV_IOU': 'PBCV'
+        })
 
         # --- Create figure ---
         fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        fig.suptitle(f'Detection Estimation Performance vs {ablation_variable_title}', fontsize=24)
 
         # --- Detection bar plot ---
-        sns.barplot(x='bin_label', y='Detection_Rate', hue='Method', data=melted_data, ax=axes[0])
+        # sns.barplot(x='bin_label', y='Detection_Rate', hue='Method', data=melted_data, ax=axes[0])
+        sns.barplot(
+            x='bin_label',
+            y='True_Positive_Rate',
+            hue='Method',
+            data=melted_data,
+            ax=axes[0],
+            palette=bar_colors,
+            alpha=0.9
+        )
+        axes[0].set_ylabel('True Positive Rate', fontsize=24)
+
         axes[0].set_xlabel(f'{ablation_variable_pretty}', fontsize=24)
         axes[0].set_ylabel('Detection Rate', fontsize=24)
-        axes[0].set_title(f'Detection Rate vs {ablation_variable_title}', fontsize=28)
+        # axes[0].set_title(f'Detection Rate vs {ablation_variable_title}', fontsize=28)
         axes[0].tick_params(axis='x', rotation=45, labelsize=16)
         axes[0].tick_params(axis='y', labelsize=16)
         axes[0].legend(fontsize=16)
         axes[0].grid(True, alpha=0.3)
 
         # --- IOU bar plot ---
-        sns.barplot(x='bin_label', y='LBCV_IOU', data=grouped_iou, ax=axes[1], color='orange')
+        # sns.barplot(x='bin_label', y='Mean_IOU', hue='Method', data=iou_melted, ax=axes[1])
+        sns.barplot(
+            x='bin_label',
+            y='Mean_IOU',
+            hue='Method',
+            data=iou_melted,
+            ax=axes[1],
+            palette=bar_colors,
+            alpha=0.9
+        )
         axes[1].set_xlabel(f'{ablation_variable_pretty}', fontsize=24)
         axes[1].set_ylabel('Mean Segmentation IOU', fontsize=24)
-        axes[1].set_title(f'Mean Segmentation IOU vs {ablation_variable_title}', fontsize=28)
+        # axes[1].set_title(f'Mean Segmentation IOU vs {ablation_variable_title}', fontsize=28)
         axes[1].tick_params(axis='x', rotation=45, labelsize=16)
         axes[1].tick_params(axis='y', labelsize=16)
         axes[1].set_ylim(0, 1)
+        # Adjust legend on second plot
+        legend_iou = axes[1].legend(fontsize=16)
+        legend_iou.set_title(None)  # Remove legend title
         axes[1].grid(True, alpha=0.3)
+
 
         plt.tight_layout()
 
@@ -337,7 +387,16 @@ class Plotter():
 
         # --- Save IOU plot as separate figure ---
         fig_iou, ax_iou = plt.subplots(1, 1, figsize=(10, 6))
-        sns.barplot(x='bin_label', y='LBCV_IOU', data=grouped_iou, ax=ax_iou, color='orange')
+        # sns.barplot(x='bin_label', y='Mean_IOU', hue='Method', data=iou_melted, ax=ax_iou)
+        sns.barplot(
+            x='bin_label',
+            y='Mean_IOU',
+            hue='Method',
+            data=iou_melted,
+            ax=ax_iou,
+            palette=bar_colors,
+            alpha=0.9
+        )
         ax_iou.set_xlabel(f'{ablation_variable_pretty}', fontsize=24)
         ax_iou.set_ylabel('Mean Segmentation IOU', fontsize=24)
         ax_iou.set_title(f'Mean Segmentation IOU vs {ablation_variable_title}', fontsize=28)
@@ -506,7 +565,7 @@ class Plotter():
             ax.axhline(0, color='black', linestyle='--', linewidth=1)
             ax.grid(True)
 
-        fig.suptitle(f'Pose Estimation Error vs {ablation_variable_pretty}', fontsize=20)
+        fig.suptitle(f'Pose Estimation Performance vs {ablation_variable_pretty}', fontsize=20)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         plot_filename = f"{ablation_variable}_error_mean_std.png" 
         if self.config.get("plot_HCV", False):
@@ -564,36 +623,45 @@ class Plotter():
             # Helper function to plot for each method
             def plot_method(col_name, label_name, color=None, use_moving_mean=True, custom_window_size=None):
                 if col_name in df_sorted.columns:
+                    method_key = col_name.split('_')[2]  # "CCV", "LBCV", etc.
+                    detection_col = f'detected_{method_key}'
+                    if detection_col in df_sorted.columns:
+                        method_df = df_sorted[df_sorted[detection_col] == True].copy()
+                    else:
+                        method_df = df_sorted.copy()
+
+                    if method_df.empty:
+                        return  # nothing to plot
+
                     if use_moving_mean:
                         effective_window_size = custom_window_size if custom_window_size is not None else window_size
-                        roll_mean = df_sorted[col_name].rolling(
-                            window=effective_window_size, 
-                            center=center, 
+                        roll_mean = method_df[col_name].rolling(
+                            window=effective_window_size,
+                            center=center,
                             min_periods=min_periods,
                             win_type=win_type
                         ).mean()
-                        roll_std = df_sorted[col_name].rolling(
-                            window=effective_window_size, 
-                            center=center, 
+                        roll_std = method_df[col_name].rolling(
+                            window=effective_window_size,
+                            center=center,
                             min_periods=min_periods,
                             win_type=win_type
                         ).std()
-                        # window_label = f" (Window={effective_window_size})" if custom_window_size is not None else ""
-                        window_label=""
-                        ax.plot(x_vals, roll_mean, label=f'{label_name} (Moving Mean{window_label})', linewidth=2, color=color, alpha=0.7)
-                        ax.fill_between(x_vals, roll_mean - roll_std, roll_mean + roll_std, alpha=0.3, color=color)
+
+                        ax.plot(method_df[ablation_variable], roll_mean, label=f'{label_name} (Moving Mean)', linewidth=2, color=color, alpha=1.0)
+                        ax.fill_between(method_df[ablation_variable], roll_mean - roll_std, roll_mean + roll_std, alpha=0.5, color=color)
                     else:
-                        # Plot raw data without moving mean
-                        ax.plot(x_vals, df_sorted[col_name], label=f'{label_name} (Raw)', linewidth=1, color=color, alpha=0.7)
+                        ax.plot(method_df[ablation_variable], method_df[col_name], label=f'{label_name} (Raw)', linewidth=1, color=color, alpha=1.0)
+
 
             if self.config.get("plot_CCV", False):
-                plot_method(col_CCV, "CCV", color='blue', use_moving_mean=not ccv_no_moving_mean, custom_window_size=ccv_window_size)
+                plot_method(col_CCV, "CCV", color=bar_colors['CCV'], use_moving_mean=not ccv_no_moving_mean, custom_window_size=ccv_window_size)
             if self.config.get("plot_HCV", False):
-                plot_method(col_HCV, "HCV", color='green', use_moving_mean=True, custom_window_size=None)
+                plot_method(col_HCV, "HCV", color=bar_colors['HCV'], use_moving_mean=True, custom_window_size=None)
             if self.config.get("plot_LBCV", False):
-                plot_method(col_LBCV, "LBCV", color='orange', use_moving_mean=True, custom_window_size=None)
+                plot_method(col_LBCV, "LBCV", color=bar_colors['LBCV'], use_moving_mean=True, custom_window_size=None)
             if self.config.get("plot_PBCV", False):
-                plot_method(col_PBCV, "PBCV", color='red', use_moving_mean=True, custom_window_size=None)
+                plot_method(col_PBCV, "PBCV", color=bar_colors['PBCV'], use_moving_mean=True, custom_window_size=None)
 
             # Labeling
             if err_type in ['x', 'y', 'z']:
@@ -610,9 +678,41 @@ class Plotter():
             ax.tick_params(axis='both', labelsize=20)
 
             if i == 0:
-                ax.legend(fontsize=20)
+                ax.legend(fontsize=20, loc='best')
 
-            ax.set_ylim(-self.global_ranges[err_type], self.global_ranges[err_type])
+            # Determine observed min/max from plotted shaded areas
+            observed_min = float('inf')
+            observed_max = float('-inf')
+
+            for method_col in [col_CCV, col_HCV, col_LBCV, col_PBCV]:
+                method_key = method_col.split('_')[2]
+                detection_col = f'detected_{method_key}'
+                if method_col in df_sorted.columns and self.config.get(f"plot_{method_key}", False):
+                    method_df = df_sorted[df_sorted[detection_col] == True].copy()
+                    if method_df.empty:
+                        continue
+                    window = ccv_window_size if method_col == col_CCV and not ccv_no_moving_mean else window_size
+                    roll_mean = method_df[method_col].rolling(
+                        window=window, center=center, min_periods=min_periods, win_type=win_type
+                    ).mean()
+                    roll_std = method_df[method_col].rolling(
+                        window=window, center=center, min_periods=min_periods, win_type=win_type
+                    ).std()
+                    lower = (roll_mean - roll_std).min()
+                    upper = (roll_mean + roll_std).max()
+                    observed_min = min(observed_min, lower)
+                    observed_max = max(observed_max, upper)
+
+            # Use global_ranges if all data is inside the range, else fall back to observed range
+            global_limit = self.global_ranges[err_type]
+            if observed_min >= -global_limit and observed_max <= global_limit:
+                ax.set_ylim(-global_limit, global_limit)
+            else:
+                margin = 0.05 * (observed_max - observed_min) if observed_max > observed_min else 1e-3
+                ax.set_ylim(observed_min - margin, observed_max + margin)
+
+
+
             # # Dynamically set scale based on global ranges or mean ± 1 std
             # if err_type in ['x', 'y', 'z']:
             #     if ablation_variable == "fraction_marker_visible": 
@@ -875,12 +975,16 @@ class Plotter():
     def save_summary_table(self, ablation_variable):
         """
         Save a summary table to CSV with the following columns:
-        method (CCV, LBCV with CCV success, LBCV with CCV fail),
-        detection rate, X MAE +/- std dev (mm), Y MAE +/- std dev (mm),
-        Z MAE +/- std dev (mm), Pitch MAE +/- std dev (deg),
-        Yaw MAE +/- std dev (deg), Roll MAE +/- std dev (deg).
+        method (e.g., CCV, LBCV with CCV success, PBCV with CCV fail, ...),
+        detection rate, true positive detection rate,
+        MAE ± std dev (mm or deg) for x, y, z, a, b, c.
         """
-        methods = ["CCV", "LBCV with CCV success", "LBCV with CCV fail", "LBCV", "HCV with CCV success", "HCV with CCV fail", "HCV", "PBCV"]
+        methods = [
+            "CCV",
+            "LBCV with CCV success", "LBCV with CCV fail", "LBCV",
+            "HCV with CCV success", "HCV with CCV fail", "HCV",
+            "PBCV with CCV success", "PBCV with CCV fail", "PBCV"
+        ]
         summary_data = []
 
         for method in methods:
@@ -898,32 +1002,53 @@ class Plotter():
                 mask = (self.df_data['detected_CCV'] == 0) & (self.df_data['detected_HCV'] == 1)
             elif method == "HCV":
                 mask = self.df_data['detected_HCV'] == 1
+            elif method == "PBCV with CCV success":
+                mask = (self.df_data['detected_PBCV'] == 1) & (self.df_data['detected_CCV'] == 1)
+            elif method == "PBCV with CCV fail":
+                mask = (self.df_data['detected_PBCV'] == 1) & (self.df_data['detected_CCV'] == 0)
             elif method == "PBCV":
                 mask = self.df_data['detected_PBCV'] == 1
 
             filtered_data = self.df_data[mask]
             detection_rate = mask.mean()
 
-            # Calculate MAE and standard deviation for each error type
-            error_stats = {}
-            if method == "CCV":
-                method_type = "CCV"
-            elif "LBCV" in method:
+            # Determine method type
+            if "LBCV" in method:
                 method_type = "LBCV"
             elif "HCV" in method:
                 method_type = "HCV"
             elif "PBCV" in method:
                 method_type = "PBCV"
+            else:
+                method_type = "CCV"
+
+            # Compute TP detection rate
+            if method_type == "LBCV":
+                tp_mask = filtered_data['LBCV_IOU'] > 0.5
+            elif method_type == "PBCV":
+                tp_mask = filtered_data['PBCV_IOU'] > 0.5
+            elif method_type == "CCV":
+                tp_mask = filtered_data['detected_CCV'] == 1
+            else:
+                tp_mask = pd.Series(False, index=filtered_data.index)  # fallback
+
+            tp_detection_rate = tp_mask.mean()
+
+            # Compute MAE and Std Dev for errors
+            error_stats = {}
             for err_type in ['x', 'y', 'z', 'a', 'b', 'c']:
                 col_name = f'pose_error_{method_type}_{err_type}'
                 mae = filtered_data[col_name].abs().mean()
                 std_dev = filtered_data[col_name].abs().std()
                 unit = "mm" if err_type in ['x', 'y', 'z'] else "deg"
-                error_stats[err_type] = f"{mae * 1000:.2f} ± {std_dev * 1000:.2f}" if unit == "mm" else f"{mae:.2f} ± {std_dev:.2f}"
+                error_stats[err_type] = (
+                    f"{mae * 1000:.2f} ± {std_dev * 1000:.2f}" if unit == "mm" else f"{mae:.2f} ± {std_dev:.2f}"
+                )
 
             summary_data.append([
                 method,
                 f"{detection_rate:.2%}",
+                f"{tp_detection_rate:.2%}",
                 error_stats['x'],
                 error_stats['y'],
                 error_stats['z'],
@@ -932,10 +1057,11 @@ class Plotter():
                 error_stats['c']
             ])
 
-        # Create a DataFrame for the summary table
+        # Build final DataFrame
         summary_df = pd.DataFrame(summary_data, columns=[
             "Method",
             "Detection Rate",
+            "True Positive Detection Rate",
             "X MAE ± Std Dev (mm)",
             "Y MAE ± Std Dev (mm)",
             "Z MAE ± Std Dev (mm)",
@@ -944,10 +1070,11 @@ class Plotter():
             "Roll MAE ± Std Dev (deg)"
         ])
 
-        # Save the summary table to a CSV file
+        # Save
         output_path = os.path.join(self.output_dir, f"{ablation_variable}_summary_table.csv")
         summary_df.to_csv(output_path, index=False)
         print(f"Summary table saved to {output_path}")
+
 
     def combined_plot(self, ablation_variable, n_bins=10, coplot_blank_background=False, save_central=False):
         """
@@ -1268,9 +1395,10 @@ class Plotter():
         print(f"Refiltered data from {len_pre_filter} to {len(self.df_data)} entries based on thresholds.")
 
 if __name__ == "__main__":
-    # ablations = ["truncation_20250712", "underexposure_20250712", "shadow_20250712","glare_20250712"] 
-    ablations = ["glare_20250712"]
-    # ablations = ["distance_20250712","skew_20250712","truncation_20250712","underexposure_20250712","glare_20250712","shadow_20250712"]
+
+    ablations = ["distance_20250712","skew_20250712","truncation_20250712","underexposure_20250712","glare_20250712","shadow_20250712"] 
+    # ablations = ["glare_20250712"] 
+    
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f)
@@ -1313,11 +1441,11 @@ if __name__ == "__main__":
 
         plotter_instance = Plotter(config, global_ranges)
 
-        plotter_instance.refilter_PBCV_detection(harris_corner_response_thresh = 0.0, num_valid_proj_points_thresh = 1, tf_PBCV_tz_thresh = 10, image_similarity_thresh = 0)
+        plotter_instance.refilter_PBCV_detection(harris_corner_response_thresh = 0.0, num_valid_proj_points_thresh = 0, tf_PBCV_tz_thresh = 10, image_similarity_thresh = 20_000)
         plotter_instance.save_summary_table(ablation_variable)
         # plotter_instance.detection_plot(ablation_variable, coplot_blank_background=False, save_central=True)
         # plotter_instance.IOU_plot(ablation_variable)
-        plotter_instance.detection_and_IOU_plot(ablation_variable, n_bins=10, save_central=True)
+        plotter_instance.detection_and_IOU_plot(ablation_variable, n_bins=10, save_central=True, IOU_threshold=0.50)
         # plotter_instance.error_plot(ablation_variable)
         # plotter_instance.error_ridge_plots(ablation_variable, n_ablation_bins=10, plot_CCV=True)
         plotter_instance.err_mean_std_plot(ablation_variable, coplot_blank_background=False, save_central=True)

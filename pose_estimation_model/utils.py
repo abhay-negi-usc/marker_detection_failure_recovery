@@ -263,7 +263,7 @@ def transform_points_image_space_to_cartesian_space(keypoints_image_space, tf_es
 def refine_pose_icp_3d2d_auto_match(
     image_np, keypoints_ref_3d, keypoints_est_2d, camera_matrix, tf_init=None, dist_coeffs=None, 
     max_iterations=20, max_keypoints_est_2d=100, outlier_percentile=90,
-    show_iteration_images=False, plot_residual=False, plot_estimate=False
+    show_iteration_images=False, plot_residual=False, plot_estimate=False, output_final_image=False
 ):
     """
     Refine camera pose using 3D points and 2D image points, with optional outlier removal.
@@ -360,6 +360,16 @@ def refine_pose_icp_3d2d_auto_match(
                 plt.title(f'Iteration {i}, Residual: {mean_residual:.4f}')
                 plt.axis('off')
                 plt.show()
+
+            if output_final_image and i == max_iterations - 1:
+                img_overlay = overlay_3D_points_on_image(
+                    image_np, matched_3d_inliers, camera_matrix, tf_est, 
+                    color=(0, 255, 0), radius=5
+                )
+                # save image
+                output_image_path = "./ablations/analysis/real_exp/final_overlay_image.png"
+                cv2.imwrite(output_image_path, img_overlay)
+                print(f"Final overlay image saved to {output_image_path}")
 
         else:
             print(f"Iteration {i}: Not enough inlier points to solvePnP.")
