@@ -1,6 +1,6 @@
 import torch
 import torchvision
-from .dataset import MarkersDataset
+from .dataset import MarkersDatasetGrayscale
 from torch.utils.data import DataLoader
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
@@ -22,7 +22,7 @@ def get_loaders(
     num_workers=4,
     pin_memory=True,
 ):
-    train_ds = MarkersDataset(
+    train_ds = MarkersDatasetGrayscale(
         image_dir=train_dir,
         mask_dir=train_maskdir,
         transform=train_transform,
@@ -36,7 +36,7 @@ def get_loaders(
         shuffle=True,
     )
 
-    val_ds = MarkersDataset(
+    val_ds = MarkersDatasetGrayscale(
         image_dir=val_dir,
         mask_dir=val_maskdir,
         transform=val_transform,

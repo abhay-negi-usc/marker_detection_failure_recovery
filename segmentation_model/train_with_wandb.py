@@ -4,7 +4,8 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm 
 import torch.nn as nn 
 import torch.optim as optim 
-from segmentation_model.model import UNETWithDropout
+# from segmentation_model.model import UNETWithDropout
+from segmentation_model.model import UNETWithDropoutMini
 from segmentation_model.utils import (
     load_checkpoint, 
     save_checkpoint, 
@@ -15,26 +16,25 @@ from segmentation_model.utils import (
 import os 
 import wandb
 
-DATA_DIR = "./segmentation_model/data/data_20250607-214821/" 
+DATA_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/data/data_20250327-173029/"
 TRAIN_IMG_DIR = f"{DATA_DIR}/train/rgb"
 TRAIN_MASK_DIR = f"{DATA_DIR}/train/seg"
 VAL_IMG_DIR = f"{DATA_DIR}/val/rgb"
 VAL_MASK_DIR = f"{DATA_DIR}/val/seg"
-# SAVE_DIR = "./segmentation_model/models/"
 SAVE_DIR = "/home/nom4d/marker_ws/segmentation_checkpoints/"
-LOAD_DIR = "/home/nom4d/marker_ws/segmentation_checkpoints/"
 SAVE_FREQ = 1000 
 
-LEARNING_RATE = 1e-8 
+LEARNING_RATE = 1e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 4 
+BATCH_SIZE = 16 
 NUM_EPOCHS = 1000
 num_epoch_dont_save = 0 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = True                            
+LOAD_MODEL = False
+LOAD_CHECKPOINT_PATH = "my_checkpoint_minimodel_epoch_0.pth.tar"              
 
 def train_fn(loader, model, optimizer, loss_fn, scaler, epoch): 
     loop = tqdm(loader) # progress bar 
@@ -70,7 +70,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler, epoch):
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar")
-            }, os.path.join(SAVE_DIR, f"my_checkpoint_multimarker_epoch_{epoch}_batch_{batch_idx}.pth.tar"))
+            }, os.path.join(SAVE_DIR, f"my_checkpoint_minimodel_epoch_{epoch}_batch_{batch_idx}.pth.tar"))
 
     # Log average training loss to wandb
     avg_loss = epoch_loss / len(loader)
@@ -103,7 +103,7 @@ def main():
         ]
     )
 
-    model = UNETWithDropout(in_channels=3, out_channels=1).to(DEVICE) 
+    model = UNETWithDropoutMini(in_channels=1, out_channels=1).to(DEVICE) 
     
     loss_fn = nn.BCEWithLogitsLoss() 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -122,7 +122,7 @@ def main():
 
     if LOAD_MODEL: 
         # load_checkpoint(torch.load("./segmentation_model/models/my_checkpoint_20250329.pth.tar"), model)
-        load_checkpoint(torch.load(os.path.join(LOAD_DIR,"my_checkpoint_multimarker_epoch_0_batch_9000.pth.tar")), model)
+        load_checkpoint(torch.load(os.path.join(LOAD_CHECKPOINT_PATH)), model)
         accuracy = 0.0
     else: 
         accuracy = 0.0 
@@ -148,10 +148,10 @@ def main():
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             # }, f"./segmentation_model/models/my_checkpoint_multimarker_epoch_{epoch}.pth.tar")  # Save with epoch and accuracy
-            }, os.path.join(SAVE_DIR, f"my_checkpoint_multimarker_epoch_{epoch}.pth.tar"))  # Save with epoch and accuracy
+            }, os.path.join(SAVE_DIR, f"my_checkpoint_minimodel_epoch_{epoch}.pth.tar"))  # Save with epoch and accuracy
 
             # Optionally save some predictions
-            saved_images_dir = "./segmentation_model/training_validation_images/" 
+            saved_images_dir = "/home/nom4d/marker_ws/segmentation_data/training_validation_images/" 
             os.makedirs(saved_images_dir, exist_ok=True)
             save_predictions_as_imgs(
                 val_loader, model, folder=saved_images_dir, device=DEVICE, num_datapoints=10
@@ -162,7 +162,7 @@ if __name__ == "__main__":
     wandb.init(
         config={
             "wandb_key": "9336a0a286df1f392970fb1192519ef0191ba865",
-            "wandb_project": "multimarker_segmentation", 
+            "wandb_project": "segmentation_mini_model", 
             "wandb_entity": "abhay-negi-usc-university-of-southern-california", 
             "learning_rate": LEARNING_RATE,
             "batch_size": BATCH_SIZE,
