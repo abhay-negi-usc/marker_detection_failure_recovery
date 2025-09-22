@@ -12,7 +12,7 @@ from albumentations import Compose, Normalize
 from albumentations.pytorch import ToTensorV2
 import yaml 
 
-from segmentation_model.model import UNETWithDropout
+from segmentation_model.model import UNETWithDropout, UNETWithDropoutMini
 from segmentation_model.utils import load_checkpoint as load_seg_ckpt
 from keypoints_model.model import RegressorMobileNetV3
 from keypoints_model.utils import load_checkpoint as load_kp_ckpt
@@ -153,6 +153,15 @@ class DataPoint():
     def set_detected_PBCV(self, bool_detected):
         self.detected_PBCV = bool_detected
 
+    def set_keypoints_PBCV_matched(self, matched_keypoints):
+        """
+        Set the PBCV keypoints that were successfully matched during RANSAC pose estimation.
+        
+        Args:
+            matched_keypoints: Array of matched keypoints in image space (N x 2)
+        """
+        self.keypoints_PBCV_matched = matched_keypoints
+
     def set_detection_scores(self, harris_corner_response_score=None, num_valid_proj_points=None, keypoint_residual_score=None, detection_score=None):
         self.harris_corner_response_score = harris_corner_response_score
         self.num_valid_proj_points = num_valid_proj_points 
@@ -198,6 +207,235 @@ class DataPoint():
             self.corners_true = square_corners_2d  # shape (4, 2)
 
             return self.corners_true 
+
+    def _draw_alpha_polygon(self, image, points, color, thickness, alpha=0.7):
+        """
+        Draw a polygon with alpha transparency so overlapping borders are visible.
+        
+        Args:
+            image: The image to draw on
+            points: Array of points forming the polygon (shape: N x 2)
+            color: BGR color tuple
+            thickness: Line thickness
+            alpha: Alpha transparency value (0.0 = transparent, 1.0 = opaque)
+        """
+        # Create an overlay image for alpha blending
+        overlay = image.copy()
+        
+        # Draw the polygon on the overlay
+        points = np.array(points, dtype=np.int32)
+        cv2.polylines(overlay, [points], isClosed=True, color=color, thickness=thickness)
+        
+        # Blend the overlay with the original image using alpha
+        cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+
+    def draw_marker_borders_from_poses(self, output_path=None, draw_lbcv=True, draw_pbcv=True, 
+                                     lbcv_color=(0, 255, 0), pbcv_color=(0, 0, 255), 
+                                     true_color=(255, 0, 0), line_thickness=2, alpha=0.7):
+        """
+        Draw marker borders on the original image using reprojection from LBCV and PBCV pose estimates.
+        Uses alpha transparency so overlapping borders are visible.
+        
+        Args:
+            output_path (str, optional): Path to save the output image. If None, returns the image array.
+            draw_lbcv (bool): Whether to draw LBCV pose estimate border (default: True)
+            draw_pbcv (bool): Whether to draw PBCV pose estimate border (default: True)
+            lbcv_color (tuple): BGR color for LBCV border (default: green)
+            pbcv_color (tuple): BGR color for PBCV border (default: red)
+            true_color (tuple): BGR color for CCV mean corners border (default: blue)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.7)
+            
+        Returns:
+            numpy.ndarray: Image with drawn borders (if output_path is None)
+        """
+        if not hasattr(self, 'image_path') or self.image_path is None:
+            raise ValueError("Image path not set for this DataPoint.")
+        
+        # Load the original image
+        image = cv2.imread(self.image_path)
+        if image is None:
+            raise ValueError(f"Could not load image from {self.image_path}")
+        
+        # Draw CCV mean corners border if available (used as reference/true pose)
+        if hasattr(self, 'mean_corners_CCV') and self.mean_corners_CCV is not None:
+            corners_mean_ccv_int = np.array(self.mean_corners_CCV, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_mean_ccv_int, true_color, line_thickness, alpha)
+        
+        # Draw LBCV pose estimate border
+        if draw_lbcv and hasattr(self, 'tf_LBCV') and self.tf_LBCV is not None:
+            # Project marker corners using LBCV pose estimate
+            corners_lbcv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_LBCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_lbcv_int = np.array(corners_lbcv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_lbcv_int, lbcv_color, line_thickness, alpha)
+        
+        # Draw PBCV pose estimate border
+        if draw_pbcv and hasattr(self, 'tf_PBCV') and self.tf_PBCV is not None:
+            # Project marker corners using PBCV pose estimate
+            corners_pbcv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_PBCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_pbcv_int = np.array(corners_pbcv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_pbcv_int, pbcv_color, line_thickness, alpha)
+        
+        # Save or return the image
+        if output_path is not None:
+            cv2.imwrite(output_path, image)
+            print(f"Image with marker borders saved to: {output_path}")
+        else:
+            return image
+
+    def draw_pose_comparison_visualization(self, output_path=None, 
+                                         ccv_color=(0, 0, 255), lbcv_color=(255, 0, 0), pbcv_color=(0, 255, 0),
+                                         keypoint_color=(0, 255, 0), line_thickness=2, keypoint_radius=3, alpha=0.7):
+        """
+        Draw a comprehensive pose comparison visualization with:
+        - Red borders for CCV pose estimates
+        - Blue borders for LBCV pose estimates  
+        - Green borders for PBCV pose estimates
+        - Green keypoints overlay for PBCV matched keypoints
+        Uses alpha transparency so overlapping borders are visible.
+        
+        Args:
+            output_path (str, optional): Path to save the output image. If None, returns the image array.
+            ccv_color (tuple): BGR color for CCV border (default: red)
+            lbcv_color (tuple): BGR color for LBCV border (default: blue)
+            pbcv_color (tuple): BGR color for PBCV border (default: green)
+            keypoint_color (tuple): BGR color for PBCV keypoints (default: green)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            keypoint_radius (int): Radius of keypoint circles (default: 3)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.7)
+            
+        Returns:
+            numpy.ndarray: Image with drawn borders and keypoints (if output_path is None)
+        """
+        if not hasattr(self, 'image_path') or self.image_path is None:
+            raise ValueError("Image path not set for this DataPoint.")
+        
+        # Load the original image
+        image = cv2.imread(self.image_path)
+        if image is None:
+            raise ValueError(f"Could not load image from {self.image_path}")
+        
+        # Draw CCV pose border (red)
+        if hasattr(self, 'tf_CCV') and self.tf_CCV is not None:
+            corners_ccv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_CCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_ccv_int = np.array(corners_ccv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_ccv_int, ccv_color, line_thickness, alpha)
+        
+        # Draw LBCV pose border (blue)
+        if hasattr(self, 'tf_LBCV') and self.tf_LBCV is not None:
+            corners_lbcv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_LBCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_lbcv_int = np.array(corners_lbcv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_lbcv_int, lbcv_color, line_thickness, alpha)
+        
+        # Draw PBCV pose border (green)
+        if hasattr(self, 'tf_PBCV') and self.tf_PBCV is not None:
+            corners_pbcv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_PBCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_pbcv_int = np.array(corners_pbcv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_pbcv_int, pbcv_color, line_thickness, alpha)
+        
+        # Overlay PBCV keypoints (green circles)
+        if hasattr(self, 'keypoints_PBCV') and self.keypoints_PBCV is not None:
+            for keypoint in self.keypoints_PBCV:
+                # keypoint should be in format [x, y] or [x, y, confidence]
+                if len(keypoint) >= 2:
+                    x, y = int(keypoint[0]), int(keypoint[1])
+                    # Check if keypoint is within image bounds
+                    if 0 <= x < image.shape[1] and 0 <= y < image.shape[0]:
+                        cv2.circle(image, (x, y), keypoint_radius, keypoint_color, -1)  # -1 for filled circle
+        
+        # Save or return the image
+        if output_path is not None:
+            cv2.imwrite(output_path, image)
+            print(f"Pose comparison visualization saved to: {output_path}")
+        else:
+            return image
+
+    def draw_pbcv_matched_keypoints_visualization(self, output_path=None, 
+                                                border_color=(0, 255, 0), keypoint_color=(0, 255, 0),
+                                                line_thickness=2, keypoint_radius=4, alpha=0.8):
+        """
+        Draw visualization showing only PBCV matched keypoints (after RANSAC) along with 
+        the marker border based on PBCV pose prediction.
+        
+        Args:
+            output_path (str, optional): Path to save the output image. If None, returns the image array.
+            border_color (tuple): BGR color for PBCV pose border (default: green)
+            keypoint_color (tuple): BGR color for matched keypoints (default: green)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            keypoint_radius (int): Radius of keypoint circles (default: 4)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.8)
+            
+        Returns:
+            numpy.ndarray: Image with drawn border and matched keypoints (if output_path is None)
+        """
+        if not hasattr(self, 'image_path') or self.image_path is None:
+            raise ValueError("Image path not set for this DataPoint.")
+        
+        # Load the original image
+        image = cv2.imread(self.image_path)
+        if image is None:
+            raise ValueError(f"Could not load image from {self.image_path}")
+        
+        # Draw PBCV pose border if available
+        if hasattr(self, 'tf_PBCV') and self.tf_PBCV is not None:
+            corners_pbcv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_PBCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_pbcv_int = np.array(corners_pbcv, dtype=np.int32)
+            self._draw_alpha_polygon(image, corners_pbcv_int, border_color, line_thickness, alpha)
+        
+        # Draw matched keypoints if available
+        if hasattr(self, 'keypoints_PBCV_matched') and self.keypoints_PBCV_matched is not None:
+            for keypoint in self.keypoints_PBCV_matched:
+                if len(keypoint) >= 2:
+                    x, y = int(keypoint[0]), int(keypoint[1])
+                    # Check if keypoint is within image bounds
+                    if 0 <= x < image.shape[1] and 0 <= y < image.shape[0]:
+                        cv2.circle(image, (x, y), keypoint_radius, keypoint_color, -1)  # -1 for filled circle
+        elif hasattr(self, 'keypoints_PBCV') and self.keypoints_PBCV is not None:
+            # Fallback to all PBCV keypoints if matched keypoints not available
+            for keypoint in self.keypoints_PBCV:
+                if len(keypoint) >= 2:
+                    x, y = int(keypoint[0]), int(keypoint[1])
+                    # Check if keypoint is within image bounds
+                    if 0 <= x < image.shape[1] and 0 <= y < image.shape[0]:
+                        cv2.circle(image, (x, y), keypoint_radius, keypoint_color, -1)
+        
+        # Save or return the image
+        if output_path is not None:
+            cv2.imwrite(output_path, image)
+            print(f"PBCV matched keypoints visualization saved to: {output_path}")
+        else:
+            return image
+
 class DataProcessor(): 
     def __init__(self, config):
         self.config = config
@@ -358,6 +596,40 @@ class DataProcessor():
                     out_img = cv2.aruco.drawDetectedMarkers(out_img, corners_tuple, ids)
                 outpath = os.path.join(output_dir, f"CCV_{idx:05d}.png")
                 cv2.imwrite(str(outpath), out_img)
+        
+        # Compute mean corners from all CCV detections
+        self.compute_mean_corners_CCV()
+
+    def compute_mean_corners_CCV(self):
+        """
+        Compute the mean corners across all CCV pose results, excluding None results.
+        Stores the result in self.mean_corners_CCV for each datapoint.
+        """
+        # Collect all valid CCV corners
+        valid_corners = []
+        for datapoint in self.datapoints:
+            if hasattr(datapoint, 'corners_CCV') and datapoint.corners_CCV is not None:
+                # corners_CCV is a numpy array of shape (1, 4, 2) from the CCV detection
+                # We need to reshape it to (4, 2) to get the 4 corner points
+                corners = datapoint.corners_CCV.reshape(-1, 2)  # Shape: (4, 2)
+                if corners.shape[0] == 4:  # Ensure we have exactly 4 corners
+                    valid_corners.append(corners)
+        
+        if len(valid_corners) > 0:
+            # Stack all valid corners and compute mean
+            all_corners = np.stack(valid_corners, axis=0)  # Shape: (N, 4, 2)
+            mean_corners = np.mean(all_corners, axis=0)    # Shape: (4, 2)
+            
+            # Set mean_corners_CCV for all datapoints
+            for datapoint in self.datapoints:
+                datapoint.mean_corners_CCV = mean_corners
+            
+            logger.info(f"Computed mean corners from {len(valid_corners)} valid CCV detections")
+        else:
+            # No valid CCV corners found, set to None for all datapoints
+            for datapoint in self.datapoints:
+                datapoint.mean_corners_CCV = None
+            logger.warning("No valid CCV corners found to compute mean")
 
     def setup_models(self): 
         self.keypoints_ref = np.array(
@@ -377,6 +649,8 @@ class DataProcessor():
         ])
         self.seg_transform = Compose([Normalize(max_pixel_value=1.0), ToTensorV2()])
         self.seg_model = UNETWithDropout(in_channels=3, out_channels=1).to(self.device)
+        if self.config.get("seg_mini_model", False):
+            self.seg_model = UNETWithDropoutMini(in_channels=1, out_channels=1).to(self.device)
         load_seg_ckpt(torch.load(self.segmentation_model_path, map_location=self.device), self.seg_model)
         self.seg_model.eval()
         self.kp_transform = A.Compose([ToTensorV2()]) 
@@ -384,7 +658,118 @@ class DataProcessor():
         load_kp_ckpt(torch.load(self.keypoints_model_path, map_location=self.device), self.kp_model)
         self.kp_model.eval()
 
+    def _extract_matched_keypoints(self, keypoints_3d, keypoints_2d, tf_estimate, camera_matrix, max_reprojection_error=5.0):
+        """
+        Extract matched keypoints based on reprojection error after pose estimation.
+        This simulates RANSAC-like filtering by finding closest matches between detected keypoints
+        and projected marker corners, then keeping those with low reprojection error.
+        
+        Args:
+            keypoints_3d: 3D keypoints in marker coordinate system (N x 3) - typically marker corners
+            keypoints_2d: 2D keypoints in image space (M x 2) - detected keypoints
+            tf_estimate: Estimated transformation matrix (4 x 4)
+            camera_matrix: Camera intrinsic matrix (3 x 3)
+            max_reprojection_error: Maximum allowed reprojection error in pixels
+            
+        Returns:
+            numpy.ndarray: Matched 2D keypoints (K x 2) where K <= min(N, M)
+        """
+        if keypoints_3d is None or keypoints_2d is None or tf_estimate is None:
+            return None
+            
+        keypoints_3d = np.array(keypoints_3d)
+        keypoints_2d = np.array(keypoints_2d)
+        
+        # Project 3D keypoints (marker corners) using estimated pose
+        projected_2d = project_points_array_to_image(
+            C=camera_matrix,
+            T=tf_estimate, 
+            P_array=keypoints_3d,
+            convert_cam_is2cv=True
+        )
+        
+        print(f"Shapes: detected keypoints {keypoints_2d.shape}, projected corners {projected_2d.shape}")
+        
+        # Find closest matches between detected keypoints and projected corners
+        matched_keypoints = []
+        matched_corners = []
+        
+        for i, projected_corner in enumerate(projected_2d):
+            # Calculate distances from this projected corner to all detected keypoints
+            distances = np.linalg.norm(keypoints_2d - projected_corner, axis=1)
+            closest_idx = np.argmin(distances)
+            min_distance = distances[closest_idx]
+            
+            # Only consider it a match if the distance is below threshold
+            if min_distance < max_reprojection_error:
+                matched_keypoints.append(keypoints_2d[closest_idx])
+                matched_corners.append(projected_corner)
+        
+        matched_keypoints = np.array(matched_keypoints) if matched_keypoints else None
+        
+        if matched_keypoints is not None:
+            print(f"Matched {len(matched_keypoints)} out of {len(projected_2d)} projected corners with detected keypoints (threshold: {max_reprojection_error} pixels)")
+        else:
+            print(f"No matches found between projected corners and detected keypoints (threshold: {max_reprojection_error} pixels)")
+        
+        return matched_keypoints
+
     def run_LBCV_segmentation(self, image, detection_threshold=1000):         
+        if self.config.get("seg_mini_model", False):
+            input_size = (480, 640)  # For the mini model, we use a fixed input size, FIXME: avoid hardcoding
+            img_tensor = self.seg_transform(image=image)["image"].unsqueeze(0).to(self.device)
+            # For the mini model, we need to convert the image to grayscale
+            img_tensor = img_tensor.mean(dim=1, keepdim=True)  # Convert to grayscale by averaging channels
+            # Tile original image
+            image_tiles, image_tiles_coords = split_image_by_aspect_ratio(
+                image, M=input_size[0], N=input_size[1]
+            )
+
+            seg_tiles = []
+
+            for tile in image_tiles:
+                orig_h, orig_w = tile.shape[:2]
+
+                # Resize to model input size
+                tile_resized = cv2.resize(tile, (input_size[1], input_size[0]), interpolation=cv2.INTER_LINEAR)
+
+                # Prepare input tensor
+                seg_transform = A.Compose([
+                    A.Normalize(max_pixel_value=1.0),
+                    ToTensorV2(),
+                ])
+                transformed = seg_transform(image=tile_resized)
+                tile_tensor = transformed["image"].unsqueeze(0).to(self.device)
+
+                # convert to grayscale 
+                if tile_tensor.shape[1] == 3:
+                    tile_tensor = tile_tensor.mean(dim=1, keepdim=True)
+
+                # Predict
+                with torch.no_grad():
+                    seg_output = torch.sigmoid(self.seg_model(tile_tensor))  # shape: (1, 1, H, W)
+                    seg_mask = seg_output.squeeze().cpu().numpy()  # shape: (H, W)
+                    torch.cuda.empty_cache()
+
+                # Threshold (optional)
+                seg_mask = (seg_mask > 0.5).astype(np.uint8)
+
+                # Resize segmentation output back to original tile size
+                seg_mask_resized = cv2.resize(seg_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+
+                seg_tiles.append(seg_mask_resized)
+
+            # Stitch back
+            seg_mask = combine_tiles_and_coords(seg_tiles, image_tiles_coords, image.shape[:2])
+            mean_mask_score = seg_mask.mean().item()  # Get the mean score of the segmentation mask
+            seg_mask_img = Image.fromarray(seg_mask.squeeze().astype(np.uint8) * 255)
+            if np.count_nonzero(np.array(seg_mask_img)) > detection_threshold:
+                bool_detected = True  
+            else:
+                bool_detected = False
+
+            return seg_mask_img, bool_detected, mean_mask_score
+
         img_tensor = self.seg_transform(image=image)["image"].unsqueeze(0).to(self.device)
         with torch.no_grad():
             seg_mask = torch.sigmoid(self.seg_model(img_tensor))
@@ -656,59 +1041,80 @@ class DataProcessor():
                     # continue  
                 # quad_seg = fill_segmentation_from_polygon(image_seg_est_np.shape, corners)
                 # keypoints_rgb_image_space = find_keypoints(image, quad_seg)
-                seg_mask_img_np = segmentation_biggest_blob_filter(image_seg_est_np, min_area=1000)
-                keypoints_rgb_image_space = find_keypoints(image, seg_mask_img_np)
-                keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
-                    keypoints_marker_image_space, image_size=(img_marker.shape[0], img_marker.shape[1]), marker_size=(0.1, 0.1)
-                )
-                if keypoints_rgb_image_space is not None and seg_mask_img_np is not None: 
-                    tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
-                        np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
-                        tf_est, max_iterations=10, show_iteration_images=False, max_keypoints_est_2d=72, output_final_image=True,
-                    )
-                    import pdb;pdb.set_trace()
 
-                    if tf_PBCV is not None:
-                        harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score = compute_detection_score(
-                            image, keypoints_marker_image_space, keypoints_marker_cartesian_space, tf_PBCV, self.camera_matrix, self.dist_coeffs, 
-                            harris_corner_response_weight=1.0, keypoint_residual_score_weight=1.0
+                if bool_detected:
+
+                    seg_mask_img_np = segmentation_biggest_blob_filter(image_seg_est_np, min_area=1000)
+                    keypoints_rgb_image_space = find_keypoints(image, seg_mask_img_np)
+                    keypoints_marker_cartesian_space = convert_marker_keypoints_to_cartesian(
+                        keypoints_marker_image_space, image_size=(img_marker.shape[0], img_marker.shape[1]), marker_size=(0.1, 0.1)
+                    )
+                    if keypoints_rgb_image_space is not None and seg_mask_img_np is not None: 
+                        tf_PBCV, residual = refine_pose_icp_3d2d_auto_match(
+                            np.array(image), keypoints_marker_cartesian_space, keypoints_rgb_image_space, self.camera_matrix,
+                            tf_est, max_iterations=10, show_iteration_images=False, max_keypoints_est_2d=72, output_final_image=True,
                         )
-                        image_similarity_score = compute_image_similarity_score(image, img_marker, self.marker_length, tf_PBCV, self.camera_matrix, self.dist_coeffs)
-                        PBCV_seg_mask_img_np = get_marker_segmentation(
-                            image=image, 
-                            tf=tf_PBCV, 
-                            square_length=self.marker_length, 
-                            K=self.camera_matrix
-                        )
-                        PBCV_IOU = compute_segmentation_IOU(PBCV_seg_mask_img_np, image_seg_est_np)
-                        self.datapoints[idx].set_detection_scores(harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score) 
-                        self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
-                        self.datapoints[idx].set_keypoints_PBCV(keypoints_rgb_image_space) 
-                        self.datapoints[idx].set_detected_PBCV(True) 
-                        self.datapoints[idx].set_image_similarity_score(image_similarity_score)
-                        self.datapoints[idx].set_PBCV_IOU(PBCV_IOU)
-                        # NOTE: filtering out bad estimates based on scores 
-                        bool_detected_PBCV = (harris_corner_response_score > 0.001) and (num_valid_proj_points > 2) and (tf_PBCV[2,3] < 10) and (image_similarity_score > 20_000) 
-                        # self.datapoints[idx].set_detected_PBCV(bool_detected_PBCV)
+
+                        if tf_PBCV is not None:
+                            # Extract matched keypoints based on reprojection error
+                            matched_keypoints = self._extract_matched_keypoints(
+                                keypoints_marker_cartesian_space, keypoints_rgb_image_space, 
+                                tf_PBCV, self.camera_matrix, max_reprojection_error=5.0
+                            )
+                            
+                            harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score = compute_detection_score(
+                                image, keypoints_marker_image_space, keypoints_marker_cartesian_space, tf_PBCV, self.camera_matrix, self.dist_coeffs, 
+                                harris_corner_response_weight=1.0, keypoint_residual_score_weight=1.0
+                            )
+                            image_similarity_score = compute_image_similarity_score(image, img_marker, self.marker_length, tf_PBCV, self.camera_matrix, self.dist_coeffs)
+                            PBCV_seg_mask_img_np = get_marker_segmentation(
+                                image=image, 
+                                tf=tf_PBCV, 
+                                square_length=self.marker_length, 
+                                K=self.camera_matrix
+                            )
+                            PBCV_IOU = compute_segmentation_IOU(PBCV_seg_mask_img_np, image_seg_est_np)
+                            self.datapoints[idx].set_detection_scores(harris_corner_response_score, num_valid_proj_points, keypoint_residual_score, detection_score) 
+                            self.datapoints[idx].set_tf_PBCV(tf_PBCV) 
+                            self.datapoints[idx].set_keypoints_PBCV(keypoints_rgb_image_space) 
+                            self.datapoints[idx].set_keypoints_PBCV_matched(matched_keypoints)
+                            self.datapoints[idx].set_detected_PBCV(True) 
+                            self.datapoints[idx].set_image_similarity_score(image_similarity_score)
+                            self.datapoints[idx].set_PBCV_IOU(PBCV_IOU)
+                            # NOTE: filtering out bad estimates based on scores 
+                            bool_detected_PBCV = (harris_corner_response_score > 0.001) and (num_valid_proj_points > 2) and (tf_PBCV[2,3] < 10) and (image_similarity_score > 20_000) 
+                            # self.datapoints[idx].set_detected_PBCV(bool_detected_PBCV)
+                        else:
+                            self.datapoints[idx].set_tf_PBCV(None)
+                            self.datapoints[idx].set_keypoints_PBCV(None)
+                            self.datapoints[idx].set_keypoints_PBCV_matched(None)
+                            self.datapoints[idx].set_detected_PBCV(False)
+                            self.datapoints[idx].set_detection_scores(None) 
+                            self.datapoints[idx].set_image_similarity_score(None)
+
                     else:
                         self.datapoints[idx].set_tf_PBCV(None)
                         self.datapoints[idx].set_keypoints_PBCV(None)
+                        self.datapoints[idx].set_keypoints_PBCV_matched(None)
                         self.datapoints[idx].set_detected_PBCV(False)
                         self.datapoints[idx].set_detection_scores(None) 
                         self.datapoints[idx].set_image_similarity_score(None)
 
+                    # FIXME: this can be made more elegant 
+                    if not bool_detected: self.datapoints[idx].set_detected_PBCV(False) 
+                
                 else:
                     self.datapoints[idx].set_tf_PBCV(None)
                     self.datapoints[idx].set_keypoints_PBCV(None)
+                    self.datapoints[idx].set_keypoints_PBCV_matched(None)
                     self.datapoints[idx].set_detected_PBCV(False)
                     self.datapoints[idx].set_detection_scores(None) 
                     self.datapoints[idx].set_image_similarity_score(None)
 
-                # FIXME: this can be made more elegant 
-                if not bool_detected: self.datapoints[idx].set_detected_PBCV(False) 
-
             if save_results:
                 output_dir = os.path.join(self.directory, "LBCV_keypoints_results")
+                if self.config.get("seg_mini_model", False):
+                    output_dir = os.path.join(self.directory, "LBCV_keypoints_results_minimodel")
                 os.makedirs(output_dir, exist_ok=True)
                 out_img = image.copy()
                 if bool_detected:
@@ -719,6 +1125,8 @@ class DataProcessor():
 
                 if run_corners_HCV:
                     output_dir = os.path.join(self.directory, "HCV_corners_results")
+                    if self.config.get("seg_mini_model", False):
+                        output_dir = os.path.join(self.directory, "HCV_corners_results_minimodel")
                     os.makedirs(output_dir, exist_ok=True)
                     out_img = image.copy()
                     if bool_detected_hybrid:
@@ -728,12 +1136,16 @@ class DataProcessor():
                     cv2.imwrite(str(outpath), out_img)
 
                 output_dir = os.path.join(self.directory, "LBCV_segmentation_results") 
+                if self.config.get("seg_mini_model", False):
+                    output_dir = os.path.join(self.directory, "LBCV_segmentation_results_minimodel")
                 os.makedirs(output_dir, exist_ok=True)
                 out_segmentation_path = os.path.join(output_dir, f"LBCV_segmentation_{idx:05d}.png")
                 image_segmentation.save(out_segmentation_path) 
 
                 if run_PBCV:
                     output_dir = os.path.join(self.directory, "PBCV_keypoints_results")
+                    if self.config.get("seg_mini_model", False):
+                        output_dir = os.path.join(self.directory, "PBCV_keypoints_results_minimodel")
                     os.makedirs(output_dir, exist_ok=True)
                     out_img = image.copy()
                     if self.datapoints[idx].detected_PBCV:
@@ -1058,6 +1470,7 @@ class DataProcessor():
                 self.df_results.loc[idx, "pose_error_LBCV_c"] = datapoint.pose_error_LBCV[5]
                 self.df_results.loc[idx, "LBCV_IOU"] = datapoint.LBCV_IOU if hasattr(datapoint, 'LBCV_IOU') else None
                 if hasattr(datapoint, 'tf_error_HCV'): 
+                    
                     if datapoint.tf_error_HCV is not None and datapoint.pose_error_HCV is not None:
                         self.df_results.loc[idx, "tf_error_HCV_Rxx"] = datapoint.tf_error_HCV[0, 0]
                         self.df_results.loc[idx, "tf_error_HCV_Rxy"] = datapoint.tf_error_HCV[0, 1]
@@ -1124,8 +1537,6 @@ class DataProcessor():
                 self.df_results.loc[idx, "pose_error_HCV_a"] = None 
                 self.df_results.loc[idx, "pose_error_HCV_b"] = None 
                 self.df_results.loc[idx, "pose_error_HCV_c"] = None
-                self.df_results.loc[idx, "LBCV_IOU"] = None
-
             if hasattr(datapoint, 'detected_PBCV'): 
                 if datapoint.tf_error_PBCV is not None and datapoint.pose_error_PBCV is not None:
                     self.df_results.loc[idx, "detected_PBCV"] = datapoint.detected_PBCV
@@ -1185,6 +1596,8 @@ class DataProcessor():
 
         if save_results: 
             output_dir = os.path.join(self.directory, "results")
+            if self.config.get("seg_mini_model", False):
+                output_dir += "_seg_mini"
             os.makedirs(output_dir, exist_ok=True) 
             output_path = os.path.join(output_dir, "results.json")
             with open(output_path, 'w') as f:
@@ -1193,6 +1606,199 @@ class DataProcessor():
             df_output_path = os.path.join(output_dir, "results.csv")
             self.df_results.to_csv(df_output_path, index=False)
 
+    def draw_marker_borders_batch(self, datapoint_indices=None, output_dir=None, 
+                                draw_lbcv=True, draw_pbcv=True, 
+                                lbcv_color=(0, 255, 0), pbcv_color=(0, 0, 255), 
+                                true_color=(255, 0, 0), line_thickness=2, alpha=0.7):
+        """
+        Draw marker borders for multiple datapoints using pose estimates.
+        Uses alpha transparency so overlapping borders are visible.
+        
+        Args:
+            datapoint_indices (list, optional): List of datapoint indices to process. If None, processes all datapoints.
+            output_dir (str, optional): Directory to save output images. If None, creates 'marker_borders_vis' in data directory.
+            draw_lbcv (bool): Whether to draw LBCV pose estimate borders (default: True)
+            draw_pbcv (bool): Whether to draw PBCV pose estimate borders (default: True)
+            lbcv_color (tuple): BGR color for LBCV borders (default: green)
+            pbcv_color (tuple): BGR color for PBCV borders (default: red)
+            true_color (tuple): BGR color for true pose borders (default: blue)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.7)
+        """
+        if datapoint_indices is None:
+            datapoint_indices = range(len(self.datapoints))
+        
+        if output_dir is None:
+            output_dir = os.path.join(self.directory, "marker_borders_vis")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        processed_count = 0
+        for idx in datapoint_indices:
+            if idx >= len(self.datapoints):
+                print(f"Warning: Index {idx} is out of range. Skipping.")
+                continue
+                
+            datapoint = self.datapoints[idx]
+            
+            # Check if we have at least one pose estimate to draw
+            has_poses = False
+            if draw_lbcv and hasattr(datapoint, 'tf_LBCV') and datapoint.tf_LBCV is not None:
+                has_poses = True
+            if draw_pbcv and hasattr(datapoint, 'tf_PBCV') and datapoint.tf_PBCV is not None:
+                has_poses = True
+            
+            if not has_poses:
+                print(f"Skipping datapoint {idx}: No pose estimates available")
+                continue
+            
+            try:
+                output_path = os.path.join(output_dir, f"picture_{idx}_borders.png")
+                datapoint.draw_marker_borders_from_poses(
+                    output_path=output_path,
+                    draw_lbcv=draw_lbcv,
+                    draw_pbcv=draw_pbcv,
+                    lbcv_color=lbcv_color,
+                    pbcv_color=pbcv_color,
+                    true_color=true_color,
+                    line_thickness=line_thickness,
+                    alpha=alpha
+                )
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing datapoint {idx}: {str(e)}")
+        
+        print(f"Successfully processed {processed_count} datapoints. Images saved to: {output_dir}")
+
+    def draw_pose_comparison_batch(self, datapoint_indices=None, output_dir=None,
+                                 ccv_color=(0, 0, 255), lbcv_color=(255, 0, 0), pbcv_color=(0, 255, 0),
+                                 keypoint_color=(0, 255, 0), line_thickness=2, keypoint_radius=3, alpha=0.7):
+        """
+        Draw pose comparison visualizations for multiple datapoints with CCV, LBCV, PBCV borders and PBCV keypoints.
+        Uses alpha transparency so overlapping borders are visible.
+        
+        Args:
+            datapoint_indices (list, optional): List of datapoint indices to process. If None, processes all datapoints.
+            output_dir (str, optional): Directory to save output images. If None, creates 'pose_comparison_vis' in data directory.
+            ccv_color (tuple): BGR color for CCV borders (default: red)
+            lbcv_color (tuple): BGR color for LBCV borders (default: blue)
+            pbcv_color (tuple): BGR color for PBCV borders (default: green)
+            keypoint_color (tuple): BGR color for PBCV keypoints (default: green)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            keypoint_radius (int): Radius of keypoint circles (default: 3)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.7)
+            
+        Returns:
+            numpy.ndarray: Image with drawn borders and keypoints (if output_path is None)
+        """
+        if datapoint_indices is None:
+            datapoint_indices = range(len(self.datapoints))
+        
+        if output_dir is None:
+            output_dir = os.path.join(self.directory, "pose_comparison_vis")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        processed_count = 0
+        for idx in datapoint_indices:
+            if idx >= len(self.datapoints):
+                print(f"Warning: Index {idx} is out of range. Skipping.")
+                continue
+                
+            datapoint = self.datapoints[idx]
+            
+            # Check if we have at least one pose estimate to draw
+            has_poses = False
+            if hasattr(datapoint, 'tf_CCV') and datapoint.tf_CCV is not None:
+                has_poses = True
+            if hasattr(datapoint, 'tf_LBCV') and datapoint.tf_LBCV is not None:
+                has_poses = True
+            if hasattr(datapoint, 'tf_PBCV') and datapoint.tf_PBCV is not None:
+                has_poses = True
+            
+            if not has_poses:
+                print(f"Skipping datapoint {idx}: No pose estimates available")
+                continue
+            
+            try:
+                output_path = os.path.join(output_dir, f"picture_{idx}_pose_comparison.png")
+                datapoint.draw_pose_comparison_visualization(
+                    output_path=output_path,
+                    ccv_color=ccv_color,
+                    lbcv_color=lbcv_color,
+                    pbcv_color=pbcv_color,
+                    keypoint_color=keypoint_color,
+                    line_thickness=line_thickness,
+                    keypoint_radius=keypoint_radius,
+                    alpha=alpha
+                )
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing datapoint {idx}: {str(e)}")
+        
+        print(f"Successfully processed {processed_count} pose comparison visualizations. Images saved to: {output_dir}")
+    
+    def draw_pbcv_matched_keypoints_batch(self, datapoint_indices=None, output_dir=None,
+                                        border_color=(0, 255, 0), keypoint_color=(0, 255, 0),
+                                        line_thickness=2, keypoint_radius=4, alpha=0.8):
+        """
+        Draw PBCV matched keypoints visualizations for multiple datapoints.
+        Shows only matched keypoints (after RANSAC) with PBCV pose-based marker border.
+        
+        Args:
+            datapoint_indices (list, optional): List of datapoint indices to process. If None, processes all datapoints.
+            output_dir (str, optional): Directory to save output images. If None, creates 'pbcv_matched_keypoints_vis' in data directory.
+            border_color (tuple): BGR color for PBCV pose border (default: green)
+            keypoint_color (tuple): BGR color for matched keypoints (default: green)
+            line_thickness (int): Thickness of the border lines (default: 2)
+            keypoint_radius (int): Radius of keypoint circles (default: 4)
+            alpha (float): Alpha transparency value (0.0 = transparent, 1.0 = opaque, default: 0.8)
+        """
+        if datapoint_indices is None:
+            datapoint_indices = range(len(self.datapoints))
+        
+        if output_dir is None:
+            output_dir = os.path.join(self.directory, "pbcv_matched_keypoints_vis")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        processed_count = 0
+        for idx in datapoint_indices:
+            if idx >= len(self.datapoints):
+                print(f"Warning: Index {idx} is out of range. Skipping.")
+                continue
+                
+            datapoint = self.datapoints[idx]
+            
+            # Check if we have PBCV pose estimate and keypoints
+            has_pbcv_data = False
+            if hasattr(datapoint, 'tf_PBCV') and datapoint.tf_PBCV is not None:
+                has_pbcv_data = True
+            
+            # Check for keypoints (either matched or all PBCV keypoints)
+            has_keypoints = False
+            if hasattr(datapoint, 'keypoints_PBCV_matched') and datapoint.keypoints_PBCV_matched is not None:
+                has_keypoints = True
+            elif hasattr(datapoint, 'keypoints_PBCV') and datapoint.keypoints_PBCV is not None:
+                has_keypoints = True
+            
+            if not has_pbcv_data or not has_keypoints:
+                print(f"Skipping datapoint {idx}: No PBCV pose estimate or keypoints available")
+                continue
+            
+            try:
+                output_path = os.path.join(output_dir, f"picture_{idx}_pbcv_matched_keypoints.png")
+                datapoint.draw_pbcv_matched_keypoints_visualization(
+                    output_path=output_path,
+                    border_color=border_color,
+                    keypoint_color=keypoint_color,
+                    line_thickness=line_thickness,
+                    keypoint_radius=keypoint_radius,
+                    alpha=alpha
+                )
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing datapoint {idx}: {str(e)}")
+        
+        print(f"Successfully processed {processed_count} PBCV matched keypoints visualizations. Images saved to: {output_dir}")
+        
 
 def main(): 
 
@@ -1268,6 +1874,9 @@ def main():
     processor.run_LBCV_fiducial_marker_detection(save_results=False, run_corners_HCV=True, run_PBCV=True, use_precomputed_segmentation=False) 
     processor.compute_values() 
     processor.compile_results(save_results=True)
+    processor.draw_marker_borders_batch(draw_lbcv=True, draw_pbcv=False, line_thickness=2)
+    processor.draw_pose_comparison_batch(line_thickness=2, keypoint_radius=3)
+    processor.draw_pbcv_matched_keypoints_batch()
 
 if __name__ == "__main__":
-    main() 
+    main()
