@@ -26,3 +26,6 @@ ablations/analysis/plots
 vit_keypoints_model/checkpoints/*
 ablations/analysis/real_exp/plots 
 data
+.vscode/
+*.mp4
+ablations/analysis/real_exp/plots_JSR/*

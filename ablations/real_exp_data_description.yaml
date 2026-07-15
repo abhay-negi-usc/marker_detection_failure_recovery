@@ -64,14 +64,17 @@
   ablation_variable_min: None
   ablation_variable_max: None 
 "truncation_20250712": 
-  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/truncation/"
+  # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/truncation/"
+  data_path: "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/marker_data_collection/july12/truncation/"
   ablation_variable: "fraction_marker_visible"
   type: "variable_pose"
   window_size: 20
-  ablation_variable_min: 0.6 
+  # ablation_variable_min: 0.6
+  ablation_variable_min: 0 
   ablation_variable_max: 1.0 
 "underexposure_20250712": 
-  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/underexposure_box/"
+  # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/underexposure_box/"
+  data_path: "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/marker_data_collection/july12/underexposure_box/"
   ablation_variable: "mean_marker_pixel_brightness"
   type: "fixed_pose"
   window_size: 10
@@ -79,14 +82,17 @@
   ablation_variable_max: 31 
 "shadow_20250712": 
   # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow/"
-  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow_v2/"
+  # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/shadow_v2/"
+  data_path: "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/marker_data_collection/july12/shadow_v2/"
   ablation_variable: "fraction_saturated_low_pixels"
   window_size: 20 
   type: "fixed_pose"
   ablation_variable_min: 0
-  ablation_variable_max: 0.55 
+  # ablation_variable_max: 0.55 
+  ablation_variable_max: 0.75 
 "glare_20250712": 
-  data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/glare/"
+  # data_path: "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12/glare/"
+  data_path: "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/marker_data_collection/july12/glare/"
   ablation_variable: "fraction_saturated_high_pixels"
   window_size: 50 
   type: "fixed_pose"

@@ -1,3 +1,24 @@
 {
-    "ros.distro": "noetic"
+    "ros.distro": "noetic",
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/rp/realsense_ros_ws/install/realsense2_camera_msgs/local/lib/python3.10/dist-packages",
+        "/home/rp/ws_moveit2/install/moveit_task_constructor_core/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/srdfdom/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/moveit_task_constructor_msgs/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/rp/realsense_ros_ws/install/realsense2_camera_msgs/local/lib/python3.10/dist-packages",
+        "/home/rp/ws_moveit2/install/moveit_task_constructor_core/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/srdfdom/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/moveit_task_constructor_msgs/lib/python3.10/site-packages",
+        "/home/rp/ws_moveit2/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
 }

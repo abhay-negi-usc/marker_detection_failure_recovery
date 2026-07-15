@@ -16,25 +16,25 @@ from segmentation_model.utils import (
 import os 
 import wandb
 
-DATA_DIR = "/home/anegi/abhay_ws/marker_detection_failure_recovery/data/data_20250327-173029/"
+DATA_DIR = "/home/rp/abhay_ws/marker_detection_failure_recovery/segmentation_model/data/data_20250327-173029/"
 TRAIN_IMG_DIR = f"{DATA_DIR}/train/rgb"
 TRAIN_MASK_DIR = f"{DATA_DIR}/train/seg"
 VAL_IMG_DIR = f"{DATA_DIR}/val/rgb"
 VAL_MASK_DIR = f"{DATA_DIR}/val/seg"
-SAVE_DIR = "/home/nom4d/marker_ws/segmentation_checkpoints/"
+SAVE_DIR = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/segmentation_model/segmentation_checkpoints/"
 SAVE_FREQ = 1000 
 
-LEARNING_RATE = 1e-4 
+LEARNING_RATE = 1e-7
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu" 
-BATCH_SIZE = 16 
+BATCH_SIZE = 8
 NUM_EPOCHS = 1000
 num_epoch_dont_save = 0 
 NUM_WORKERS = 8
 IMAGE_HEIGHT = 480 
 IMAGE_WIDTH = 640 
 PIN_MEMORY = True 
-LOAD_MODEL = False
-LOAD_CHECKPOINT_PATH = "my_checkpoint_minimodel_epoch_0.pth.tar"              
+LOAD_MODEL = True
+LOAD_CHECKPOINT_PATH = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/segmentation_model/segmentation_checkpoints/my_checkpoint_minimodel_epoch_2_batch_0.pth.tar"              
 
 def train_fn(loader, model, optimizer, loss_fn, scaler, epoch): 
     loop = tqdm(loader) # progress bar 
@@ -151,7 +151,7 @@ def main():
             }, os.path.join(SAVE_DIR, f"my_checkpoint_minimodel_epoch_{epoch}.pth.tar"))  # Save with epoch and accuracy
 
             # Optionally save some predictions
-            saved_images_dir = "/home/nom4d/marker_ws/segmentation_data/training_validation_images/" 
+            saved_images_dir = "/media/rp/Elements1/abhay_ws/marker_detection_failure_recovery/segmentation_model/training_validation_images/" 
             os.makedirs(saved_images_dir, exist_ok=True)
             save_predictions_as_imgs(
                 val_loader, model, folder=saved_images_dir, device=DEVICE, num_datapoints=10

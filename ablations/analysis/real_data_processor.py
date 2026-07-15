@@ -508,6 +508,184 @@ class DataPoint():
         else:
             return fig
 
+    def create_combined_1x2_visualization(self, experiment_name=None, experiment_variable=None, 
+                                        experiment_value=None, output_path=None, figsize=(16, 8)):
+        """
+        Create a 1x2 combined image visualization showing:
+        - Left: Classical Detection & Pose Estimation (CCV) with red border
+        - Right: Pattern-Based Pose Estimation (PBCV) with green matched keypoints and border
+        Both panels include success/failure indicators at the bottom.
+        
+        Args:
+            experiment_name (str, optional): Name of the experiment for the suptitle
+            experiment_variable (str, optional): Name of the experiment variable (e.g., 'mean_marker_pixel_brightness')
+            experiment_value (float, optional): Value of the experiment variable
+            output_path (str, optional): Path to save the output image. If None, returns the figure.
+            figsize (tuple): Figure size in inches (default: (16, 8))
+            
+        Returns:
+            matplotlib.figure.Figure: The created figure (if output_path is None)
+        """
+        if not hasattr(self, 'image_path') or self.image_path is None:
+            raise ValueError("Image path not set for this DataPoint.")
+        
+        # Load the original image
+        original_image = cv2.imread(self.image_path)
+        if original_image is None:
+            raise ValueError(f"Could not load image from {self.image_path}")
+        
+        # Convert BGR to RGB for matplotlib
+        original_image_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
+        
+        # Create the figure with 1x2 subplots with no spacing
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        fig.suptitle(self._create_suptitle(experiment_name, experiment_variable, experiment_value), 
+                    fontsize=18, fontweight='bold', y=0.90)  # Increased from 14 to 18
+        
+        # Remove all spacing between subplots
+        plt.subplots_adjust(left=0, bottom=0, right=1, top=0.88, wspace=0, hspace=0)
+        
+        # Left: Classical Detection & Pose Estimation (CCV)
+        ccv_success = self._check_ccv_success()
+        ccv_image = self._create_ccv_visualization_with_title_and_status(
+            original_image_rgb.copy(), 
+            "Classical Method",
+            ccv_success
+        )
+        axes[0].imshow(ccv_image)
+        axes[0].axis('off')
+        
+        # Right: Pattern-Based Pose Estimation (PBCV)
+        pbcv_success = self._check_pbcv_success()
+        pbcv_image = self._create_pbcv_visualization_with_title_and_status(
+            original_image_rgb.copy(),
+            "Our Method", 
+            pbcv_success
+        )
+        axes[1].imshow(pbcv_image)
+        axes[1].axis('off')
+        
+        # Save or return the figure
+        if output_path is not None:
+            plt.savefig(output_path, dpi=300, bbox_inches='tight', pad_inches=0.02)
+            print(f"Combined 1x2 visualization saved to: {output_path}")
+            plt.close(fig)
+        else:
+            return fig
+
+    def _check_ccv_success(self):
+        """Check if CCV method succeeded in marker detection."""
+        # CCV succeeds if it was detected
+        return hasattr(self, 'detected_CCV') and self.detected_CCV
+    
+    def _check_pbcv_success(self):
+        """Check if PBCV method succeeded in marker detection."""
+        # PBCV succeeds if IOU > 0.5 (same threshold used for visualization filtering)
+        return (hasattr(self, 'PBCV_IOU') and 
+                self.PBCV_IOU is not None and 
+                self.PBCV_IOU > 0.5)
+
+    def _create_ccv_visualization_with_title_and_status(self, image, title, success):
+        """Create the CCV visualization with red border, title overlay, and success/failure status."""
+        # Convert RGB back to BGR for OpenCV operations
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        
+        # Draw CCV pose border (red) only if successful
+        if success and hasattr(self, 'tf_CCV') and self.tf_CCV is not None:
+            corners_ccv = project_points_array_to_image(
+                C=self.camera_matrix, 
+                T=self.tf_CCV, 
+                P_array=self.marker_corners, 
+                convert_cam_is2cv=True
+            )
+            corners_ccv_int = np.array(corners_ccv, dtype=np.int32)
+            self._draw_alpha_polygon(image_bgr, corners_ccv_int, (0, 255, 0), 3, 0.8)  # Green border
+        
+        # Add title overlay
+        self._add_title_overlay(image_bgr, title)
+        
+        # Add success/failure status at the bottom
+        self._add_status_overlay(image_bgr, success)
+        
+        # Convert back to RGB
+        return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+    def _create_pbcv_visualization_with_title_and_status(self, image, title, success):
+        """Create the PBCV visualization with green matched keypoints, green border, title overlay, and success/failure status."""
+        # Convert RGB back to BGR for OpenCV operations
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        
+        # Only draw PBCV results if successful (IOU > 0.5)
+        if success:
+            # Draw PBCV pose border (green)
+            if hasattr(self, 'tf_PBCV') and self.tf_PBCV is not None:
+                corners_pbcv = project_points_array_to_image(
+                    C=self.camera_matrix, 
+                    T=self.tf_PBCV, 
+                    P_array=self.marker_corners, 
+                    convert_cam_is2cv=True
+                )
+                corners_pbcv_int = np.array(corners_pbcv, dtype=np.int32)
+                self._draw_alpha_polygon(image_bgr, corners_pbcv_int, (0, 255, 0), 3, 0.8)  # Green border
+            
+            # Draw PBCV matched keypoints (green circles)
+            if hasattr(self, 'keypoints_PBCV_matched') and self.keypoints_PBCV_matched is not None:
+                for keypoint in self.keypoints_PBCV_matched:
+                    if len(keypoint) >= 2:
+                        x, y = int(keypoint[0]), int(keypoint[1])
+                        # Check if keypoint is within image bounds
+                        if 0 <= x < image_bgr.shape[1] and 0 <= y < image_bgr.shape[0]:
+                            cv2.circle(image_bgr, (x, y), 4, (0, 255, 0), -1)  # Green filled circle
+            elif hasattr(self, 'keypoints_PBCV') and self.keypoints_PBCV is not None:
+                # Fallback to all PBCV keypoints if matched keypoints not available
+                for keypoint in self.keypoints_PBCV:
+                    if len(keypoint) >= 2:
+                        x, y = int(keypoint[0]), int(keypoint[1])
+                        # Check if keypoint is within image bounds
+                        if 0 <= x < image_bgr.shape[1] and 0 <= y < image_bgr.shape[0]:
+                            cv2.circle(image_bgr, (x, y), 4, (0, 255, 0), -1)  # Green filled circle
+        
+        # Add title overlay
+        self._add_title_overlay(image_bgr, title)
+        
+        # Add success/failure status at the bottom
+        self._add_status_overlay(image_bgr, success)
+        
+        # Convert back to RGB
+        return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+    def _add_status_overlay(self, image, success):
+        """Add success/failure status text at the bottom of the image."""
+        # Get image dimensions
+        height, width = image.shape[:2]
+        
+        # Status text and color
+        if success:
+            status_text = "SUCCESS"
+            text_color = (0, 255, 0)  # Green in BGR
+        else:
+            status_text = "FAILURE"
+            text_color = (0, 0, 255)  # Red in BGR
+        
+        # Font settings
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1.2
+        font_thickness = 3
+        outline_color = (0, 0, 0)    # Black outline
+        outline_thickness = 6
+        
+        # Calculate text size for positioning
+        (text_width, text_height), baseline = cv2.getTextSize(status_text, font, font_scale, font_thickness)
+        
+        # Position at bottom center
+        text_x = (width - text_width) // 2
+        text_y = height - 20  # 20 pixels from bottom
+        
+        # Draw text outline (black)
+        cv2.putText(image, status_text, (text_x, text_y), font, font_scale, outline_color, outline_thickness)
+        # Draw text
+        cv2.putText(image, status_text, (text_x, text_y), font, font_scale, text_color, font_thickness)
+
     def _create_suptitle(self, experiment_name, experiment_variable, experiment_value):
         """Create the suptitle string for the combined visualization."""
         # Dictionary for relabeling variable names to more readable versions
@@ -515,6 +693,9 @@ class DataPoint():
             'mean_marker_pixel_brightness': 'Mean Marker Brightness',
             'ambient_light_intensity': 'Ambient Light Intensity',
             'truncation_percentage': 'Truncation Percentage',
+            'fraction_marker_visible': 'Fraction Marker Visible',
+            'fraction_saturated_low_pixels': 'Fraction Saturated Low Pixels',
+            'fraction_saturated_high_pixels': 'Fraction Saturated High Pixels',
             'skew_angle': 'Skew Angle',
             'distance_to_marker': 'Distance to Marker',
             'rotation_angle': 'Rotation Angle',
@@ -976,6 +1157,7 @@ class DataProcessor():
                 self.datapoints[idx].CCV_detected = True 
                 self.datapoints[idx].set_tf_CCV(tf) 
                 self.datapoints[idx].set_corners_CCV(corners)
+                self.datapoints[idx].set_detected_CCV(True)
             else: 
                 self.datapoints[idx].CCV_detected = False 
                 self.datapoints[idx].set_tf_CCV(None)
@@ -1641,6 +1823,7 @@ class DataProcessor():
                 "mean_marker_pixel_brightness": mean_brightness,
                 "fraction_saturated_high_pixels": fraction_saturated_high_pixels,
                 "fraction_saturated_low_pixels": fraction_saturated_low_pixels,
+                "fraction_marker_visible": fraction_visible
             }
             datapoint.set_metadata(datapoint_metadata)
 
@@ -2301,6 +2484,88 @@ class DataProcessor():
         print(f"Filtered {len(filtered_indices)} datapoints out of {len(self.datapoints)} based on {ablation_variable} range [{min_val}, {max_val}]")
         return filtered_indices
 
+    def create_combined_1x2_visualizations_batch(self, datapoint_indices=None, output_dir=None, 
+                                               experiment_name=None, experiment_variable=None, 
+                                               experiment_values=None, figsize=(20, 7),
+                                               ablation_config=None):
+        """
+        Create combined 1x2 visualizations for a batch of datapoints showing classical vs our method.
+        
+        Args:
+            datapoint_indices (list, optional): List of datapoint indices to process. If None, processes all datapoints.
+            output_dir (str, optional): Directory to save the output images. If None, creates 'combined_1x2_visualizations' directory.
+            experiment_name (str, optional): Name of the experiment for the suptitle
+            experiment_variable (str, optional): Name of the experiment variable (e.g., 'mean_marker_pixel_brightness')
+            experiment_values (list, optional): List of experiment values corresponding to each datapoint
+            figsize (tuple): Figure size in inches (default: (16, 8))
+            ablation_config (dict, optional): Configuration from YAML file for this ablation
+        """
+        # If ablation_config is provided, extract variable name and filter data
+        if ablation_config is not None:
+            experiment_variable = ablation_config.get("ablation_variable")
+            
+            # Apply filtering based on min/max values from YAML config
+            filtered_indices = self._filter_datapoints_by_ablation_range(ablation_config)
+            
+            # Extract experiment values from filtered datapoints
+            experiment_values = []
+            for idx in filtered_indices:
+                if idx < len(self.datapoints):
+                    datapoint = self.datapoints[idx]
+                    if hasattr(datapoint, 'metadata') and datapoint.metadata and experiment_variable in datapoint.metadata:
+                        experiment_values.append(datapoint.metadata[experiment_variable])
+                    else:
+                        experiment_values.append(None)
+            
+            # Use filtered indices if no specific indices were provided
+            if datapoint_indices is None:
+                datapoint_indices = filtered_indices
+        
+        # Set default indices if not provided
+        if datapoint_indices is None:
+            datapoint_indices = list(range(len(self.datapoints)))
+        
+        # Set default output directory if not provided
+        if output_dir is None:
+            output_dir = os.path.join(self.directory, "combined_1x2_visualizations")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        processed_count = 0
+        
+        for i, idx in enumerate(datapoint_indices):
+            if idx >= len(self.datapoints):
+                print(f"Warning: Datapoint index {idx} is out of range. Skipping.")
+                continue
+            
+            try:
+                datapoint = self.datapoints[idx]
+                
+                # Set processor reference for segmentation access
+                datapoint.processor = self
+                
+                # Get experiment value for this datapoint
+                experiment_value = experiment_values[i] if experiment_values and i < len(experiment_values) else None
+                
+                # Create output filename
+                output_filename = f"combined_1x2_datapoint_{idx:04d}.png"
+                output_path = os.path.join(output_dir, output_filename)
+                
+                # Create the combined visualization
+                datapoint.create_combined_1x2_visualization(
+                    experiment_name=experiment_name,
+                    experiment_variable=experiment_variable,
+                    experiment_value=experiment_value,
+                    output_path=output_path,
+                    figsize=figsize
+                )
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing datapoint {idx}: {str(e)}")
+        
+        print(f"Successfully processed {processed_count} combined 1x2 visualizations. Images saved to: {output_dir}")
+
 def main(): 
 
     # camera_parameters = {
@@ -2353,7 +2618,7 @@ def main():
 
     # get ablation data path 
     # results in: distance_20250712, skew_20250712, truncation_20250712, underexposure_20250712, shadow_20250712, glare_20250712 
-    ablation = "shadow_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
+    ablation = "glare_20250712"  # options: "underexposure", "ambient_light_intensity", "truncation", "skew", "lateral", "pitch", "yaw", "roll"
     data_yaml_path = "./ablations/real_exp_data_description.yaml" 
     with open(data_yaml_path, 'r') as f:
         data_description = yaml.safe_load(f) 
@@ -2383,7 +2648,13 @@ def main():
     # Get the ablation configuration from the data description
     ablation_config = data_description[ablation]
     
-    processor.create_combined_2x2_visualizations_batch(
+    # processor.create_combined_2x2_visualizations_batch(
+    #     experiment_name=ablation.replace("_20250712", "").title() + " Experiment",
+    #     ablation_config=ablation_config
+    # )
+    
+    # Create combined 1x2 visualizations (Classical vs Our Method)
+    processor.create_combined_1x2_visualizations_batch(
         experiment_name=ablation.replace("_20250712", "").title() + " Experiment",
         ablation_config=ablation_config
     )
