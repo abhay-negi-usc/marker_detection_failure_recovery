@@ -43,12 +43,15 @@ Poses need the camera intrinsics: pass --calib <npz with camera_matrix, distorti
 real_data_processing/apriltag_calibration.py writes, at the capture resolution). Without it, fx is
 approximated from --hfov and poses are only indicative; mask, keypoints and ids are unaffected.
 
-Run from this repo root:
-    cd /home/rp/abhay_ws/marker_detection_failure_recovery
+Runs on Linux and Windows (camera backend chosen per OS, override with --backend). Needs the two model checkpoints
+(seg_mini_multimarker_best.pth.tar, kp_mobilenetv3_multimarker_best.pth.tar) in <this repo>/checkpoints/ or in
+the sibling deep-marker-estimation repo; see test_multimarker_real.py for the lookup and env-var overrides.
     python demo_live.py --tag-size 0.08            # side of the black tag square in meters
+    python demo_live.py --source 1                 # another camera index
     python demo_live.py --source video.mp4         # or replay a video file
 """
 import os
+import sys
 import time
 import argparse
 import numpy as np
@@ -65,7 +68,7 @@ AMBIGUITY_RATIO = 1.5           # IPPE solutions count as near-tied below this r
 ANCHOR_RATIO = 3.0              # ... and as unambiguous (tilt-direction anchor) above this one
 TRACK_TIMEOUT = 0.5             # s an anchor / a marker's filter state stays valid without a detection
 CORNER_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
-OUT_DIR = "./eval_outputs/live_demo"
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_outputs", "live_demo")
 
 # 10x10 cells of the white-bordered tag: outer ring = white quiet zone, next ring = black tag border
 QUIET = np.ones((10, 10), bool)
@@ -79,10 +82,29 @@ _rr, _cc = np.mgrid[0:10, 0:10]
 CELL_DESIGN = np.c_[np.ones(100), _rr.ravel(), _cc.ravel()]  # planar fit a + b*row + c*col
 
 
-def open_source(source, width, height):
+CAMERA_BACKENDS = {"auto": None, "any": cv2.CAP_ANY, "v4l2": cv2.CAP_V4L2, "dshow": cv2.CAP_DSHOW,
+                   "msmf": cv2.CAP_MSMF, "avfoundation": cv2.CAP_AVFOUNDATION}
+
+
+def default_backend():
+    """V4L2 on Linux, DirectShow on Windows (opens fast and honors the MJPG request), AVFoundation on macOS."""
+    if sys.platform.startswith("linux"):
+        return cv2.CAP_V4L2
+    if sys.platform == "win32":
+        return cv2.CAP_DSHOW
+    if sys.platform == "darwin":
+        return cv2.CAP_AVFOUNDATION
+    return cv2.CAP_ANY
+
+
+def open_source(source, width, height, backend="auto"):
     if not source.isdigit():
         return cv2.VideoCapture(source)
-    cap = cv2.VideoCapture(int(source), cv2.CAP_V4L2)
+    api = CAMERA_BACKENDS[backend] if backend != "auto" else default_backend()
+    cap = cv2.VideoCapture(int(source), api)
+    if not cap.isOpened() and api != cv2.CAP_ANY:  # let OpenCV pick whatever backend works
+        print(f"[WARN] camera {source} did not open with backend '{backend}', falling back to the OpenCV default")
+        cap = cv2.VideoCapture(int(source), cv2.CAP_ANY)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # 30 fps at 1280x720 on the NexiGo N60
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -332,6 +354,8 @@ def draw(frame, mask, dets, ccv, K, D, axis_len, show, hud, notice):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="0", help="camera index or video file")
+    ap.add_argument("--backend", default="auto", choices=list(CAMERA_BACKENDS),
+                    help="camera capture backend (auto = v4l2 on Linux, dshow on Windows)")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--tag-size", type=float, default=0.08, help="black tag square side (m)")
@@ -352,7 +376,7 @@ def main():
     ap.add_argument("--no-window", action="store_true", help="no display; print throughput (benchmark)")
     args = ap.parse_args()
 
-    cap = open_source(args.source, args.width, args.height)
+    cap = open_source(args.source, args.width, args.height, args.backend)
     ok, frame = cap.read()
     if not ok:
         raise SystemExit(f"could not read from source {args.source}")

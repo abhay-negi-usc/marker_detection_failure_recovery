@@ -20,11 +20,19 @@ Poses come out in the OpenCV ArUco convention, so no 180deg-about-Z correction i
 
 Outputs in --out-dir (eval_outputs/multimarker_real/):  summary.csv, <dataset>/per_frame.csv, <dataset>/vis/*.png
 
-Run from this repo root:
-    cd /home/rp/abhay_ws/marker_detection_failure_recovery
+Run from anywhere (Linux or Windows):
     python test_multimarker_real.py                          # all datasets, all refinement stages
     python test_multimarker_real.py --datasets distance skew --vis-every 5
     python test_multimarker_real.py --stages outliers orient # a subset of the refinement stages
+    python test_multimarker_real.py --data-root D:/july12    # data somewhere else
+
+Paths (each can be overridden with the environment variable in brackets):
+    checkpoints : <this repo>/checkpoints/<name> if present, else the sibling deep-marker-estimation repo's
+                  checkpoint folders                                            [LBCV_SEG_CKPT, LBCV_KP_CKPT]
+    deep-marker-estimation : the folder next to this repo                       [DEEP_MARKER_ROOT]
+    July-12 data : the lab machine's path, or --data-root                       [JULY12_DATA_ROOT]
+overlay_render_utils (from deep-marker-estimation/data_generation) is only needed by this script's evaluation,
+not by demo_live.py.
 """
 import os
 import sys
@@ -33,23 +41,46 @@ import numpy as np
 import pandas as pd
 import cv2
 import torch
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
+
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+if REPO_ROOT not in sys.path:  # model packages resolve when imported from another directory
+    sys.path.insert(0, REPO_ROOT)
 
 from segmentation_model.model import UNETWithDropoutMini
 from keypoints_model.model import RegressorMobileNetV3
 from pose_refinement import PoseRefiner, STAGES
 
-sys.path.insert(0, "/home/rp/abhay_ws/deep-marker-estimation/data_generation")
-from overlay_render_utils import compute_roi, roi_to_keypoints  # same crop / label mapping as the training ROIs
-
 # ---- data / checkpoints ----
-DATA_ROOT = "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12"
+DEEP_MARKER_ROOT = os.environ.get("DEEP_MARKER_ROOT",
+                                  os.path.join(os.path.dirname(REPO_ROOT), "deep-marker-estimation"))
+DATA_ROOT = os.environ.get("JULY12_DATA_ROOT", "/home/rp/dhanush_ws/sunrise-wrapper/data/marker_data_collection/july12")
 DATASETS = ["distance", "skew", "truncation", "underexposure_box", "shadow_v2", "glare"]
 MARKER_ID = 0  # the tag in every dataset
-SEG_CKPT = "/home/rp/abhay_ws/deep-marker-estimation/segmentation_model/checkpoints/seg_mini_multimarker_best.pth.tar"
-KP_CKPT = "/home/rp/abhay_ws/deep-marker-estimation/keypoints_model/checkpoints/kp_mobilenetv3_multimarker_best.pth.tar"
+
+
+def _checkpoint(env_var, name, model_dir):
+    """Env override, else <repo>/checkpoints/<name>, else the sibling deep-marker-estimation repo."""
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+    local = os.path.join(REPO_ROOT, "checkpoints", name)
+    return local if os.path.exists(local) else os.path.join(DEEP_MARKER_ROOT, model_dir, "checkpoints", name)
+
+
+SEG_CKPT = _checkpoint("LBCV_SEG_CKPT", "seg_mini_multimarker_best.pth.tar", "segmentation_model")
+KP_CKPT = _checkpoint("LBCV_KP_CKPT", "kp_mobilenetv3_multimarker_best.pth.tar", "keypoints_model")
+
+sys.path.insert(0, os.path.join(DEEP_MARKER_ROOT, "data_generation"))
+try:  # same crop / label mapping as the training ROIs
+    from overlay_render_utils import compute_roi, roi_to_keypoints
+except ImportError:
+    compute_roi = roi_to_keypoints = None
+
+
+def _require_overlay_utils():
+    if compute_roi is None:
+        raise SystemExit(f"overlay_render_utils not found in {os.path.join(DEEP_MARKER_ROOT, 'data_generation')}; "
+                         "copy deep-marker-estimation next to this repo or set DEEP_MARKER_ROOT")
 # KP_CKPT was trained on data_100k, generated before overlay_render_utils.keypoints_to_roi used the cv2.resize
 # pixel-center convention, so its outputs are mapped back with the matching legacy inverse. Set False for a model
 # trained on data regenerated with the fix.
@@ -67,7 +98,7 @@ MARKER_LENGTH_NO_BORDER = 0.080  # black square, what cv2.aruco measures
 GRID_N = 10                      # 11x11 = 121 keypoints
 MIN_BLOB_AREA = 100              # px, same as build_lbcv_predictor
 
-SEG_TRANSFORM = A.Compose([A.Normalize(mean=(0.485,), std=(0.229,), max_pixel_value=255.0), ToTensorV2()])
+SEG_MEAN, SEG_STD = 0.485, 0.229  # albumentations Normalize(mean, std, max_pixel_value=255) as in training
 ARUCO = cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11),
                                 cv2.aruco.DetectorParameters())
 
@@ -81,6 +112,11 @@ CCV_CORNERS = np.array([[-_h, _h, 0], [_h, _h, 0], [_h, -_h, 0], [-_h, -_h, 0]],
 
 
 def load_models():
+    missing = [p for p in (SEG_CKPT, KP_CKPT) if not os.path.exists(p)]
+    if missing:
+        raise SystemExit("model checkpoint(s) not found:\n  " + "\n  ".join(missing) +
+                         f"\ncopy them into {os.path.join(REPO_ROOT, 'checkpoints')} "
+                         "(or set LBCV_SEG_CKPT / LBCV_KP_CKPT / DEEP_MARKER_ROOT)")
     seg_model = UNETWithDropoutMini(in_channels=1, out_channels=1).to(DEVICE)
     seg_model.load_state_dict(torch.load(SEG_CKPT, map_location=DEVICE)["state_dict"])
     kp_model = RegressorMobileNetV3().to(DEVICE)
@@ -94,7 +130,7 @@ def segment(seg_model, rgb, scale):
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     if scale != 1.0:
         gray = cv2.resize(gray, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
-    x = SEG_TRANSFORM(image=gray)["image"].unsqueeze(0).to(DEVICE)
+    x = torch.from_numpy((gray.astype(np.float32) / 255.0 - SEG_MEAN) / SEG_STD)[None, None].to(DEVICE)
     with torch.no_grad(), torch.amp.autocast(device_type=DEVICE):
         logit = seg_model(x)
     mask = (torch.sigmoid(logit)[0, 0].float().cpu().numpy() > 0.5).astype(np.uint8) * 255
@@ -114,6 +150,7 @@ def largest_blob(mask):
 
 def predict_keypoints(kp_model, rgb, blob):
     """121x2 keypoints in image space and the 128x128 RGB ROI they were predicted from."""
+    _require_overlay_utils()
     roi, roi_coords = compute_roi(blob, rgb)
     if roi is None:
         return None, None
@@ -126,6 +163,7 @@ def predict_keypoints(kp_model, rgb, blob):
 def roi_to_image(kp_roi, roi_coords, roi_shape):
     """Model keypoints in ROI space -> image space, with the label convention KP_CKPT was trained on."""
     if not KP_LEGACY_ROI_LABELS:
+        _require_overlay_utils()
         return roi_to_keypoints(kp_roi, roi_coords, roi_shape)
     s = np.array(roi_shape)
     center = np.array([(roi_coords[0] + roi_coords[1]) / 2, (roi_coords[2] + roi_coords[3]) / 2])
@@ -212,8 +250,8 @@ def previous_lbcv(ds_dir, results_subdir):
     return det.mean(), errs[:, 0], errs[:, 1]
 
 
-def evaluate_dataset(name, seg_model, kp_model, refiner, max_frames, vis_every, seg_scale, out_dir):
-    ds_dir = os.path.join(DATA_ROOT, name)
+def evaluate_dataset(name, seg_model, kp_model, refiner, max_frames, vis_every, seg_scale, out_dir, data_root=DATA_ROOT):
+    ds_dir = os.path.join(data_root, name)
     tf_true_all = orthonormalize(np.linalg.inv(pd.read_csv(os.path.join(ds_dir, "tf_m_c.csv")).values.reshape(-1, 4, 4)))
     n = len(tf_true_all) if max_frames is None else min(max_frames, len(tf_true_all))
     vis_dir = os.path.join(out_dir, name, "vis")
@@ -310,9 +348,13 @@ def main():
     ap.add_argument("--min-conf", type=float, default=0.85,
                     help="tag decode confidence needed to re-orient and to run subpix / ecc")
     ap.add_argument("--out-dir", default=OUT_DIR)
+    ap.add_argument("--data-root", default=DATA_ROOT, help="folder holding the July-12 datasets")
     args = ap.parse_args()
     if set(args.stages) - set(STAGES):
         ap.error(f"unknown stages {sorted(set(args.stages) - set(STAGES))}; choose from {' '.join(STAGES)}")
+    if not os.path.isdir(args.data_root):
+        ap.error(f"data root {args.data_root} not found; pass --data-root or set JULY12_DATA_ROOT")
+    _require_overlay_utils()
 
     os.makedirs(args.out_dir, exist_ok=True)
     seg_model, kp_model = load_models()
@@ -322,7 +364,7 @@ def main():
           f"  seg={SEG_CKPT}\n  kp ={KP_CKPT}")
 
     summary = pd.DataFrame([evaluate_dataset(d, seg_model, kp_model, refiner, args.max_frames, args.vis_every,
-                                             args.seg_scale, args.out_dir)
+                                             args.seg_scale, args.out_dir, args.data_root)
                             for d in args.datasets])
     summary.to_csv(os.path.join(args.out_dir, "summary.csv"), index=False)
     pd.set_option("display.width", 250)
