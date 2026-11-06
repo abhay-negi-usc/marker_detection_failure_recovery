@@ -31,3 +31,4 @@ data
 ablations/analysis/real_exp/plots_JSR/*
 # LBCV model weights for demo_live.py / test_multimarker_real.py
 /checkpoints/
+/demo_live_args.txt

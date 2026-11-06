@@ -49,11 +49,50 @@ the sibling deep-marker-estimation repo; see test_multimarker_real.py for the lo
     python demo_live.py --tag-size 0.08            # side of the black tag square in meters
     python demo_live.py --source 1                 # another camera index
     python demo_live.py --source video.mp4         # or replay a video file
+Per-machine defaults: options in demo_live_args.txt next to this file (git-ignored; '#' starts a comment) are read
+first, so a plain `python demo_live.py` (or an editor's Run button) uses them; options on the command line override.
 """
 import os
 import sys
 import time
+import shlex
 import argparse
+import subprocess
+
+LOCAL_ARGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_live_args.txt")
+
+
+def local_default_args(verbose=True):
+    """Options from LOCAL_ARGS_FILE (empty if absent); Windows paths keep their backslashes, quotes group spaces."""
+    if not os.path.exists(LOCAL_ARGS_FILE):
+        return []
+    with open(LOCAL_ARGS_FILE, encoding="utf-8") as f:
+        tokens = [t for line in f for t in shlex.split(line.split("#", 1)[0], posix=False)]
+    tokens = [t[1:-1] if len(t) > 1 and t[0] == t[-1] and t[0] in "\"'" else t for t in tokens]
+    if verbose:
+        print(f"[INFO] default options from {os.path.basename(LOCAL_ARGS_FILE)}: {' '.join(tokens)}")
+    return tokens
+
+
+def rerun_with_configured_python():
+    """If demo_live_args.txt names a --python other than the one running (e.g. an editor's Run button picked a conda
+    env whose torch crashes), re-run this script with it before numpy / torch are imported, and exit with its code."""
+    tokens = local_default_args(verbose=False) + sys.argv[1:]
+    python = next((tokens[i + 1] for i in range(len(tokens) - 2, -1, -1) if tokens[i] == "--python"), None)
+    if not python or os.environ.get("DEMO_LIVE_RERUN") == "1":
+        return
+    if not os.path.isfile(python):
+        print(f"[WARN] --python {python} not found; continuing with {sys.executable}")
+        return
+    if os.path.normcase(os.path.realpath(python)) != os.path.normcase(os.path.realpath(sys.executable)):
+        print(f"[INFO] re-running with {python} (--python in {os.path.basename(LOCAL_ARGS_FILE)})", flush=True)
+        sys.exit(subprocess.call([python, os.path.abspath(__file__), *sys.argv[1:]],
+                                 env={**os.environ, "DEMO_LIVE_RERUN": "1"}))
+
+
+if __name__ == "__main__":
+    rerun_with_configured_python()
+
 import numpy as np
 import cv2
 import torch
@@ -68,6 +107,7 @@ AMBIGUITY_RATIO = 1.5           # IPPE solutions count as near-tied below this r
 ANCHOR_RATIO = 3.0              # ... and as unambiguous (tilt-direction anchor) above this one
 TRACK_TIMEOUT = 0.5             # s an anchor / a marker's filter state stays valid without a detection
 CORNER_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
+CCV_OUTLINE = 3                 # px width of OpenCV's (CCV) cyan marker outline
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_outputs", "live_demo")
 
 # 10x10 cells of the white-bordered tag: outer ring = white quiet zone, next ring = black tag border
@@ -101,15 +141,24 @@ def open_source(source, width, height, backend="auto"):
     if not source.isdigit():
         return cv2.VideoCapture(source)
     api = CAMERA_BACKENDS[backend] if backend != "auto" else default_backend()
-    cap = cv2.VideoCapture(int(source), api)
-    if not cap.isOpened() and api != cv2.CAP_ANY:  # let OpenCV pick whatever backend works
-        print(f"[WARN] camera {source} did not open with backend '{backend}', falling back to the OpenCV default")
-        cap = cv2.VideoCapture(int(source), cv2.CAP_ANY)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # 30 fps at 1280x720 on the NexiGo N60
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_FPS, 30)
+    # MJPG for 30 fps at 1280x720 on the NexiGo N60 (uncompressed YUY2 manages ~8 fps over USB 2). Requested at open
+    # time: DirectShow ignores a FOURCC set after opening, V4L2 accepts either way.
+    fmt = [cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"), cv2.CAP_PROP_FRAME_WIDTH, width,
+           cv2.CAP_PROP_FRAME_HEIGHT, height, cv2.CAP_PROP_FPS, 30]
+    cap = cv2.VideoCapture(int(source), api, fmt)
+    if not cap.isOpened():  # backend refused the open-time format: open plainly, then request it
+        cap = cv2.VideoCapture(int(source), api)
+        if not cap.isOpened() and api != cv2.CAP_ANY:  # let OpenCV pick whatever backend works
+            print(f"[WARN] camera {source} did not open with backend '{backend}', falling back to the OpenCV default")
+            cap = cv2.VideoCapture(int(source), cv2.CAP_ANY)
+        for prop, value in zip(fmt[::2], fmt[1::2]):
+            cap.set(prop, value)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # always process the newest frame
+    fcc, fps = int(cap.get(cv2.CAP_PROP_FOURCC)), cap.get(cv2.CAP_PROP_FPS)  # DirectShow reports fps as -1
+    print(f"[INFO] camera {source} via {cap.getBackendName() if cap.isOpened() else '?'}: "
+          f"{''.join(chr((fcc >> 8 * k) & 255) for k in range(4))!r} "
+          f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+          + (f" @ {fps:.0f} fps" if fps > 0 else ""))
     return cap
 
 
@@ -320,10 +369,12 @@ def draw(frame, mask, dets, ccv, K, D, axis_len, show, hud, notice):
     vis = frame.copy()
     if show["mask"]:
         vis[mask] = (0.6 * vis[mask] + 0.4 * np.array([0, 255, 255])).astype(np.uint8)
-    for m in ccv:
-        cv2.polylines(vis, [m["corners"].astype(np.int32)], True, (255, 255, 0), 1)
+    for m in ccv:  # thick cyan outline with a dark edge, so it stands out on white paper and on the yellow mask
+        outline = [m["corners"].round().astype(np.int32)]
+        cv2.polylines(vis, outline, True, (0, 0, 0), CCV_OUTLINE + 2, cv2.LINE_AA)
+        cv2.polylines(vis, outline, True, (255, 255, 0), CCV_OUTLINE, cv2.LINE_AA)
         if m["pose"] is not None:
-            cv2.drawFrameAxes(vis, K, D, *m["pose"], axis_len * 0.6, 1)
+            cv2.drawFrameAxes(vis, K, D, *m["pose"], axis_len * 0.6, 2)
         x, y = m["corners"].min(0).astype(int)
         put_text(vis, f"CCV {m['id']}", (x, m["corners"][:, 1].max().astype(int) + 20), 0.6, (255, 255, 0), 2)
     for d in dets:
@@ -354,6 +405,8 @@ def draw(frame, mask, dets, ccv, K, D, axis_len, show, hud, notice):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="0", help="camera index or video file")
+    ap.add_argument("--python", default=None,
+                    help="Python interpreter to run the demo with (re-runs itself; usually set in demo_live_args.txt)")
     ap.add_argument("--backend", default="auto", choices=list(CAMERA_BACKENDS),
                     help="camera capture backend (auto = v4l2 on Linux, dshow on Windows)")
     ap.add_argument("--width", type=int, default=1280)
@@ -374,7 +427,7 @@ def main():
     ap.add_argument("--max-markers", type=int, default=8)
     ap.add_argument("--frames", type=int, default=0, help="stop after N frames (0 = until quit)")
     ap.add_argument("--no-window", action="store_true", help="no display; print throughput (benchmark)")
-    args = ap.parse_args()
+    args = ap.parse_args(local_default_args() + sys.argv[1:])  # command-line options come last, so they win
 
     cap = open_source(args.source, args.width, args.height, args.backend)
     ok, frame = cap.read()
