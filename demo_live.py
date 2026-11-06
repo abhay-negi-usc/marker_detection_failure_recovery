@@ -12,10 +12,11 @@ Confidence: the 10x10 cells of the white-bordered tag are sampled at the estimat
 a planar white/black fit from the quiet zone and the tag border (tolerates shading). confidence =
 min(fraction of the 64 quiet-zone/border cells that are right, fraction of the 36 data bits matching the
 nearest 36h11 code the models were trained on, ids 0-15); that code is the reported tag id. Markers below
---min-conf (default 0.75) are not drawn. 0.75 allows up to 9 wrong data bits, which keeps tags in dim light
-or at steep angles; ids 0-15 differ in >= 13 bits, so a read with 7-9 bad bits can occasionally get a
-neighbour's id. 0.85 (at most 5 wrong bits) is inside 36h11's unique-decoding radius (codes differ in >= 11
-bits, rotations included) and rejects other tag families (e.g. ArUco 4x4, which the models also segment).
+--min-conf (default 0.65) are not drawn. 0.65 allows up to 12 wrong data bits, which keeps tags in dim light
+or at steep angles, but ids 0-15 differ in >= 13 bits, so a read with 7+ bad bits can get a neighbour's id,
+and random data bits pass ~50% of the time (other square tags may get a made-up id; ~3% at 0.75).
+0.85 (at most 5 wrong bits) is inside 36h11's unique-decoding radius (codes differ in >= 11 bits, rotations
+included) and rejects other tag families (e.g. ArUco 4x4, which the models also segment).
 
 Pose of a confident marker (each stage toggleable):
   refine (r): the decoded id says which of the 121 grid points are real L/X corners of the tag pattern; those
@@ -414,7 +415,7 @@ def main():
     ap.add_argument("--tag-size", type=float, default=0.08, help="black tag square side (m)")
     ap.add_argument("--calib", default=None, help="npz with camera_matrix, distortion_coeffs")
     ap.add_argument("--hfov", type=float, default=78.0, help="horizontal FOV (deg) used when --calib is not given")
-    ap.add_argument("--min-conf", type=float, default=0.75, help="hide LBCV estimates below this confidence")
+    ap.add_argument("--min-conf", type=float, default=0.65, help="hide LBCV estimates below this confidence")
     ap.add_argument("--dict", default="DICT_APRILTAG_36h11", help="cv2.aruco dictionary used by CCV")
     ap.add_argument("--no-refine", action="store_true", help="start with corner refinement off")
     ap.add_argument("--no-filter", action="store_true", help="start with the One Euro filter off")
