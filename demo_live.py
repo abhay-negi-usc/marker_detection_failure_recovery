@@ -3,18 +3,19 @@ Live camera demo of the multi-marker LBCV pipeline (grayscale segmentation + key
 OpenCV's ArUco/AprilTag detector (CCV) drawn alongside for reference. Uses the same models / preprocessing as
 test_multimarker_real.py. Every segmented blob is processed, so several markers can be shown at once.
 
-Window: yellow = segmentation mask, red dots = keypoints (the network's; with refine on, all 121 reprojected
-from the pose fitted to the refined corners), green dots = sub-pixel refined corners,
-thick axes = LBCV pose, thin axes + cyan outline = CCV pose. Each LBCV marker is labelled with its decoded tag
+Window: yellow = segmentation mask, red dots (off by default, key g) = keypoints (the network's; with refine on, all
+121 reprojected from the pose fitted to the refined corners), green dots = sub-pixel refined corners,
+axes = LBCV pose, cyan outline = CCV detection (its pose is computed but not drawn). Each LBCV marker is labelled with its decoded tag
 id and confidence, and with the LBCV-vs-CCV rotation difference when CCV sees the same marker.
 
 Confidence: the 10x10 cells of the white-bordered tag are sampled at the estimated pose and binarized against
 a planar white/black fit from the quiet zone and the tag border (tolerates shading). confidence =
 min(fraction of the 64 quiet-zone/border cells that are right, fraction of the 36 data bits matching the
-nearest 36h11 code the models were trained on, ids 0-15); that code is the reported tag id. 0.85 means at most
-5 wrong data bits, inside 36h11's unique-decoding radius (codes differ in >= 11 bits), so other tag families
-(e.g. ArUco 4x4, which the models also segment) are rejected instead of given a made-up id.
-Markers below --min-conf are not drawn.
+nearest 36h11 code the models were trained on, ids 0-15); that code is the reported tag id. Markers below
+--min-conf (default 0.75) are not drawn. 0.75 allows up to 9 wrong data bits, which keeps tags in dim light
+or at steep angles; ids 0-15 differ in >= 13 bits, so a read with 7-9 bad bits can occasionally get a
+neighbour's id. 0.85 (at most 5 wrong bits) is inside 36h11's unique-decoding radius (codes differ in >= 11
+bits, rotations included) and rejects other tag families (e.g. ArUco 4x4, which the models also segment).
 
 Pose of a confident marker (each stage toggleable):
   refine (r): the decoded id says which of the 121 grid points are real L/X corners of the tag pattern; those
@@ -36,7 +37,7 @@ Pose of a confident marker (each stage toggleable):
 The segmentation input scale is adapted every frame so the largest marker spans ~TARGET_SIDE px, inside
 the training range (37-244 px); too-large markers otherwise come back as patchy, fragmented masks.
 
-Keys: q/Esc quit | m mask | k keypoints | c CCV | a auto scale | [ / ] manual seg scale -/+ 0.1
+Keys: q/Esc quit | m mask | k corner dots | g keypoint grid | c CCV | a auto scale | [ / ] manual seg scale -/+ 0.1
       - / = confidence threshold -/+ 0.05 | r refine | f filter | d scan all OpenCV dictionaries | s snapshot
 
 Poses need the camera intrinsics: pass --calib <npz with camera_matrix, distortion_coeffs> (the format
@@ -373,14 +374,13 @@ def draw(frame, mask, dets, ccv, K, D, axis_len, show, hud, notice):
         outline = [m["corners"].round().astype(np.int32)]
         cv2.polylines(vis, outline, True, (0, 0, 0), CCV_OUTLINE + 2, cv2.LINE_AA)
         cv2.polylines(vis, outline, True, (255, 255, 0), CCV_OUTLINE, cv2.LINE_AA)
-        if m["pose"] is not None:
-            cv2.drawFrameAxes(vis, K, D, *m["pose"], axis_len * 0.6, 2)
         x, y = m["corners"].min(0).astype(int)
         put_text(vis, f"CCV {m['id']}", (x, m["corners"][:, 1].max().astype(int) + 20), 0.6, (255, 255, 0), 2)
     for d in dets:
-        if show["kp"]:
+        if show["grid"]:  # the 121 keypoints (red)
             for (x, y) in d["kp"]:
                 cv2.circle(vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+        if show["kp"]:  # sub-pixel refined corners (green)
             for (x, y) in d["refined"] if d["refined"] is not None else []:
                 cv2.circle(vis, (int(round(x)), int(round(y))), 3, (0, 255, 0), -1)
         cv2.drawFrameAxes(vis, K, D, *d["pose"], axis_len, 3)
@@ -396,7 +396,7 @@ def draw(frame, mask, dets, ccv, K, D, axis_len, show, hud, notice):
     put_text(vis, hud, (10, 28), 0.7, (255, 255, 255), 2)
     if notice:
         put_text(vis, notice, (10, 58), 0.6, (0, 255, 255), 2)
-    put_text(vis, "q quit | m mask | k kp | c CCV | a auto scale | [ ] seg scale | - = conf | r refine | f filter"
+    put_text(vis, "q quit | m mask | k corners | g grid | c CCV | a auto scale | [ ] seg scale | - = conf | r refine | f filter"
                   " | d dict scan | s snapshot",
                 (10, vis.shape[0] - 12), 0.55, (200, 200, 200), 1)
     return vis
@@ -414,7 +414,7 @@ def main():
     ap.add_argument("--tag-size", type=float, default=0.08, help="black tag square side (m)")
     ap.add_argument("--calib", default=None, help="npz with camera_matrix, distortion_coeffs")
     ap.add_argument("--hfov", type=float, default=78.0, help="horizontal FOV (deg) used when --calib is not given")
-    ap.add_argument("--min-conf", type=float, default=0.85, help="hide LBCV estimates below this confidence")
+    ap.add_argument("--min-conf", type=float, default=0.75, help="hide LBCV estimates below this confidence")
     ap.add_argument("--dict", default="DICT_APRILTAG_36h11", help="cv2.aruco dictionary used by CCV")
     ap.add_argument("--no-refine", action="store_true", help="start with corner refinement off")
     ap.add_argument("--no-filter", action="store_true", help="start with the One Euro filter off")
@@ -445,7 +445,7 @@ def main():
     print(f"[INFO] {w}x{h}  device={DEVICE}  fx={K[0, 0]:.0f}{'' if calibrated else ' (approx. from --hfov)'}  "
           f"CCV dictionary={args.dict}")
 
-    show = {"mask": True, "kp": True, "ccv": True}
+    show = {"mask": True, "kp": True, "grid": False, "ccv": True}
     seg_scale, auto_scale, min_conf = args.seg_scale, not args.fixed_scale, args.min_conf
     refine, filtering = not args.no_refine, not args.no_filter
     filters, anchors = {}, {}  # per tag id: OneEuroPose, (rvec, time) of the last unambiguous pose
@@ -546,6 +546,8 @@ def main():
             show["mask"] = not show["mask"]
         elif key == ord("k"):
             show["kp"] = not show["kp"]
+        elif key == ord("g"):
+            show["grid"] = not show["grid"]
         elif key == ord("c"):
             show["ccv"] = not show["ccv"]
         elif key == ord("a"):
